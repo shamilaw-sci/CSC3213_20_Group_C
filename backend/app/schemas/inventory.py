@@ -27,3 +27,11 @@ class InventoryTransactionCreate(InventoryTransactionBase):
 class InventoryTransaction(InventoryTransactionBase):
     id: int
     model_config = ConfigDict(from_attributes=True)
+
+class CostPerAnimal(BaseModel):
+    program_id: int
+    program_name: str
+    total_cost: float
+    animals_treated: int
+    cost_per_animal: float
+    model_config = ConfigDict(from_attributes=True)

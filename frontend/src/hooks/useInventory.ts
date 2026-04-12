@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { InventoryService } from '@/services/inventory.service';
+import { FinanceService } from '@/services/finance.service';
 import { InventoryItem, InventoryTransaction } from '@/types';
 
 export function useInventoryItems() {
@@ -24,5 +25,29 @@ export function useCreateInventoryTransaction() {
       queryClient.invalidateQueries({ queryKey: ['inventoryItems'] });
       queryClient.invalidateQueries({ queryKey: ['inventoryTransactions'] });
     }
+  });
+}
+
+export function useCreateInventoryItem() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (item: Omit<InventoryItem, 'id'>) => InventoryService.createItem(item),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['inventoryItems'] });
+    }
+  });
+}
+
+export function usePrograms() {
+  return useQuery({
+    queryKey: ['programs'],
+    queryFn: FinanceService.getPrograms
+  });
+}
+
+export function useCostPerAnimal() {
+  return useQuery({
+    queryKey: ['costPerAnimal'],
+    queryFn: InventoryService.getCostPerAnimal,
   });
 }

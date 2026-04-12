@@ -1,16 +1,17 @@
 import api from '@/lib/api-client';
-import { InventoryItem, InventoryTransaction } from '@/types';
+import { InventoryItem, InventoryTransaction, CostPerAnimal } from '@/types';
 
 export const InventoryService = {
   getItems: async () => {
     const response = await api.get<InventoryItem[]>('/inventory/items');
     return response.data;
   },
-  
+
   createItem: async (item: Omit<InventoryItem, 'id'>) => {
     const response = await api.post<InventoryItem>('/inventory/items', item);
     return response.data;
   },
+
 
   getTransactions: async (item_id?: number) => {
     const params = item_id ? { item_id } : {};
@@ -34,6 +35,12 @@ export const InventoryService = {
       total_stock_value,
       low_stock_items
     };
-  }
+  },
+
+  getCostPerAnimal: async () => {
+    const response = await api.get<CostPerAnimal[]>('/inventory/cost-per-animal');
+    return response.data;
+  },
 };
+
 

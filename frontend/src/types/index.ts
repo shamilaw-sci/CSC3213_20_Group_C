@@ -69,6 +69,14 @@ export interface InventoryTransaction {
   };
 }
 
+export interface CostPerAnimal {
+  program_id: number;
+  program_name: string;
+  total_cost: number;
+  animals_treated: number;
+  cost_per_animal: number;
+}
+
 export interface AuditLog {
   id: number;
   user_id: string | null;
