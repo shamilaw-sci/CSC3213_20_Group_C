@@ -25,7 +25,7 @@ export default function LoginPage() {
     
     try {
       const data = await AuthService.login({ email, password });
-      setAuth(data.user, data.access_token);
+      setAuth(data.user, data.access_token, data.refresh_token);
       toast.success('Access granted. Welcome back.');
       router.push('/dashboard');
     } catch (err: any) {

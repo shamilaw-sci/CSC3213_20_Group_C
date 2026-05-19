@@ -1,26 +1,25 @@
 from fastapi import APIRouter, HTTPException, Depends
 from app.core.supabase import get_supabase
 from app.core.audit import log_audit_action
-from app.schemas.inventory import InventoryItem, InventoryItemCreate, InventoryTransaction, InventoryTransactionCreate, CostPerAnimal
+from app.core.security import get_current_user
+from app.schemas.inventory import (
+    InventoryItem, InventoryTransaction, InventoryTransactionCreate, CostPerAnimal,
+    StockInCreate, StockOutCreate, StockReturnCreate, AddItemCreate,
+)
 from typing import List, Optional
 from datetime import date
 from supabase import Client
-from app.core.security import check_user_role
 
 router = APIRouter()
 
+
+# ─── Read Endpoints ───────────────────────────────────────────────────────────
 
 @router.get("/items", response_model=List[InventoryItem])
 async def get_items(supabase: Client = Depends(get_supabase)):
     response = supabase.table("inventory_items").select("*").execute()
     return response.data
 
-@router.post("/items", response_model=InventoryItem)
-async def create_item(item: InventoryItemCreate, supabase: Client = Depends(get_supabase)):
-    response = supabase.table("inventory_items").insert(item.model_dump()).execute()
-    if not response.data:
-        raise HTTPException(status_code=400, detail="Failed to create item")
-    return response.data[0]
 
 @router.get("/transactions", response_model=List[InventoryTransaction])
 async def get_transactions(item_id: Optional[int] = None, supabase: Client = Depends(get_supabase)):
@@ -30,50 +29,15 @@ async def get_transactions(item_id: Optional[int] = None, supabase: Client = Dep
     response = query.execute()
     return response.data
 
-@router.post("/transactions", response_model=InventoryTransaction)
-async def create_transaction(transaction: InventoryTransactionCreate, supabase: Client = Depends(get_supabase)):
-    """
-    Records an inventory Issue or Return atomically via the
-    `record_inventory_transaction` Postgres function.
-    Both the stock update and the transaction log happen inside a single
-    database transaction — no partial updates, no manual rollbacks needed.
-    """
-    try:
-        response = supabase.rpc(
-            "record_inventory_transaction",
-            {
-                "p_item_id":          transaction.item_id,
-                "p_quantity":         transaction.quantity,
-                "p_transaction_type": transaction.transaction_type,
-                "p_transaction_date": str(transaction.transaction_date),
-                "p_program_id":       transaction.program_id,
-            },
-        ).execute()
-    except Exception as exc:
-        # Supabase surfaces Postgres RAISE EXCEPTION messages here
-        detail = str(exc)
-        if "not found" in detail.lower():
-            raise HTTPException(status_code=404, detail=detail)
-        if "insufficient stock" in detail.lower():
-            raise HTTPException(status_code=400, detail=detail)
-        raise HTTPException(status_code=500, detail=f"Database error: {detail}")
-
-    if not response.data:
-        raise HTTPException(status_code=400, detail="Transaction failed — no data returned.")
-
-    return response.data
-
 
 @router.get("/cost-per-animal", response_model=List[CostPerAnimal])
 async def get_cost_per_animal(supabase: Client = Depends(get_supabase)):
-    # 1. Fetch all Issue transactions joined to inventory_items for unit_cost
     tx_response = supabase.table("inventory_transactions") \
         .select("program_id, quantity, inventory_items(unit_cost)") \
         .eq("transaction_type", "Issue") \
         .not_.is_("program_id", "null") \
         .execute()
 
-    # 2. Group by program_id, accumulate total_cost = sum(quantity * unit_cost)
     cost_by_program: dict[int, float] = {}
     for tx in tx_response.data:
         pid = tx.get("program_id")
@@ -86,14 +50,12 @@ async def get_cost_per_animal(supabase: Client = Depends(get_supabase)):
     if not cost_by_program:
         return []
 
-    # 3. Fetch programs to get names and total_animals_treated
     program_ids = list(cost_by_program.keys())
     prog_response = supabase.table("programs") \
         .select("id, program_name, total_animals_treated") \
         .in_("id", program_ids) \
         .execute()
 
-    # 4. Build result rows
     results: List[CostPerAnimal] = []
     for prog in prog_response.data:
         pid = prog["id"]
@@ -108,6 +70,225 @@ async def get_cost_per_animal(supabase: Client = Depends(get_supabase)):
             cost_per_animal=round(cost_per_animal, 2),
         ))
 
-    # Sort by cost_per_animal descending so highest-cost programs surface first
     results.sort(key=lambda r: r.cost_per_animal, reverse=True)
     return results
+
+
+@router.get("/low-stock", response_model=List[InventoryItem])
+async def get_low_stock(threshold: int = 10, supabase: Client = Depends(get_supabase)):
+    response = supabase.table("inventory_items").select("*").lt("current_stock", threshold).execute()
+    return response.data
+
+
+# ─── Stock In ────────────────────────────────────────────────────────────────
+
+@router.post("/stock-in", status_code=201)
+async def stock_in(
+    payload: StockInCreate,
+    supabase: Client = Depends(get_supabase),
+    current_user: dict = Depends(get_current_user),
+):
+    try:
+        response = supabase.rpc(
+            "record_inventory_transaction",
+            {
+                "p_item_id": payload.item_id,
+                "p_quantity": payload.quantity,
+                "p_transaction_type": "restock",
+                "p_transaction_date": str(payload.transaction_date),
+                "p_program_id": payload.program_id,
+            },
+        ).execute()
+    except Exception as exc:
+        detail = str(exc)
+        if "not found" in detail.lower():
+            raise HTTPException(status_code=404, detail=detail)
+        raise HTTPException(status_code=500, detail=f"Database error: {detail}")
+
+    if not response.data:
+        raise HTTPException(status_code=400, detail="Stock-in failed — no data returned.")
+
+    await log_audit_action(
+        supabase=supabase,
+        user_id=current_user.get("id"),
+        action_type="INVENTORY_STOCK_IN",
+        table_name="inventory_transactions",
+        new_payload=response.data,
+    )
+    return {"message": "Stock added successfully", "transaction": response.data}
+
+
+# ─── Stock Out ────────────────────────────────────────────────────────────────
+
+@router.post("/stock-out", status_code=201)
+async def stock_out(
+    payload: StockOutCreate,
+    supabase: Client = Depends(get_supabase),
+    current_user: dict = Depends(get_current_user),
+):
+    item_resp = supabase.table("inventory_items") \
+        .select("current_stock, item_name") \
+        .eq("id", payload.item_id) \
+        .single() \
+        .execute()
+
+    if not item_resp.data:
+        raise HTTPException(status_code=404, detail="Item not found")
+
+    available = item_resp.data["current_stock"]
+    if available < payload.quantity:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Insufficient stock. Available: {available}, Requested: {payload.quantity}",
+        )
+
+    try:
+        response = supabase.rpc(
+            "record_inventory_transaction",
+            {
+                "p_item_id": payload.item_id,
+                "p_quantity": payload.quantity,
+                "p_transaction_type": "Issue",
+                "p_transaction_date": str(payload.transaction_date),
+                "p_program_id": payload.program_id,
+            },
+        ).execute()
+    except Exception as exc:
+        detail = str(exc)
+        if "insufficient stock" in detail.lower():
+            raise HTTPException(status_code=422, detail=detail)
+        raise HTTPException(status_code=500, detail=f"Database error: {detail}")
+
+    if not response.data:
+        raise HTTPException(status_code=400, detail="Stock-out failed — no data returned.")
+
+    await log_audit_action(
+        supabase=supabase,
+        user_id=current_user.get("id"),
+        action_type="INVENTORY_ISSUE",
+        table_name="inventory_transactions",
+        new_payload=response.data,
+    )
+    return {"message": "Stock issued successfully", "transaction": response.data}
+
+
+# ─── Stock Return ─────────────────────────────────────────────────────────────
+
+@router.post("/stock-return", status_code=201)
+async def stock_return(
+    payload: StockReturnCreate,
+    supabase: Client = Depends(get_supabase),
+    current_user: dict = Depends(get_current_user),
+):
+    try:
+        response = supabase.rpc(
+            "record_inventory_transaction",
+            {
+                "p_item_id": payload.item_id,
+                "p_quantity": payload.quantity,
+                "p_transaction_type": "Return",
+                "p_transaction_date": str(date.today()),
+                "p_program_id": payload.program_id,
+            },
+        ).execute()
+    except Exception as exc:
+        detail = str(exc)
+        if "not found" in detail.lower():
+            raise HTTPException(status_code=404, detail=detail)
+        raise HTTPException(status_code=500, detail=f"Database error: {detail}")
+
+    if not response.data:
+        raise HTTPException(status_code=400, detail="Stock-return failed — no data returned.")
+
+    await log_audit_action(
+        supabase=supabase,
+        user_id=current_user.get("id"),
+        action_type="INVENTORY_RETURN",
+        table_name="inventory_transactions",
+        new_payload=response.data,
+    )
+    return {"message": "Stock returned successfully", "transaction": response.data}
+
+
+# ─── Add Item ─────────────────────────────────────────────────────────────────
+
+@router.post("/items", response_model=InventoryItem, status_code=201)
+async def create_item(
+    item: AddItemCreate,
+    supabase: Client = Depends(get_supabase),
+    current_user: dict = Depends(get_current_user),
+):
+    response = supabase.table("inventory_items").insert({
+        "item_name": item.item_name,
+        "current_stock": item.initial_quantity,
+        "unit_cost": item.unit_cost,
+    }).execute()
+
+    if not response.data:
+        raise HTTPException(status_code=400, detail="Failed to create item")
+
+    new_item = response.data[0]
+
+    if item.initial_quantity > 0:
+        try:
+            supabase.rpc(
+                "record_inventory_transaction",
+                {
+                    "p_item_id": new_item["id"],
+                    "p_quantity": item.initial_quantity,
+                    "p_transaction_type": "restock",
+                    "p_transaction_date": str(date.today()),
+                    "p_program_id": None,
+                },
+            ).execute()
+        except Exception as exc:
+            print(f"[WARN] Initial stock transaction failed for item {new_item['id']}: {exc}")
+
+    await log_audit_action(
+        supabase=supabase,
+        user_id=current_user.get("id"),
+        action_type="CREATE",
+        table_name="inventory_items",
+        new_payload=new_item,
+    )
+    return new_item
+
+
+# ─── Legacy (kept for backward compat) ───────────────────────────────────────
+
+@router.post("/transactions", response_model=InventoryTransaction)
+async def create_transaction(
+    transaction: InventoryTransactionCreate,
+    supabase: Client = Depends(get_supabase),
+    current_user: dict = Depends(get_current_user),
+):
+    try:
+        response = supabase.rpc(
+            "record_inventory_transaction",
+            {
+                "p_item_id": transaction.item_id,
+                "p_quantity": transaction.quantity,
+                "p_transaction_type": transaction.transaction_type,
+                "p_transaction_date": str(transaction.transaction_date),
+                "p_program_id": transaction.program_id,
+            },
+        ).execute()
+    except Exception as exc:
+        detail = str(exc)
+        if "not found" in detail.lower():
+            raise HTTPException(status_code=404, detail=detail)
+        if "insufficient stock" in detail.lower():
+            raise HTTPException(status_code=400, detail=detail)
+        raise HTTPException(status_code=500, detail=f"Database error: {detail}")
+
+    if not response.data:
+        raise HTTPException(status_code=400, detail="Transaction failed — no data returned.")
+
+    await log_audit_action(
+        supabase=supabase,
+        user_id=current_user.get("id"),
+        action_type=f"INVENTORY_{transaction.transaction_type.upper()}",
+        table_name="inventory_transactions",
+        new_payload=response.data,
+    )
+    return response.data
