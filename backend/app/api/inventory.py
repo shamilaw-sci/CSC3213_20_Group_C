@@ -3,7 +3,7 @@ from app.core.supabase import get_supabase
 from app.core.audit import log_audit_action
 from app.core.security import get_current_user
 from app.schemas.inventory import (
-    InventoryItem, InventoryTransaction, InventoryTransactionCreate, CostPerAnimal,
+    InventoryItem, InventoryTransaction, InventoryTransactionCreate, InventoryTransactionWithRelations, CostPerAnimal,
     StockInCreate, StockOutCreate, StockReturnCreate, AddItemCreate,
 )
 from typing import List, Optional
@@ -11,6 +11,28 @@ from datetime import date
 from supabase import Client
 
 router = APIRouter()
+
+
+def normalize_transaction_type(transaction_type: str, action: str = "generic") -> str:
+    """Map API-facing transaction names to the values accepted by the database.
+
+    The frontend and API use "restock" for stock-ins, while the existing
+    database schema and RPC function in many environments only accept "Return"
+    for positive stock movements. Normalizing here keeps the API backward-compatible
+    without breaking the rest of the inventory flow.
+    """
+    normalized = (transaction_type or "").strip()
+
+    if action == "stock_in" and normalized.lower() in {"restock", "stockin", "stock_in"}:
+        return "Return"
+
+    if action == "stock_out" and normalized.lower() in {"issue", "stockout", "stock_out"}:
+        return "Issue"
+
+    if normalized.lower() == "restock":
+        return "Return"
+
+    return normalized
 
 
 # ─── Read Endpoints ───────────────────────────────────────────────────────────
@@ -21,12 +43,24 @@ async def get_items(supabase: Client = Depends(get_supabase)):
     return response.data
 
 
-@router.get("/transactions", response_model=List[InventoryTransaction])
+@router.get("/transactions", response_model=List[InventoryTransactionWithRelations])
 async def get_transactions(item_id: Optional[int] = None, supabase: Client = Depends(get_supabase)):
-    query = supabase.table("inventory_transactions").select("*, inventory_items(item_name), programs(program_name)")
+    query = supabase.table("inventory_transactions").select("*, inventory_items(item_name, unit_cost), programs(program_name)")
     if item_id:
         query = query.eq("item_id", item_id)
-    response = query.execute()
+    
+    # Try ordering by created_at (preferred); fall back to id if column doesn't exist yet
+    try:
+        query = query.order("created_at", desc=True)
+        response = query.execute()
+    except Exception:
+        # Fallback: order by id DESC if created_at column doesn't exist yet
+        query = supabase.table("inventory_transactions").select("*, inventory_items(item_name, unit_cost), programs(program_name)")
+        if item_id:
+            query = query.eq("item_id", item_id)
+        query = query.order("id", desc=True)
+        response = query.execute()
+    
     return response.data
 
 
@@ -88,13 +122,15 @@ async def stock_in(
     supabase: Client = Depends(get_supabase),
     current_user: dict = Depends(get_current_user),
 ):
+    transaction_type = normalize_transaction_type("restock", "stock_in")
+
     try:
         response = supabase.rpc(
             "record_inventory_transaction",
             {
                 "p_item_id": payload.item_id,
                 "p_quantity": payload.quantity,
-                "p_transaction_type": "restock",
+                "p_transaction_type": transaction_type,
                 "p_transaction_date": str(payload.transaction_date),
                 "p_program_id": payload.program_id,
             },
@@ -142,13 +178,15 @@ async def stock_out(
             detail=f"Insufficient stock. Available: {available}, Requested: {payload.quantity}",
         )
 
+    transaction_type = normalize_transaction_type("Issue", "stock_out")
+
     try:
         response = supabase.rpc(
             "record_inventory_transaction",
             {
                 "p_item_id": payload.item_id,
                 "p_quantity": payload.quantity,
-                "p_transaction_type": "Issue",
+                "p_transaction_type": transaction_type,
                 "p_transaction_date": str(payload.transaction_date),
                 "p_program_id": payload.program_id,
             },
@@ -236,7 +274,7 @@ async def create_item(
                 {
                     "p_item_id": new_item["id"],
                     "p_quantity": item.initial_quantity,
-                    "p_transaction_type": "restock",
+                    "p_transaction_type": normalize_transaction_type("restock", "stock_in"),
                     "p_transaction_date": str(date.today()),
                     "p_program_id": None,
                 },
@@ -262,13 +300,15 @@ async def create_transaction(
     supabase: Client = Depends(get_supabase),
     current_user: dict = Depends(get_current_user),
 ):
+    transaction_type = normalize_transaction_type(transaction.transaction_type)
+
     try:
         response = supabase.rpc(
             "record_inventory_transaction",
             {
                 "p_item_id": transaction.item_id,
                 "p_quantity": transaction.quantity,
-                "p_transaction_type": transaction.transaction_type,
+                "p_transaction_type": transaction_type,
                 "p_transaction_date": str(transaction.transaction_date),
                 "p_program_id": transaction.program_id,
             },

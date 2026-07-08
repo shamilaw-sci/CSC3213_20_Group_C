@@ -12,7 +12,7 @@ import {
 export const InventoryService = {
   // ── Reads ──────────────────────────────────────────────────────────────────
 
-  getItems: async (): Promise<InventoryItem[]> => {
+  getItems: async (): Promise<InventoryItem[]> => { 
     const response = await api.get<InventoryItem[]>('/inventory/items');
     return response.data;
   },

@@ -16,7 +16,7 @@ export interface InventoryTransaction {
   transaction_type: 'Issue' | 'Return' | 'restock';
   transaction_date: string;
   /** Joined relation — present when fetched with select("*, inventory_items(item_name)") */
-  inventory_items?: { item_name: string } | null;
+  inventory_items?: { item_name: string; unit_cost?: number } | null;
   /** Joined relation — present when fetched with select("*, programs(program_name)") */
   programs?: { program_name: string } | null;
 }
@@ -70,6 +70,9 @@ export interface Program {
   program_name: string;
   total_animals_treated: number;
   status: string;
+  budget_amount?: number | null;
+  start_date?: string | null;
+  end_date?: string | null;
 }
 
 export interface Transaction {

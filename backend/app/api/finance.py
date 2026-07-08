@@ -1,11 +1,10 @@
 from fastapi import APIRouter, HTTPException, Depends
 from app.core.supabase import get_supabase
-from app.schemas.finance import FinancialTransaction, FinancialTransactionCreate, Program, ProgramCreate
+from app.schemas.finance import FinancialTransaction, FinancialTransactionCreate
 
 from typing import List, Optional
 from datetime import date
 from supabase import Client
-from app.core.security import check_user_role
 
 router = APIRouter()
 
@@ -29,18 +28,5 @@ async def create_transaction(transaction: FinancialTransactionCreate, supabase: 
     response = supabase.table("financial_transactions").insert(transaction.model_dump()).execute()
     if not response.data:
         raise HTTPException(status_code=400, detail="Failed to create transaction")
-    return response.data[0]
-
-@router.get("/programs", response_model=List[Program])
-async def get_programs(supabase: Client = Depends(get_supabase)):
-    response = supabase.table("programs").select("*").execute()
-    return response.data
-
-@router.post("/programs", response_model=Program)
-async def create_program(program: ProgramCreate, supabase: Client = Depends(get_supabase)):
-    # program is base model here, but we can use it to create
-    response = supabase.table("programs").insert(program.model_dump()).execute()
-    if not response.data:
-        raise HTTPException(status_code=400, detail="Failed to create program")
     return response.data[0]
 

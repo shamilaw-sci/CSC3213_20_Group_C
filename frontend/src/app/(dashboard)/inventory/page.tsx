@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { format } from 'date-fns';
 import {
   ArrowUpCircle, ArrowDownCircle, RotateCcw, PackagePlus,
-  ArrowUpRight, ArrowDownLeft, Filter, AlertTriangle, Package,
+  Filter, AlertTriangle,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -15,7 +15,6 @@ import {
   useInventoryItems,
   useInventoryTransactions,
   useLowStockItems,
-  useCostPerAnimal,
 } from '@/hooks/useInventory';
 import { StockInDialog, StockOutDialog, StockReturnDialog, AddItemDialog } from './dialogs';
 
@@ -23,7 +22,6 @@ export default function InventoryPage() {
   const { data: items, isLoading: loadingItems } = useInventoryItems();
   const { data: transactions, isLoading: loadingTx } = useInventoryTransactions();
   const { data: lowStockItems } = useLowStockItems(10);
-  const { data: costRows, isLoading: loadingCost } = useCostPerAnimal();
 
   const [stockInOpen, setStockInOpen] = useState(false);
   const [stockOutOpen, setStockOutOpen] = useState(false);
@@ -73,44 +71,24 @@ export default function InventoryPage() {
             <p className="text-xs text-rose-400/80">
               {lowStockItems.length} {lowStockItems.length === 1 ? 'item is' : 'items are'} below the minimum threshold (10 units).
             </p>
-          </div>
-          <div className="flex -space-x-2">
-            {lowStockItems.slice(0, 3).map(item => (
-              <div key={item.id} title={item.item_name}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-full border-2 border-slate-900 bg-slate-800 text-[10px] font-bold text-white">
-                {item.item_name.substring(0, 2).toUpperCase()}
-              </div>
-            ))}
-            {lowStockItems.length > 3 && (
-              <div className="inline-flex h-8 w-8 items-center justify-center rounded-full border-2 border-slate-900 bg-slate-800 text-[10px] font-bold text-slate-400">
-                +{lowStockItems.length - 3}
-              </div>
-            )}
+            <div className="mt-2 flex flex-wrap gap-2">
+              {lowStockItems.map((item) => (
+                <span
+                  key={item.id}
+                  className="rounded-full border border-rose-400/20 bg-rose-400/10 px-2.5 py-1 text-[11px] font-medium text-rose-300"
+                >
+                  {item.item_name} ({item.current_stock})
+                </span>
+              ))}
+            </div>
           </div>
         </div>
       )}
 
-      {/* ── Summary Cards (top 4 items) ── */}
-      <div className="grid gap-6 md:grid-cols-4">
-        {loadingItems
-          ? Array(4).fill(0).map((_, i) => <Skeleton key={i} className="h-24 bg-slate-900 border border-slate-800 rounded-xl" />)
-          : items?.slice(0, 4).map((item) => (
-              <Card key={item.id} className="bg-slate-900 border-slate-800">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-xs font-medium text-slate-400 uppercase tracking-wider truncate">{item.item_name}</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold text-white">{item.current_stock}</div>
-                  <p className="text-xs text-slate-500 mt-1">Unit Cost: LKR {item.unit_cost}</p>
-                </CardContent>
-              </Card>
-            ))}
-      </div>
-
       {/* ── Main Grid: Stock Table + Recent Movements ── */}
-      <div className="grid lg:grid-cols-3 gap-8">
+      <div className="grid gap-8">
         {/* Detailed Stock List */}
-        <Card className="lg:col-span-2 bg-slate-900 border-slate-800">
+        <Card className="w-full bg-slate-900 border-slate-800">
           <CardHeader className="flex flex-row items-center justify-between">
             <div>
               <CardTitle className="text-white">Detailed Stock List</CardTitle>
@@ -125,8 +103,8 @@ export default function InventoryPage() {
                 <Skeleton className="h-10 w-full bg-slate-800" />
               </div>
             ) : (
-              <div className="rounded-md border border-slate-800 overflow-hidden">
-                <Table>
+              <div className="rounded-md border border-slate-800 overflow-x-auto">
+                <Table className="min-w-full">
                   <TableHeader className="bg-slate-950">
                     <TableRow className="hover:bg-transparent border-slate-800">
                       <TableHead className="text-slate-300">Item Name</TableHead>
@@ -163,7 +141,7 @@ export default function InventoryPage() {
         </Card>
 
         {/* Recent Movements */}
-        <Card className="bg-slate-900 border-slate-800">
+        <Card className="w-full bg-slate-900 border-slate-800">
           <CardHeader>
             <CardTitle className="text-white">Recent Movements</CardTitle>
             <CardDescription>Last 10 issue / return / restock logs.</CardDescription>
@@ -175,100 +153,61 @@ export default function InventoryPage() {
                 <Skeleton className="h-12 w-full bg-slate-800" />
               </div>
             ) : (
-              <div className="space-y-3">
-                {transactions?.slice(0, 10).map((tx) => {
-                  const isOut = tx.transaction_type === 'Issue';
-                  const isIn  = tx.transaction_type === 'Return';
-                  const color = isOut ? 'rose' : isIn ? 'emerald' : 'sky';
-                  return (
-                    <div key={tx.id} className="flex items-center justify-between p-3 rounded-lg bg-slate-950 border border-slate-800/50">
-                      <div className="flex items-center gap-3">
-                        <div className={`p-2 rounded-full bg-${color}-500/10 text-${color}-400`}>
-                          {isOut ? <ArrowUpRight size={16} /> : <ArrowDownLeft size={16} />}
-                        </div>
-                        <div>
-                          <p className="text-sm font-medium text-white">{tx.inventory_items?.item_name}</p>
-                          <p className="text-xs text-slate-500">{format(new Date(tx.transaction_date), 'MMM dd, yyyy')}</p>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <p className={`text-sm font-bold text-${color}-400`}>
-                          {isOut ? '−' : '+'}{tx.quantity}
-                        </p>
-                        <p className="text-[10px] text-slate-600 uppercase font-bold tracking-tighter">
-                          {tx.transaction_type}
-                        </p>
-                      </div>
-                    </div>
-                  );
-                })}
-                {transactions?.length === 0 && (
-                  <p className="text-center py-8 text-slate-600 text-sm">No recent movements</p>
-                )}
+              <div className="overflow-x-auto rounded-md border border-slate-800">
+                <Table className="min-w-[760px]">
+                  <TableHeader className="bg-slate-950">
+                    <TableRow className="border-slate-800">
+                      <TableHead className="text-slate-300 whitespace-nowrap">Date</TableHead>
+                      <TableHead className="text-slate-300 whitespace-nowrap">Item</TableHead>
+                      <TableHead className="text-right text-slate-300 whitespace-nowrap">Qty</TableHead>
+                      <TableHead className="text-right text-slate-300 whitespace-nowrap">Unit Cost</TableHead>
+                      <TableHead className="text-right text-slate-300 whitespace-nowrap">Total Cost</TableHead>
+                      <TableHead className="text-right text-slate-300 whitespace-nowrap">Type</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {transactions?.slice(0, 10).map((tx) => {
+                      const isOut = tx.transaction_type === 'Issue';
+                      const isIn = tx.transaction_type === 'Return';
+                      const unitCost = tx.inventory_items?.unit_cost ?? 0;
+                      const totalCost = tx.quantity * unitCost;
+                      return (
+                        <TableRow key={tx.id} className="border-slate-800 hover:bg-slate-800/40">
+                          <TableCell className="text-slate-300 text-sm">{format(new Date(tx.transaction_date), 'MMM dd')}</TableCell>
+                          <TableCell>
+                            <div className="text-sm font-medium text-white">{tx.inventory_items?.item_name ?? 'Unknown item'}</div>
+                            {tx.programs?.program_name && (
+                              <div className="text-[11px] text-slate-500">{tx.programs.program_name}</div>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-right text-slate-300">{tx.quantity}</TableCell>
+                          <TableCell className="text-right text-slate-300">{unitCost > 0 ? `LKR ${unitCost.toLocaleString()}` : '—'}</TableCell>
+                          <TableCell className="text-right text-slate-300">{unitCost > 0 ? `LKR ${totalCost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}</TableCell>
+                          <TableCell className="text-right">
+                            <Badge variant="outline" className={
+                              isOut ? 'text-rose-400 border-rose-400/30 bg-rose-400/10' : isIn ? 'text-emerald-400 border-emerald-400/30 bg-emerald-400/10' : 'text-sky-400 border-sky-400/30 bg-sky-400/10'
+                            }>
+                              {tx.transaction_type}
+                            </Badge>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                    {transactions?.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={6} className="text-center py-8 text-slate-500">
+                          No recent movements
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
               </div>
             )}
           </CardContent>
         </Card>
       </div>
 
-      {/* ── Cost Per Animal Panel ── */}
-      <Card className="bg-slate-900 border-slate-800">
-        <CardHeader>
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-blue-500/10">
-              <Package className="h-5 w-5 text-blue-400" />
-            </div>
-            <div>
-              <CardTitle className="text-white">Cost per Animal Treated</CardTitle>
-              <CardDescription>Inventory spend per program divided by animals treated.</CardDescription>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent>
-          {loadingCost ? (
-            <div className="space-y-2">
-              {Array(3).fill(0).map((_, i) => <Skeleton key={i} className="h-10 w-full bg-slate-800" />)}
-            </div>
-          ) : !costRows || costRows.length === 0 ? (
-            <p className="text-center py-10 text-slate-600 text-sm">No issued transactions linked to programs yet.</p>
-          ) : (
-            <div className="rounded-md border border-slate-800 overflow-hidden">
-              <Table>
-                <TableHeader className="bg-slate-950">
-                  <TableRow className="hover:bg-transparent border-slate-800">
-                    <TableHead className="text-slate-300">Program</TableHead>
-                    <TableHead className="text-slate-300 text-right">Animals Treated</TableHead>
-                    <TableHead className="text-slate-300 text-right">Total Cost</TableHead>
-                    <TableHead className="text-slate-300 text-right">Cost / Animal</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {costRows.map((row) => (
-                    <TableRow key={row.program_id} className="border-slate-800 hover:bg-slate-800/40">
-                      <TableCell className="font-medium text-white">{row.program_name}</TableCell>
-                      <TableCell className="text-right text-slate-300">{row.animals_treated.toLocaleString()}</TableCell>
-                      <TableCell className="text-right text-slate-300">
-                        LKR {row.total_cost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Badge variant="outline" className={
-                          row.cost_per_animal > 50 ? 'text-rose-400 border-rose-400/30 bg-rose-400/10'
-                          : row.cost_per_animal > 20 ? 'text-amber-400 border-amber-400/30 bg-amber-400/10'
-                          : 'text-emerald-400 border-emerald-400/30 bg-emerald-400/10'
-                        }>
-                          {row.animals_treated > 0
-                            ? `LKR ${row.cost_per_animal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                            : '—'}
-                        </Badge>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
     </div>
   );
 }

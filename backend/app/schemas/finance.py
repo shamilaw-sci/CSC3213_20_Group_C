@@ -6,6 +6,9 @@ class ProgramBase(BaseModel):
     program_name: str
     total_animals_treated: int = 0
     status: str = "Active"
+    budget_amount: Optional[float] = None
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
 
 class ProgramCreate(ProgramBase):
     pass

@@ -95,6 +95,20 @@ class InventoryTransaction(InventoryTransactionBase):
     model_config = ConfigDict(from_attributes=True)
 
 
+class InventoryItemRelation(BaseModel):
+    item_name: str
+    unit_cost: Optional[float] = None
+
+
+class ProgramRelation(BaseModel):
+    program_name: str
+
+
+class InventoryTransactionWithRelations(InventoryTransaction):
+    inventory_items: Optional[InventoryItemRelation] = None
+    programs: Optional[ProgramRelation] = None
+
+
 # ─── Analytics ───────────────────────────────────────────────────────────────
 
 class CostPerAnimal(BaseModel):

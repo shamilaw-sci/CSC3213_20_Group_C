@@ -1,5 +1,5 @@
 import api from '@/lib/api-client';
-import { Transaction, Program } from '@/types';
+import { Transaction, Program, CostPerAnimal } from '@/types';
 
 export const FinanceService = {
   getTransactions: async (params?: { start_date?: string, end_date?: string }) => {
@@ -19,6 +19,11 @@ export const FinanceService = {
 
   createProgram: async (program: Omit<Program, 'id'>) => {
     const response = await api.post<Program>('/finance/programs', program);
+    return response.data;
+  },
+
+  getCostPerAnimal: async (): Promise<CostPerAnimal[]> => {
+    const response = await api.get<CostPerAnimal[]>('/finance/programs/cost-per-animal');
     return response.data;
   },
 

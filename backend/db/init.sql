@@ -53,7 +53,10 @@ CREATE TABLE IF NOT EXISTS programs (
     id SERIAL PRIMARY KEY,
     program_name VARCHAR(255) NOT NULL,
     total_animals_treated INTEGER DEFAULT 0,
-    status VARCHAR(50) DEFAULT 'Active'
+    status VARCHAR(50) DEFAULT 'Active',
+    budget_amount DECIMAL(12, 2),
+    start_date DATE,
+    end_date DATE
 );
 
 -- 7. FINANCIAL_TRANSACTION Table
@@ -80,8 +83,9 @@ CREATE TABLE IF NOT EXISTS inventory_transactions (
     item_id INTEGER REFERENCES inventory_items(id) ON DELETE CASCADE,
     program_id INTEGER REFERENCES programs(id) ON DELETE SET NULL,
     quantity INTEGER NOT NULL,
-    transaction_type VARCHAR(20) NOT NULL CHECK (transaction_type IN ('Issue', 'Return')),
-    transaction_date DATE DEFAULT CURRENT_DATE
+    transaction_type VARCHAR(20) NOT NULL CHECK (transaction_type IN ('Issue', 'Return', 'restock')),
+    transaction_date DATE DEFAULT CURRENT_DATE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
 -- 10. SYSTEM_AUDIT_LOG Table

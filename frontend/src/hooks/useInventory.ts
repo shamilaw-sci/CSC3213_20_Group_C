@@ -6,7 +6,7 @@ import { InventoryItem, InventoryTransaction, StockInPayload, StockOutPayload, S
 
 const KEYS = {
   items:         ['inventoryItems'],
-  transactions:  (id?: number) => ['inventoryTransactions', id],
+  transactions:  (id?: number) => id === undefined ? ['inventoryTransactions'] : ['inventoryTransactions', id],
   lowStock:      (t: number) => ['lowStockItems', t],
   costPerAnimal: ['costPerAnimal'],
   programs:      ['programs'],
@@ -42,7 +42,7 @@ function useInvalidateInventory() {
   const qc = useQueryClient();
   return () => {
     qc.invalidateQueries({ queryKey: KEYS.items });
-    qc.invalidateQueries({ queryKey: KEYS.transactions() });
+    qc.invalidateQueries({ queryKey: ['inventoryTransactions'], exact: false });
     qc.invalidateQueries({ queryKey: KEYS.lowStock(10) });
     qc.invalidateQueries({ queryKey: KEYS.costPerAnimal });
   };
