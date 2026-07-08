@@ -1,286 +1,138 @@
 'use client';
 
-import { useInventoryItems, useInventoryTransactions, useCreateInventoryTransaction, useCreateInventoryItem } from '@/hooks/useInventory';
-import { 
-  Table, 
-  TableBody, 
-  TableCell, 
-  TableHead, 
-  TableHeader, 
-  TableRow 
-} from '@/components/ui/table';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Skeleton } from '@/components/ui/skeleton';
-import { Button } from '@/components/ui/button';
-import { Package, ArrowUpRight, ArrowDownLeft, Filter, Plus } from 'lucide-react';
+import { useState } from 'react';
 import { format } from 'date-fns';
-import Swal from 'sweetalert2';
-import { toast } from 'sonner';
-import { useThemeStore } from '@/store/useThemeStore';
-import { useQuery } from '@tanstack/react-query';
-import { FinanceService } from '@/services/finance.service';
+import {
+  ArrowUpCircle, ArrowDownCircle, RotateCcw, PackagePlus,
+  Filter, AlertTriangle,
+} from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import {
+  useInventoryItems,
+  useInventoryTransactions,
+  useLowStockItems,
+} from '@/hooks/useInventory';
+import { StockInDialog, StockOutDialog, StockReturnDialog, AddItemDialog } from './dialogs';
 
 export default function InventoryPage() {
   const { data: items, isLoading: loadingItems } = useInventoryItems();
-  const { data: transactions, isLoading: loadingTransactions } = useInventoryTransactions();
-  
-  const createItem = useCreateInventoryItem();
-  const createTransaction = useCreateInventoryTransaction();
+  const { data: transactions, isLoading: loadingTx } = useInventoryTransactions();
+  const { data: lowStockItems } = useLowStockItems(10);
 
-  // Fetch programs for issue/return select list
-  const { data: programs } = useQuery({
-    queryKey: ['programs'],
-    queryFn: FinanceService.getPrograms
-  });
-
-  const handleAddItem = () => {
-    const isDark = useThemeStore.getState().theme === 'dark';
-    const inputStyle = `width: 100%; margin-top: 4px; box-sizing: border-box; font-size: 12px; height: 38px; background: ${isDark ? '#14161C' : '#FFFFFF'}; color: ${isDark ? '#F9FAFB' : '#111318'}; border: 1px solid ${isDark ? '#232730' : '#E5E7EB'}; border-radius: 8px; padding: 0 10px;`;
-    
-    Swal.fire({
-      title: 'Add Inventory Item',
-      html: `
-        <div style="display: flex; flex-direction: column; gap: 12px; text-align: left; font-family: sans-serif;">
-          <div>
-            <label style="font-size: 10px; font-weight: bold; color: ${isDark ? '#9CA3AF' : '#6B7280'}; uppercase; tracking-wider;">ITEM NAME</label>
-            <input id="swal-iname" style="${inputStyle}" placeholder="e.g. Rabies Vaccine Vials">
-          </div>
-          <div>
-            <label style="font-size: 10px; font-weight: bold; color: ${isDark ? '#9CA3AF' : '#6B7280'}; uppercase; tracking-wider;">INITIAL STOCK</label>
-            <input id="swal-istock" type="number" style="${inputStyle}" placeholder="100">
-          </div>
-          <div>
-            <label style="font-size: 10px; font-weight: bold; color: ${isDark ? '#9CA3AF' : '#6B7280'}; uppercase; tracking-wider;">UNIT COST (LKR)</label>
-            <input id="swal-icost" type="number" style="${inputStyle}" placeholder="1500">
-          </div>
-        </div>
-      `,
-      background: isDark ? '#0F1520' : '#FFFFFF',
-      color: isDark ? '#F9FAFB' : '#111318',
-      showCancelButton: true,
-      confirmButtonText: 'Add Item',
-      confirmButtonColor: '#EF9F27',
-      cancelButtonText: 'Cancel',
-      cancelButtonColor: isDark ? '#232730' : '#E5E7EB',
-      preConfirm: () => {
-        const name = (document.getElementById('swal-iname') as HTMLInputElement).value.trim();
-        const stock = (document.getElementById('swal-istock') as HTMLInputElement).value.trim();
-        const cost = (document.getElementById('swal-icost') as HTMLInputElement).value.trim();
-
-        if (!name || !stock || !cost) {
-          Swal.showValidationMessage('All item fields are required');
-          return false;
-        }
-
-        const stockVal = parseInt(stock);
-        const costVal = parseFloat(cost);
-
-        if (isNaN(stockVal) || stockVal < 0) {
-          Swal.showValidationMessage('Stock must be a non-negative integer');
-          return false;
-        }
-        if (isNaN(costVal) || costVal <= 0) {
-          Swal.showValidationMessage('Unit cost must be a positive number');
-          return false;
-        }
-
-        return { item_name: name, current_stock: stockVal, unit_cost: costVal };
-      }
-    }).then((result) => {
-      if (result.isConfirmed && result.value) {
-        createItem.mutate(result.value, {
-          onSuccess: () => toast.success('Inventory item added successfully!')
-        });
-      }
-    });
-  };
-
-  const handleIssueReturn = () => {
-    if (!items || items.length === 0) {
-      toast.error('No inventory items available to issue or return');
-      return;
-    }
-
-    const isDark = useThemeStore.getState().theme === 'dark';
-    const inputStyle = `width: 100%; margin-top: 4px; box-sizing: border-box; font-size: 12px; height: 38px; background: ${isDark ? '#14161C' : '#FFFFFF'}; color: ${isDark ? '#F9FAFB' : '#111318'}; border: 1px solid ${isDark ? '#232730' : '#E5E7EB'}; border-radius: 8px; padding: 0 10px;`;
-
-    const itemsOptions = items.map(item => `<option value="${item.id}">${item.item_name} (Current: ${item.current_stock})</option>`).join('');
-    const programsOptions = (programs || []).map(p => `<option value="${p.id}">${p.program_name}</option>`).join('');
-
-    Swal.fire({
-      title: 'Issue / Return Supplies',
-      html: `
-        <div style="display: flex; flex-direction: column; gap: 12px; text-align: left; font-family: sans-serif;">
-          <div>
-            <label style="font-size: 10px; font-weight: bold; color: ${isDark ? '#9CA3AF' : '#6B7280'}; uppercase; tracking-wider;">SELECT ITEM</label>
-            <select id="swal-txitem" style="${inputStyle}">
-              ${itemsOptions}
-            </select>
-          </div>
-          <div>
-            <label style="font-size: 10px; font-weight: bold; color: ${isDark ? '#9CA3AF' : '#6B7280'}; uppercase; tracking-wider;">TRANSACTION TYPE</label>
-            <select id="swal-txtype" style="${inputStyle}">
-              <option value="Issue">Issue (Decrement)</option>
-              <option value="Return">Return (Increment)</option>
-            </select>
-          </div>
-          <div>
-            <label style="font-size: 10px; font-weight: bold; color: ${isDark ? '#9CA3AF' : '#6B7280'}; uppercase; tracking-wider;">QUANTITY</label>
-            <input id="swal-txqty" type="number" style="${inputStyle}" placeholder="10">
-          </div>
-          <div>
-            <label style="font-size: 10px; font-weight: bold; color: ${isDark ? '#9CA3AF' : '#6B7280'}; uppercase; tracking-wider;">PROGRAM / PROJECT</label>
-            <select id="swal-txprogram" style="${inputStyle}">
-              <option value="none">Stock Adjustment (No Program)</option>
-              ${programsOptions}
-            </select>
-          </div>
-        </div>
-      `,
-      background: isDark ? '#0F1520' : '#FFFFFF',
-      color: isDark ? '#F9FAFB' : '#111318',
-      showCancelButton: true,
-      confirmButtonText: 'Record Log',
-      confirmButtonColor: '#EF9F27',
-      cancelButtonText: 'Cancel',
-      cancelButtonColor: isDark ? '#232730' : '#E5E7EB',
-      preConfirm: () => {
-        const itemIdStr = (document.getElementById('swal-txitem') as HTMLSelectElement).value;
-        const txType = (document.getElementById('swal-txtype') as HTMLSelectElement).value;
-        const qtyStr = (document.getElementById('swal-txqty') as HTMLInputElement).value.trim();
-        const progIdStr = (document.getElementById('swal-txprogram') as HTMLSelectElement).value;
-
-        if (!itemIdStr || !txType || !qtyStr) {
-          Swal.showValidationMessage('Item type, type, and quantity are required');
-          return false;
-        }
-
-        const qtyVal = parseInt(qtyStr);
-        if (isNaN(qtyVal) || qtyVal <= 0) {
-          Swal.showValidationMessage('Quantity must be a positive integer');
-          return false;
-        }
-
-        const itemId = parseInt(itemIdStr);
-        const selectedItem = items.find(i => i.id === itemId);
-        if (txType === 'Issue' && selectedItem && selectedItem.current_stock < qtyVal) {
-          Swal.showValidationMessage(`Insufficient stock. Current stock is ${selectedItem.current_stock}`);
-          return false;
-        }
-
-        return {
-          item_id: itemId,
-          transaction_type: txType as 'Issue' | 'Return',
-          quantity: qtyVal,
-          program_id: progIdStr === 'none' ? null : parseInt(progIdStr),
-          transaction_date: new Date().toISOString()
-        };
-      }
-    }).then((result) => {
-      if (result.isConfirmed && result.value) {
-        createTransaction.mutate(result.value, {
-          onSuccess: () => toast.success('Inventory movement logged successfully!')
-        });
-      }
-    });
-  };
+  const [stockInOpen, setStockInOpen] = useState(false);
+  const [stockOutOpen, setStockOutOpen] = useState(false);
+  const [stockReturnOpen, setStockReturnOpen] = useState(false);
+  const [addItemOpen, setAddItemOpen] = useState(false);
 
   return (
     <div className="space-y-8">
-      {/* Header */}
+      {/* ── Header ── */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold font-heading tracking-tight mb-2 text-text-primary">
-            Inventory System
-          </h1>
-          <p className="text-text-secondary text-sm">
-            Manage medical supplies, equipment, and resource allocations.
-          </p>
+          <h1 className="text-3xl font-bold tracking-tight mb-2">Inventory System</h1>
+          <p className="text-slate-400">Manage medical supplies, equipment, and resource allocations.</p>
         </div>
-        <div className="flex gap-2">
-          <Button 
-            onClick={handleAddItem}
-            variant="outline" 
-            className="border-border-brand text-text-primary hover:bg-bg-subtle text-xs rounded-lg"
-          >
-            <Plus className="mr-2 h-4 w-4" /> Add Item
+
+        {/* Action buttons */}
+        <div className="flex flex-wrap gap-2">
+          <Button onClick={() => setStockInOpen(true)} className="bg-emerald-600 hover:bg-emerald-700 text-white">
+            <ArrowUpCircle className="w-4 h-4 mr-2" /> Stock In
           </Button>
-          <Button 
-            onClick={handleIssueReturn}
-            className="bg-accent hover:bg-accent/80 text-white font-semibold text-xs rounded-lg shadow-sm"
-          >
-            <Package className="mr-2 h-4 w-4" /> Issue/Return
+          <Button onClick={() => setStockOutOpen(true)} variant="outline" className="border-orange-500 text-orange-400 hover:bg-orange-500/10">
+            <ArrowDownCircle className="w-4 h-4 mr-2" /> Stock Out
+          </Button>
+          <Button onClick={() => setStockReturnOpen(true)} variant="outline" className="border-purple-500 text-purple-400 hover:bg-purple-500/10">
+            <RotateCcw className="w-4 h-4 mr-2" /> Stock Return
+          </Button>
+          <Button onClick={() => setAddItemOpen(true)} className="bg-blue-600 hover:bg-blue-700 text-white">
+            <PackagePlus className="w-4 h-4 mr-2" /> Add Item
           </Button>
         </div>
       </div>
 
-      {/* Overview KPI Cards */}
-      <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
-        {loadingItems ? (
-          Array(4).fill(0).map((_, i) => <Skeleton key={i} className="h-24 bg-bg-subtle border border-border-brand rounded-card" />)
-        ) : (
-          items?.slice(0, 4).map(item => (
-            <Card key={item.id} className="bg-surface border border-border-brand rounded-card shadow-card p-5">
-              <CardHeader className="pb-2 p-0">
-                <CardTitle className="text-xs font-semibold text-text-secondary uppercase tracking-wider">{item.item_name}</CardTitle>
-              </CardHeader>
-              <CardContent className="p-0 pt-2">
-                <div className="text-2xl font-bold font-mono text-text-primary">{item.current_stock}</div>
-                <p className="text-xs text-text-muted mt-1 font-mono">Unit Cost: ${item.unit_cost}</p>
-              </CardContent>
-            </Card>
-          ))
-        )}
-      </div>
+      {/* Dialogs */}
+      <StockInDialog     open={stockInOpen}     onOpenChange={setStockInOpen} />
+      <StockOutDialog    open={stockOutOpen}    onOpenChange={setStockOutOpen} />
+      <StockReturnDialog open={stockReturnOpen} onOpenChange={setStockReturnOpen} />
+      <AddItemDialog     open={addItemOpen}     onOpenChange={setAddItemOpen} />
 
-      {/* Stock list & Movements */}
-      <div className="grid lg:grid-cols-3 gap-8">
-        {/* Stock List Card */}
-        <Card className="lg:col-span-2 bg-surface border border-border-brand rounded-card shadow-card p-5">
-          <CardHeader className="flex flex-row items-center justify-between p-0 pb-4">
-            <div>
-              <CardTitle className="text-base font-semibold font-heading text-text-primary">Detailed Stock List</CardTitle>
-              <CardDescription className="text-text-secondary text-xs mt-1">Current availability and unit costs.</CardDescription>
+      {/* ── Low-Stock Alert Banner ── */}
+      {lowStockItems && lowStockItems.length > 0 && (
+        <div className="bg-rose-500/10 border border-rose-500/20 rounded-xl p-4 flex items-center gap-4 animate-in fade-in slide-in-from-top-4 duration-500">
+          <div className="p-2 bg-rose-500/20 rounded-full text-rose-400">
+            <AlertTriangle size={20} />
+          </div>
+          <div className="flex-1">
+            <p className="text-sm font-bold text-white">Low Stock Alert</p>
+            <p className="text-xs text-rose-400/80">
+              {lowStockItems.length} {lowStockItems.length === 1 ? 'item is' : 'items are'} below the minimum threshold (10 units).
+            </p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {lowStockItems.map((item) => (
+                <span
+                  key={item.id}
+                  className="rounded-full border border-rose-400/20 bg-rose-400/10 px-2.5 py-1 text-[11px] font-medium text-rose-300"
+                >
+                  {item.item_name} ({item.current_stock})
+                </span>
+              ))}
             </div>
-            <Button variant="ghost" size="icon" className="text-text-secondary hover:text-text-primary hover:bg-bg-subtle">
-              <Filter size={18} />
-            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Main Grid: Stock Table + Recent Movements ── */}
+      <div className="grid gap-8">
+        {/* Detailed Stock List */}
+        <Card className="w-full bg-slate-900 border-slate-800">
+          <CardHeader className="flex flex-row items-center justify-between">
+            <div>
+              <CardTitle className="text-white">Detailed Stock List</CardTitle>
+              <CardDescription>Current availability and unit costs.</CardDescription>
+            </div>
+            <Button variant="ghost" size="icon" className="text-slate-400"><Filter size={18} /></Button>
           </CardHeader>
-          <CardContent className="p-0 pt-4">
+          <CardContent>
             {loadingItems ? (
               <div className="space-y-2">
-                <Skeleton className="h-10 w-full bg-bg-subtle" />
-                <Skeleton className="h-10 w-full bg-bg-subtle" />
+                <Skeleton className="h-10 w-full bg-slate-800" />
+                <Skeleton className="h-10 w-full bg-slate-800" />
               </div>
             ) : (
-              <div className="rounded-xl border border-border-brand overflow-hidden">
-                <Table>
-                  <TableHeader className="bg-bg-subtle">
-                    <TableRow className="hover:bg-transparent border-border-brand">
-                      <TableHead className="text-text-secondary font-heading text-xs">Item Name</TableHead>
-                      <TableHead className="text-text-secondary font-heading text-xs">Stock</TableHead>
-                      <TableHead className="text-text-secondary font-heading text-xs">Unit Cost</TableHead>
-                      <TableHead className="text-text-secondary font-heading text-xs">Total Value</TableHead>
+              <div className="rounded-md border border-slate-800 overflow-x-auto">
+                <Table className="min-w-full">
+                  <TableHeader className="bg-slate-950">
+                    <TableRow className="hover:bg-transparent border-slate-800">
+                      <TableHead className="text-slate-300">Item Name</TableHead>
+                      <TableHead className="text-slate-300">Stock</TableHead>
+                      <TableHead className="text-slate-300">Unit Cost</TableHead>
+                      <TableHead className="text-slate-300">Total Value</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {items?.map((item) => (
-                      <TableRow key={item.id} className="border-border-brand hover:bg-[#14161C]/40 transition-colors">
-                        <TableCell className="font-semibold text-text-primary text-xs">{item.item_name}</TableCell>
+                      <TableRow key={item.id} className="border-slate-800 hover:bg-slate-800/40">
+                        <TableCell className="font-medium">{item.item_name}</TableCell>
                         <TableCell>
-                          <Badge variant="outline" className={
-                            item.current_stock < 10 
-                              ? 'text-negative border border-red-500/20 bg-red-500/5 rounded-full px-2 py-0.5 text-[10px]' 
-                              : 'text-positive border border-green-500/20 bg-green-500/5 rounded-full px-2 py-0.5 text-[10px]'
-                          }>
+                          <Badge variant="outline" className={item.current_stock < 10
+                            ? 'text-rose-400 border-rose-400/30 bg-rose-400/10'
+                            : 'text-emerald-400 border-emerald-400/30 bg-emerald-400/10'}>
                             {item.current_stock}
                           </Badge>
                         </TableCell>
-                        <TableCell className="font-mono text-xs text-text-primary font-semibold">LKR {item.unit_cost}</TableCell>
-                        <TableCell className="text-text-secondary font-mono text-xs">LKR {(item.current_stock * item.unit_cost).toLocaleString()}</TableCell>
+                        <TableCell>LKR {item.unit_cost}</TableCell>
+                        <TableCell className="text-slate-400">
+                          LKR {(item.current_stock * item.unit_cost).toLocaleString()}
+                        </TableCell>
                       </TableRow>
                     ))}
+                    {items?.length === 0 && (
+                      <TableRow><TableCell colSpan={4} className="text-center py-8 text-slate-500">No items in inventory yet.</TableCell></TableRow>
+                    )}
                   </TableBody>
                 </Table>
               </div>
@@ -288,45 +140,74 @@ export default function InventoryPage() {
           </CardContent>
         </Card>
 
-        {/* Movements Card */}
-        <Card className="bg-surface border border-border-brand rounded-card shadow-card p-5">
-          <CardHeader className="p-0 pb-4">
-            <CardTitle className="text-base font-semibold font-heading text-text-primary">Recent Movements</CardTitle>
-            <CardDescription className="text-text-secondary text-xs mt-1">Last 10 issue/return logs.</CardDescription>
+        {/* Recent Movements */}
+        <Card className="w-full bg-slate-900 border-slate-800">
+          <CardHeader>
+            <CardTitle className="text-white">Recent Movements</CardTitle>
+            <CardDescription>Last 10 issue / return / restock logs.</CardDescription>
           </CardHeader>
-          <CardContent className="p-0 pt-4">
-            {loadingTransactions ? (
+          <CardContent>
+            {loadingTx ? (
               <div className="space-y-4">
-                <Skeleton className="h-12 w-full bg-bg-subtle" />
-                <Skeleton className="h-12 w-full bg-bg-subtle" />
+                <Skeleton className="h-12 w-full bg-slate-800" />
+                <Skeleton className="h-12 w-full bg-slate-800" />
               </div>
             ) : (
-              <div className="space-y-4">
-                {transactions?.slice(0, 10).map((tx) => (
-                  <div key={tx.id} className="flex items-center justify-between p-3 rounded-lg bg-bg-subtle border border-border-brand hover:border-accent/20 transition-all">
-                    <div className="flex items-center gap-3">
-                      <div className={`p-2 rounded-full ${tx.transaction_type === 'Issue' ? 'bg-red-500/10 text-negative' : 'bg-green-500/10 text-positive'}`}>
-                        {tx.transaction_type === 'Issue' ? <ArrowUpRight size={16} /> : <ArrowDownLeft size={16} />}
-                      </div>
-                      <div>
-                        <p className="text-xs font-semibold text-text-primary">{tx.inventory_items?.item_name}</p>
-                        <p className="text-[10px] text-text-muted mt-0.5">{format(new Date(tx.transaction_date), 'MMM dd, yyyy')}</p>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                       <p className={`text-xs font-bold font-mono ${tx.transaction_type === 'Issue' ? 'text-negative' : 'text-positive'}`}>
-                         {tx.transaction_type === 'Issue' ? '-' : '+'}{tx.quantity}
-                       </p>
-                       <p className="text-[9px] text-text-secondary uppercase font-bold tracking-wider mt-0.5">{tx.programs?.program_name || 'Stock'}</p>
-                    </div>
-                  </div>
-                ))}
-                {transactions?.length === 0 && <p className="text-center py-8 text-text-muted text-xs italic">No recent movements</p>}
+              <div className="overflow-x-auto rounded-md border border-slate-800">
+                <Table className="min-w-[760px]">
+                  <TableHeader className="bg-slate-950">
+                    <TableRow className="border-slate-800">
+                      <TableHead className="text-slate-300 whitespace-nowrap">Date</TableHead>
+                      <TableHead className="text-slate-300 whitespace-nowrap">Item</TableHead>
+                      <TableHead className="text-right text-slate-300 whitespace-nowrap">Qty</TableHead>
+                      <TableHead className="text-right text-slate-300 whitespace-nowrap">Unit Cost</TableHead>
+                      <TableHead className="text-right text-slate-300 whitespace-nowrap">Total Cost</TableHead>
+                      <TableHead className="text-right text-slate-300 whitespace-nowrap">Type</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {transactions?.slice(0, 10).map((tx) => {
+                      const isOut = tx.transaction_type === 'Issue';
+                      const isIn = tx.transaction_type === 'Return';
+                      const unitCost = tx.inventory_items?.unit_cost ?? 0;
+                      const totalCost = tx.quantity * unitCost;
+                      return (
+                        <TableRow key={tx.id} className="border-slate-800 hover:bg-slate-800/40">
+                          <TableCell className="text-slate-300 text-sm">{format(new Date(tx.transaction_date), 'MMM dd')}</TableCell>
+                          <TableCell>
+                            <div className="text-sm font-medium text-white">{tx.inventory_items?.item_name ?? 'Unknown item'}</div>
+                            {tx.programs?.program_name && (
+                              <div className="text-[11px] text-slate-500">{tx.programs.program_name}</div>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-right text-slate-300">{tx.quantity}</TableCell>
+                          <TableCell className="text-right text-slate-300">{unitCost > 0 ? `LKR ${unitCost.toLocaleString()}` : '—'}</TableCell>
+                          <TableCell className="text-right text-slate-300">{unitCost > 0 ? `LKR ${totalCost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}</TableCell>
+                          <TableCell className="text-right">
+                            <Badge variant="outline" className={
+                              isOut ? 'text-rose-400 border-rose-400/30 bg-rose-400/10' : isIn ? 'text-emerald-400 border-emerald-400/30 bg-emerald-400/10' : 'text-sky-400 border-sky-400/30 bg-sky-400/10'
+                            }>
+                              {tx.transaction_type}
+                            </Badge>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                    {transactions?.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={6} className="text-center py-8 text-slate-500">
+                          No recent movements
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
               </div>
             )}
           </CardContent>
         </Card>
       </div>
+
     </div>
   );
 }
