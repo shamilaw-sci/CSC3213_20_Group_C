@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+
+{% block content %}
+<p><strong>Period:</strong> {{ period }}</p>
+
+<table>
+    <tr>
+        <th>Total Income</th>
+        <th>Total Expense</th>
+        <th>Net Balance</th>
+    </tr>
+    <tr>
+        <td>{{ total_income | lkr }}</td>
+        <td>{{ total_expense | lkr }}</td>
+        <td>{{ net_balance | lkr }}</td>
+    </tr>
+</table>
+
+<br/>
+
+<table>
+    <tr>
+        <th>Date</th>
+        <th>Type</th>
+        <th>Status</th>
+        <th>Amount</th>
+    </tr>
+    {% for t in transactions %}
+    <tr>
+        <td>{{ t.transaction_date }}</td>
+        <td>{{ t.transaction_type }}</td>
+        <td>{{ t.status }}</td>
+        <td>{{ t.amount | lkr }}</td>
+    </tr>
+    {% endfor %}
+</table>
+{% endblock %}

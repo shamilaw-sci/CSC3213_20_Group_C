@@ -114,7 +114,7 @@ export default function Homepage() {
       }`}>
         <div className="max-w-[1280px] mx-auto px-6 md:px-12 h-16 flex justify-between items-center">
           <Link href="/" className="flex items-center gap-2.5 hover:opacity-90 transition-opacity">
-            <Image src="/vff-logo.png" alt="Vets For Future" width={36} height={36} className="h-9 w-9 object-contain" />
+            <Image src="/vff-logo.png" alt="Vets For Future" width={36} height={36} priority className="h-9 w-9 object-contain" />
             <span className="text-sm font-extrabold tracking-wider uppercase text-text-primary">
               VFF IMS
             </span>

@@ -162,7 +162,7 @@ async def get_financial_summary(
     user = Depends(check_user_role(["admin", "director", "finance"])),
     supabase: Client = Depends(get_supabase)
 ):
-    response = supabase.rpc("get_finance_summary").execute()
+    response = supabase.rpc("get_finance_summary", {}).execute()
     
     if not response.data:
         raise HTTPException(status_code=500, detail="Failed to fetch financial summary")
