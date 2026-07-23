@@ -62,3 +62,28 @@ export function useCreateEmployee() {
     }
   });
 }
+
+export function useLogAttendance() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: HRService.logAttendance,
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['attendance', variables.target_date] });
+      toast.success('Attendance logged');
+    },
+    onError: (error: any) => toast.error(error?.response?.data?.detail || 'Failed to log attendance'),
+  });
+}
+
+export function useUpdateAttendance() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...data }: { id: number; clock_in?: string; clock_out?: string }) =>
+      HRService.updateAttendance(id, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['attendance'] });
+      toast.success('Attendance updated');
+    },
+    onError: (error: any) => toast.error(error?.response?.data?.detail || 'Failed to update attendance'),
+  });
+}
