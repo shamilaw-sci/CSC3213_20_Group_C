@@ -1,6 +1,8 @@
 from fastapi import APIRouter, HTTPException, Depends
+from postgrest.exceptions import APIError
 from app.core.supabase import get_supabase
 from app.core.security import check_user_role
+from app.core.permissions import UserRole
 from app.schemas.inventory import (
     InventoryItem,
     InventoryItemCreate,
@@ -13,7 +15,14 @@ from app.schemas.inventory import (
 from typing import List, Optional
 from datetime import date, timedelta
 from supabase import Client
-from app.core.security import check_user_role
+
+# Roles that have any inventory access (read or issue)
+INVENTORY_ROLES = [
+    UserRole.ADMIN.value,
+    UserRole.DIRECTOR.value,
+    UserRole.FINANCE_OFFICER.value,
+    UserRole.STAFF.value,
+]
 
 router = APIRouter()
 
@@ -26,7 +35,18 @@ async def get_items(supabase: Client = Depends(get_supabase)):
 
 @router.post("/items", response_model=InventoryItem)
 async def create_item(item: InventoryItemCreate, supabase: Client = Depends(get_supabase)):
-    response = supabase.table("inventory_items").insert(item.model_dump()).execute()
+    # How much initial stock the caller wants. We store 0 in the DB first,
+    # then let the Restock RPC adjust it so total_cost is calculated correctly.
+    requested_initial_stock = item.current_stock
+
+    # Always insert with current_stock=0; the Restock RPC below will set
+    # the real value if the caller requested initial stock > 0.
+    # mode='json' converts Python date/datetime objects to ISO strings so
+    # Supabase's HTTP client can serialize them correctly.
+    insert_data = item.model_dump(mode="json")
+    insert_data["current_stock"] = 0
+
+    response = supabase.table("inventory_items").insert(insert_data).execute()
     if not response.data:
         raise HTTPException(status_code=400, detail="Failed to create item")
 
@@ -68,6 +88,24 @@ async def create_item(item: InventoryItemCreate, supabase: Client = Depends(get_
 
 
 # ===================================================================
+# HELPER
+# ===================================================================
+
+def _map_transaction_row(row: dict) -> dict:
+    """
+    The live DB uses `transaction_id` as the PK column name on
+    inventory_transactions (renamed manually; init.sql was never updated).
+    Rename it to `id` here so the Pydantic model and frontend always
+    see a consistent field name.
+    """
+    if "transaction_id" in row and "id" not in row:
+        row = {**row, "id": row.pop("transaction_id")}
+    # Default total_cost to 0 if the column is missing (older rows)
+    row.setdefault("total_cost", 0)
+    return row
+
+
+# ===================================================================
 # TRANSACTIONS
 # ===================================================================
 
@@ -100,16 +138,20 @@ async def create_transaction(transaction: InventoryTransactionCreate, supabase: 
         new_stock -= transaction.quantity
     elif transaction.transaction_type == "Return":
         new_stock += transaction.quantity
+    elif transaction.transaction_type == "Restock":
+        new_stock += transaction.quantity
     
     # Update stock
     update_response = supabase.table("inventory_items").update({"current_stock": new_stock}).eq("id", transaction.item_id).execute()
     
     # Log transaction
-    response = supabase.table("inventory_transactions").insert(transaction.model_dump()).execute()
+    # mode='json' converts the date field to an ISO string so Supabase
+    # can serialize it correctly.
+    response = supabase.table("inventory_transactions").insert(transaction.model_dump(mode="json")).execute()
     if not response.data:
         raise HTTPException(status_code=400, detail="Failed to log inventory transaction")
 
-    return _map_transaction_row(response.data)
+    return _map_transaction_row(response.data[0])
 
 
 # ===================================================================
