@@ -124,3 +124,12 @@ export function useUpdateAttendance() {
     onError: (error: any) => toast.error(error?.response?.data?.detail || 'Failed to update attendance'),
   });
 }
+
+export function useExportAttendance() {
+  return useMutation({
+    mutationFn: HRService.exportAttendance,
+    onError: (error: any) => {
+      toast.error(error?.response?.data?.detail || 'Failed to export attendance');
+    },
+  });
+}

@@ -1,14 +1,15 @@
 from fastapi import APIRouter, HTTPException, Depends
 from app.core.supabase import get_supabase
-from app.schemas.hr import (
-    EmployeeProfile, EmployeeProfileCreate,
-    AttendanceLog, AttendanceLogCreate, AttendanceLogUpdate,
-    PayrollLedger
-)
+from app.schemas.hr import (EmployeeProfile, EmployeeProfileCreate,AttendanceLog, AttendanceLogCreate, AttendanceLogUpdate,PayrollLedger)
 from typing import List, Optional, Dict, Any
 from datetime import date, datetime, timezone
 from supabase import Client
 from app.core.security import require_permission
+from fastapi.responses import StreamingResponse
+from datetime import date as date_cls
+from fastapi import HTTPException
+import io
+import csv
 
 router = APIRouter()
 
@@ -145,6 +146,44 @@ async def log_attendance(attendance: AttendanceLogCreate, user = Depends(require
         raise HTTPException(status_code=400, detail="Failed to log attendance")
     return response.data[0]
 
+@router.get("/attendance/export")
+async def export_attendance(
+    target_date: str,
+    user = Depends(require_permission('hr:attendance:manage')),
+    supabase: Client = Depends(get_supabase),
+):
+    try:
+        parsed_date = date_cls.fromisoformat(target_date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="target_date must be in YYYY-MM-DD format")
+
+    logs = (
+        supabase.table("attendance_log")
+        .select("*, employee_profile(first_name, last_name)")
+        .eq("target_date", parsed_date.isoformat())
+        .execute()
+    )
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Employee", "Check In", "Check Out", "Worked Hours"])
+
+    for log in logs.data or []:
+        profile = log.get("employee_profile") or {}
+        full_name = f"{profile.get('first_name', '')} {profile.get('last_name', '')}".strip()
+        writer.writerow([
+            full_name,
+            log.get("clock_in"),
+            log.get("clock_out"),
+            log.get("worked_hours"),
+        ])
+
+    output.seek(0)
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=attendance_{parsed_date.isoformat()}.csv"}
+    )
 
 @router.put("/attendance/{attendance_id}", response_model=AttendanceLog)
 async def update_attendance(attendance_id: int, attendance: AttendanceLogUpdate, user = Depends(require_permission('hr:attendance:manage')), supabase: Client = Depends(get_supabase)):
@@ -219,3 +258,4 @@ async def generate_monthly_payroll(
         if "No active employees found" in msg:
             raise HTTPException(status_code=404, detail=msg)
         raise HTTPException(status_code=500, detail=f"Payroll generation failed: {msg}")
+
