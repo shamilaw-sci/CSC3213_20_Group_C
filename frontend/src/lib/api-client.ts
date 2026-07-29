@@ -10,12 +10,24 @@ const api = axios.create({
 // Mocking behavior for demo
 api.interceptors.request.use((config) => {
   if (typeof window !== 'undefined') {
+    let token: string | null = null;
+
     const storage = localStorage.getItem('vff-auth-storage');
     if (storage) {
-      const { state } = JSON.parse(storage);
-      if (state.token) {
-        config.headers.Authorization = `Bearer ${state.token}`;
+      try {
+        const { state } = JSON.parse(storage);
+        token = state?.token || null;
+      } catch {
+        token = null;
       }
+    }
+
+    if (!token) {
+      token = localStorage.getItem('auth_token');
+    }
+
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
     }
   }
   return config;

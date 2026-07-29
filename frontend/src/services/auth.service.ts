@@ -2,7 +2,7 @@ import api from '@/lib/api-client';
 
 export const AuthService = {
   login: async (credentials: any) => {
-    const response = await api.post('/auth/login', credentials);
+    const response = await api.post('/api/auth/login', credentials);
     if (response.data.access_token) {
       localStorage.setItem('auth_token', response.data.access_token);
       localStorage.setItem('user_role', response.data.user.role);
@@ -11,7 +11,7 @@ export const AuthService = {
   },
   
   register: async (userData: any) => {
-    const response = await api.post('/auth/register', userData);
+    const response = await api.post('/api/auth/register', userData);
     return response.data;
   },
   
@@ -21,12 +21,12 @@ export const AuthService = {
   },
 
   getUsers: async () => {
-    const response = await api.get('/auth/users');
+    const response = await api.get('/api/auth/users');
     return response.data;
   },
   
   updateUserRole: async (userId: string, roleId: number) => {
-    const response = await api.put(`/auth/users/${userId}/role`, { role_id: roleId });
+    const response = await api.put(`/api/auth/users/${userId}/role`, { role_id: roleId });
     return response.data;
   },
   
