@@ -29,6 +29,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { format } from 'date-fns';
 import { NewTransactionModal } from '@/components/finance/NewTransactionModal';
+import { FinanceReportButton } from '@/components/finance/FinanceReportButton';
 import { EditTransactionModal } from '@/components/finance/EditTransactionModal';
 import {
   Dialog,
@@ -54,6 +55,8 @@ import {
   Cell
 } from 'recharts';
 import { KPICard } from '@/components/shared/kpi-card';
+import { ReportsService } from '@/services/reports.service';
+import { toast } from 'sonner';
 
 const formatLKR = (amount: number) => {
   return new Intl.NumberFormat('en-LK', {
@@ -128,6 +131,8 @@ export default function FinancePage() {
             Track income, expenses, and manage receivables across all programs.
           </p>
         </div>
+        <div className="flex items-center gap-3">
+          <FinanceReportButton />
         <Button 
           onClick={() => setShowNewModal(true)} 
           className="bg-[#EF9F27] hover:bg-[#D97706] text-white font-semibold flex items-center gap-2 rounded-lg py-2 px-4 shadow-sm transition-all"
@@ -135,6 +140,7 @@ export default function FinancePage() {
           <PlusCircle className="h-4 w-4" /> New Transaction
         </Button>
       </div>
+    </div>
 
       {/* KPI Strip */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -558,10 +564,12 @@ export default function FinancePage() {
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="mt-4 gap-2">
-            <DialogClose>
-              <Button className="border border-border-brand text-text-secondary hover:bg-bg-subtle rounded-lg text-xs py-1.5 px-3">
-                Cancel
-              </Button>
+            <DialogClose
+              render={
+                  <Button className="border border-border-brand text-text-secondary hover:bg-bg-subtle rounded-lg text-xs py-1.5 px-3" />
+                   }
+                    >
+                  Cancel
             </DialogClose>
             <Button
               onClick={() => voidingTransaction && voidTransaction(voidingTransaction.id)}

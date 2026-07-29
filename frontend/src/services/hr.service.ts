@@ -57,5 +57,19 @@ export const HRService = {
   generatePayroll: async (month: number, year: number) => {
     const response = await api.post(`/hr/payroll/generate`, null, { params: { month, year } });
     return response.data;
+  },
+
+  updateAttendance: async (id: number, attendance: { clock_in?: string; clock_out?: string }) => {
+  const response = await api.put<AttendanceRecord>(`/hr/attendance/${id}`, attendance);
+  return response.data;
+  },
+
+  exportAttendance: async (date: string) => {
+    const response = await api.get(`/hr/attendance/export`, {
+      params: { target_date: date },
+      responseType: 'blob', 
+    });
+    return response.data;
   }
+
 };

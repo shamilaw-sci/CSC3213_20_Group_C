@@ -10,7 +10,7 @@ if os.path.exists(vendor_dir) and vendor_dir not in sys.path:
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api import hr, finance, inventory, auth, admin
+from app.api import hr, finance, inventory, auth, reports, admin
 
 
 app = FastAPI(title="VFF IMS API", version="1.0.0")
@@ -33,8 +33,10 @@ async def root():
 app.include_router(auth.router, prefix="/api/auth", tags=["Auth"])
 app.include_router(hr.router, prefix="/api/hr", tags=["HR"])
 app.include_router(finance.router, prefix="/api/finance", tags=["Finance"])
+app.include_router(reports.router, prefix="/api/reports", tags=["Reports"])
 app.include_router(inventory.router, prefix="/api/inventory", tags=["Inventory"])
 app.include_router(admin.router, prefix="/api/admin", tags=["Admin"])
+
 
 
 if __name__ == "__main__":

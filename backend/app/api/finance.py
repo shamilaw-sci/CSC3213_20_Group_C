@@ -187,31 +187,10 @@ async def get_financial_summary(
     user = Depends(require_permission('finance:read')),
     supabase: Client = Depends(get_supabase)
 ):
-    # Fetch all transactions to compute summary
-    response = supabase.table("financial_transactions").select("amount, transaction_type, status").execute()
-    transactions = response.data or []
-    
-    cash_available = 0
-    receivables = 0
-    monthly_expenses = 0 # Approximated from all expenses for this simple summary
-    
-    for t in transactions:
-        amt = float(t["amount"])
-        if t["transaction_type"] == "Income":
-            if t["status"] == "Cash":
-                cash_available += amt
-            elif t["status"] == "Receivable":
-                receivables += amt
-        elif t["transaction_type"] == "Expense":
-            monthly_expenses += amt
-            if t["status"] == "Cash":
-                cash_available -= amt
-                
-    return {
-        "cash_available": cash_available,
-        "receivables": receivables,
-        "monthly_expenses": monthly_expenses
-    }
+    response = supabase.rpc("get_finance_summary", {}).execute()
+
+    # RPC already returns {"cash_available": ..., "receivables": ..., "monthly_expenses": ...}
+    return response.data
 
 @router.get("/aging")
 async def get_aging_summary(
