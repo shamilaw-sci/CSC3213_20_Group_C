@@ -58,8 +58,8 @@ export function useLockAttendance() {
   
   return useMutation({
     mutationFn: HRService.lockAttendance,
-    onSuccess: (_, date) => {
-      queryClient.invalidateQueries({ queryKey: ['attendance', date] });
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['attendance'] });
       toast.success('Attendance records locked for this date');
     },
     onError: () => {
@@ -104,8 +104,8 @@ export function useLogAttendance() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: HRService.logAttendance,
-    onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: ['attendance', variables.target_date] });
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['attendance'] });
       toast.success('Attendance logged');
     },
     onError: (error: any) => toast.error(error?.response?.data?.detail || 'Failed to log attendance'),
