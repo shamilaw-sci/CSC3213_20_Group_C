@@ -10,7 +10,8 @@ import {
   ArrowDownUp,
   RotateCcw,
   BookOpen,
-  FolderOpen
+  FolderOpen,
+  MapPin
 } from 'lucide-react';
 import type { Permission } from './permissions';
 
@@ -63,6 +64,12 @@ export const NAVIGATION_CONFIG: NavSection[] = [
     title: 'PROGRAMS',
     items: [
       { label: 'Active Programs', href: '/programs', icon: FolderOpen, requiredPermission: 'programs:read' },
+    ]
+  },
+  {
+    title: 'RESCUE CASES',
+    items: [
+      { label: 'Case Hotspots', href: '/cases', icon: MapPin },
     ]
   },
   {
