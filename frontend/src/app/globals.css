@@ -118,7 +118,8 @@
 
 @layer base {
   * {
-    @apply border-border outline-ring/50;
+    border-color: var(--border);
+    outline-color: var(--ring);
   }
   body {
     background-color: var(--color-bg);
@@ -128,4 +129,21 @@
   h1, h2, h3, h4, h5, h6 {
     font-family: var(--font-heading);
   }
+}
+
+[popover] {
+  background-color: transparent;
+  border: none;
+  color: inherit;
+  padding: 0;
+  margin: 0;
+}
+
+[data-slot="select-content"] {
+  background-color: var(--popover) !important;
+  color: var(--popover-foreground) !important;
+}
+
+.leaflet-container {
+  z-index: 0;
 }

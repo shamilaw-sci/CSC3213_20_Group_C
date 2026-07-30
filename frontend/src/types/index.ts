@@ -90,3 +90,12 @@ export interface AuditLog {
     };
   };
 }
+
+export interface RescueCaseGeo {
+  id: string;
+  animal_type: string;
+  status: 'Reported' | 'Assigned' | 'In Treatment' | 'Resolved';
+  lat: number;
+  lng: number;
+  reported_at: string;
+}
