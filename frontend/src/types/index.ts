@@ -50,7 +50,8 @@ export interface Program {
   program_name: string;
   total_animals_treated: number;
   status: string;
-  budget?: number;
+  budget?: number; // legacy field — not present in the actual DB schema, left untouched (not your module)
+  total_cost?: number; // new: auto-maintained by a DB trigger whenever inventory or finance transactions change
 }
 
 export interface InventoryItem {
@@ -58,6 +59,8 @@ export interface InventoryItem {
   item_name: string;
   current_stock: number;
   unit_cost: number;
+  expire_date?: string | null;   // ISO date string e.g. "2026-12-31", optional since not every item has one
+  supplier_name?: string | null;
 }
 
 export interface InventoryTransaction {
@@ -65,14 +68,42 @@ export interface InventoryTransaction {
   item_id: number;
   program_id: number | null;
   quantity: number;
-  transaction_type: 'Issue' | 'Return';
+  transaction_type: 'Issue' | 'Return' | 'Restock';
   transaction_date: string;
+  total_cost: number; // calculated by the DB (quantity * unit_cost at the time), never sent by the client
   inventory_items?: {
     item_name: string;
   };
   programs?: {
     program_name: string;
   };
+}
+
+// Response shape for GET /inventory/alerts/low-stock
+export interface LowStockItem {
+  id: number;
+  item_name: string;
+  current_stock: number;
+  supplier_name?: string | null;
+}
+
+// Response shape for GET /inventory/alerts/expiring
+export interface ExpiringItem {
+  id: number;
+  item_name: string;
+  expire_date: string;
+  current_stock: number;
+}
+
+// Response shape for GET /inventory/analytics/cost-per-animal/{program_id}
+export interface CostPerAnimalResult {
+  program_id: number;
+  program_name: string;
+  inventory_cost: number;
+  other_cost: number;
+  total_cost: number;
+  animals_treated: number;
+  cost_per_animal: number;
 }
 
 export interface AuditLog {

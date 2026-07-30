@@ -2,28 +2,83 @@ from pydantic import BaseModel, ConfigDict
 from datetime import date
 from typing import Optional
 
+
 class InventoryItemBase(BaseModel):
     item_name: str
     current_stock: int = 0
     unit_cost: float
+    # These two already exist in your live DB (we confirmed via screenshot),
+    # but were missing from this schema, so the API was silently ignoring them.
+    expire_date: Optional[date] = None
+    supplier_name: Optional[str] = None
+
 
 class InventoryItemCreate(InventoryItemBase):
     pass
+
 
 class InventoryItem(InventoryItemBase):
     id: int
     model_config = ConfigDict(from_attributes=True)
 
+
 class InventoryTransactionBase(BaseModel):
     item_id: int
     program_id: Optional[int] = None
     quantity: int
-    transaction_type: str  # Enum: Issue, Return
+    # Now includes 'Restock', matching the updated CHECK constraint in the DB.
+    transaction_type: str  # Enum: Issue, Return, Restock
     transaction_date: date
 
+
+# What the CLIENT sends us to create a transaction. Deliberately has NO
+# total_cost field — the client never gets to decide what something cost.
+# The database calculates that itself (quantity * unit_cost) inside
+# process_inventory_transaction(), so a buggy or malicious request can't
+# fake a cost.
 class InventoryTransactionCreate(InventoryTransactionBase):
     pass
 
+
+# What we return to the client.
+#
+# IMPORTANT: your live database's primary key column on this table is
+# actually called `transaction_id`, not `id` (you renamed it manually,
+# and init.sql was never updated to match). Rather than making the
+# frontend deal with that inconsistent name, the API layer (inventory.py)
+# explicitly renames transaction_id -> id on every row BEFORE handing it
+# to this model, using a small helper function. That keeps the rename
+# visible and easy to find, instead of hiding it inside a serialization
+# alias that behaves differently for input vs output.
 class InventoryTransaction(InventoryTransactionBase):
     id: int
+    total_cost: float = 0
     model_config = ConfigDict(from_attributes=True)
+
+
+# ---------------------------------------------------------------
+# Response models for the new alert / analytics endpoints
+# ---------------------------------------------------------------
+
+class LowStockItem(BaseModel):
+    id: int
+    item_name: str
+    current_stock: int
+    supplier_name: Optional[str] = None
+
+
+class ExpiringItem(BaseModel):
+    id: int
+    item_name: str
+    expire_date: date
+    current_stock: int
+
+
+class CostPerAnimalResult(BaseModel):
+    program_id: int
+    program_name: str
+    inventory_cost: float
+    other_cost: float
+    total_cost: float
+    animals_treated: int
+    cost_per_animal: float
