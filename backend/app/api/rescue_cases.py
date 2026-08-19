@@ -162,10 +162,32 @@ async def update_case_status(
     case_id: str,
     payload: CaseStatusUpdate,
     supabase: Client = Depends(get_supabase),
-    current_user: dict = Depends(require_permission("rescue:manage")),
+    current_user: dict = Depends(require_permission("rescue:read")),
 ):
+    existing = (
+        supabase.table("rescue_cases")
+        .select("status")
+        .eq("id", case_id)
+        .execute()
+    )
+    if not existing.data:
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    role_name = (current_user.get("roles", {}).get("role_name") or "")
+    current_status = existing.data[0]["status"]
+
+    # Handing a freshly reported case to someone is the act of assigning, so rescue:assign
+    # covers it on its own. Every other status move is case management.
+    is_assignment_handoff = (
+        current_status == CaseStatus.reported.value
+        and payload.new_status == CaseStatus.assigned
+        and payload.assigned_to is not None
+    )
+    if payload.new_status.value != current_status and not is_assignment_handoff:
+        if not has_permission(role_name, "rescue:manage"):
+            raise HTTPException(403, "You do not have permission to change case status")
+
     if payload.assigned_to is not None:
-        role_name = (current_user.get("roles", {}).get("role_name") or "")
         is_self_assign = str(payload.assigned_to) == str(current_user["id"])
         if not is_self_assign and not has_permission(role_name, "rescue:assign"):
             raise HTTPException(403, "Only Director/HR Officer/Admin can assign cases to other staff")
