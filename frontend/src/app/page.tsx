@@ -121,6 +121,8 @@ export default function Homepage() {
           </Link>
           <nav className="flex items-center gap-6 text-xs font-semibold text-text-secondary">
             <Link href="/" className="hover:text-text-primary transition-colors duration-150">Home</Link>
+            <Link href="/report" className="hover:text-text-primary transition-colors duration-150">Report an Animal</Link>
+            <Link href="/outbreak-map" className="hover:text-text-primary transition-colors duration-150">Hotspot Map</Link>
             {isAuthenticated ? (
               <>
                 <Link href="/dashboard" className="text-[#EF9F27] hover:text-[#EF9F27]/80 flex items-center gap-1 font-semibold">
@@ -458,6 +460,8 @@ export default function Homepage() {
           <div className="space-y-4">
             <span className="font-bold uppercase tracking-wider text-text-primary">System Portals</span>
             <ul className="space-y-2">
+              <li><Link href="/report" className="hover:text-text-primary">Report an Animal</Link></li>
+              <li><Link href="/outbreak-map" className="hover:text-text-primary">Case Hotspot Map</Link></li>
               <li><Link href="/login" className="hover:text-text-primary">User Portal Login</Link></li>
               <li><Link href="/register" className="hover:text-text-primary">Staff Registry Signup</Link></li>
             </ul>
@@ -482,7 +486,7 @@ export default function Homepage() {
 
         <div className="max-w-[1280px] mx-auto px-6 md:px-12 border-t border-border-brand/60 pt-6 flex flex-col md:flex-row justify-between items-center gap-4 text-text-secondary">
           <span>© {new Date().getFullYear()} Vets For Future. All Rights Reserved.</span>
-          <span>Internal Use Only · English Language Edition (SL)</span>
+          <span>English Language Edition (SL)</span>
         </div>
       </footer>
 

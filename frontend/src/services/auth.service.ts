@@ -26,7 +26,7 @@ export const AuthService = {
   },
   
   updateUserRole: async (userId: string, roleId: number) => {
-    const response = await api.put(`/api/auth/users/${userId}/role`, { role_id: roleId });
+    const response = await api.put(`/auth/users/${userId}/role`, { role_id: roleId });
     return response.data;
   },
   

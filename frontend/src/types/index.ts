@@ -130,3 +130,17 @@ export interface RescueCaseGeo {
   lng: number;
   reported_at: string;
 }
+
+export interface CaseOut {
+  id: string;
+  animal_type: string;
+  description?: string;
+  status: 'Reported' | 'Assigned' | 'In Treatment' | 'Resolved';
+  lat: number;
+  lng: number;
+  photo_url?: string;
+  reported_by?: string;
+  assigned_to?: string;
+  reported_at: string;
+  updated_at: string;
+}

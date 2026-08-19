@@ -13,7 +13,10 @@ export type Permission =
   | 'programs:read'
   | 'programs:manage'
   | 'admin:users'
-  | 'audit:read';
+  | 'audit:read'
+  | 'rescue:read'
+  | 'rescue:manage'
+  | 'rescue:assign';
 
 // NOTE: Must stay in sync with backend/app/core/permissions.py
 export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
@@ -21,22 +24,24 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'hr:manage', 'hr:attendance:self', 'hr:attendance:manage',
     'payroll:generate', 'payroll:approve', 'finance:read',
     'finance:write', 'inventory:read', 'inventory:issue',
-    'programs:read', 'programs:manage', 'admin:users', 'audit:read'
+    'programs:read', 'programs:manage', 'admin:users', 'audit:read',
+    'rescue:read', 'rescue:manage', 'rescue:assign'
   ],
   Director: [
     'finance:read', 'payroll:approve', 'programs:read',
-    'inventory:read', 'audit:read'
+    'inventory:read', 'audit:read', 'rescue:read' , 'rescue:assign'
   ],
   'HR Officer': [
     'hr:manage', 'hr:attendance:manage', 'hr:attendance:self',
-    'payroll:generate'
+    'payroll:generate' , 'rescue:read', 'rescue:assign'
   ],
   'Finance Officer': [
     'finance:read', 'finance:write', 'payroll:generate',
     'inventory:read'
   ],
   Staff: [
-    'hr:attendance:self', 'programs:read', 'inventory:issue'
+    'hr:attendance:self', 'programs:read', 'inventory:issue',
+    'rescue:read', 'rescue:manage'
   ]
 };
 
