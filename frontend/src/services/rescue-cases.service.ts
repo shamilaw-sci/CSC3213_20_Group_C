@@ -10,21 +10,33 @@ export interface CaseCreatePayload {
   photo_url?: string;
 }
 
-export interface Hotspot {
-  grid_lat: number;
-  grid_lng: number;
-  count: number;
-  animal_breakdown: Record<string, number>;
-  latest_report_at: string;
-  is_active_outbreak: boolean;
-  outbreak_animal_types: string[];
-}
-
 
 
 export interface CaseStatusUpdatePayload {
   new_status: string;
   assigned_to?: string;
+}
+
+export interface OutbreakZone {
+  id: string;
+  animal_type: string;
+  title: string;
+  description?: string;
+  center_lat: number;
+  center_lng: number;
+  radius_km: number;
+  declared_at: string;
+  is_active: boolean;
+  resolved_at?: string | null;
+}
+
+export interface OutbreakZoneCreatePayload {
+  animal_type: string;
+  title: string;
+  description?: string;
+  center_lat: number;
+  center_lng: number;
+  radius_km: number;
 }
 
 export const RescueCasesService = {
@@ -47,10 +59,6 @@ export const RescueCasesService = {
     );
     return response.data.photo_url;
   },
-    getHotspots: async (days = 30) => {
-    const response = await api.get<Hotspot[]>('/rescue_cases/hotspots', { params: { days } });
-    return response.data;
-  },
     listCases: async (status?: string) => {
     const response = await api.get<CaseOut[]>('/rescue_cases/cases', {
       params: status ? { status } : undefined,
@@ -61,5 +69,19 @@ export const RescueCasesService = {
   updateCaseStatus: async (caseId: string, payload: CaseStatusUpdatePayload) => {
     const response = await api.patch<CaseOut>(`/rescue_cases/cases/${caseId}/status`, payload);
     return response.data;
-  }
+  },
+  getOutbreakZones: async () => {
+    const response = await api.get<OutbreakZone[]>('/rescue_cases/outbreak-zones');
+    return response.data;
+  },
+
+  declareOutbreakZone: async (payload: OutbreakZoneCreatePayload) => {
+    const response = await api.post<OutbreakZone>('/rescue_cases/outbreak-zones', payload);
+    return response.data;
+  },
+
+  resolveOutbreakZone: async (zoneId: string) => {
+    const response = await api.patch<OutbreakZone>(`/rescue_cases/outbreak-zones/${zoneId}/resolve`);
+    return response.data;
+  },
 };
