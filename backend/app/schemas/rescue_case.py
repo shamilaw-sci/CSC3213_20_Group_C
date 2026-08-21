@@ -43,15 +43,27 @@ class CaseOut(BaseModel):
     reported_at: datetime
     updated_at: datetime
 
-class RescueHotspot(BaseModel):
-    grid_lat: float
-    grid_lng: float
-    count: int
-    animal_breakdown: dict[str, int]
-    latest_report_at: datetime
-    is_active_outbreak: bool
-    outbreak_animal_types: list[str] = []
 
 class CaseStatusUpdate(BaseModel):
     new_status: CaseStatus
     assigned_to: Optional[UUID] = None  # staff can self-assign or assign a colleague
+
+class OutbreakZoneCreate(BaseModel):
+    animal_type: str
+    title: str
+    description: Optional[str] = None
+    center_lat: float
+    center_lng: float
+    radius_km: float
+
+class OutbreakZoneOut(BaseModel):
+    id: UUID
+    animal_type: str
+    title: str
+    description: Optional[str] = None
+    center_lat: float
+    center_lng: float
+    radius_km: float
+    declared_at: datetime
+    is_active: bool
+    resolved_at: Optional[datetime] = None
