@@ -56,5 +56,4 @@ ROLE_PERMISSIONS = {
 
 def has_permission(role: str, permission: str) -> bool:
     role_perms = ROLE_PERMISSIONS.get(role, [])
-    print(f"[perm] role={role!r} needs={permission!r} has={role_perms}")
     return permission in role_perms
