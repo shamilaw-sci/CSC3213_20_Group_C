@@ -7,7 +7,6 @@ from typing import Optional
 
 class CaseStatus(str, Enum):
     reported = "Reported"
-    assigned = "Assigned"
     in_treatment = "In Treatment"
     resolved = "Resolved"
 
