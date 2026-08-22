@@ -6,19 +6,15 @@ from datetime import datetime, timedelta, timezone
 from supabase import Client
 from fastapi import UploadFile, File
 import uuid
-from collections import defaultdict
 from app.core.security import require_permission
 from app.core.security import has_permission
-from app.schemas.rescue_case import CaseStatusUpdate
 from app.core.supabase import get_supabase, get_public_supabase
-from app.schemas.rescue_case import RescueCaseGeo, RescueHotspot, CaseStatus, CaseCreate, CaseOut
+from app.schemas.rescue_case import (
+    RescueCaseGeo, CaseStatus, CaseCreate, CaseOut, CaseStatusUpdate,
+    OutbreakZoneCreate, OutbreakZoneOut,
+)
 
 router = APIRouter()
-
-GRID_SIZE = 0.02          # ~2km cells — tune coarser/finer as needed
-MIN_CLUSTER_SIZE = 2       # cells with fewer reports than this are hidden entirely
-OUTBREAK_THRESHOLD = 3     # same-animal-type reports needed to flag "active outbreak"
-OUTBREAK_WINDOW_DAYS = 7   # within this many days
 
 
 @router.get("/geo", response_model=list[RescueCaseGeo])
@@ -62,6 +58,7 @@ async def create_case(
 
     return response.data[0]
 
+
 @router.post("/upload-photo")
 async def upload_case_photo(
     file: UploadFile = File(...),
@@ -85,63 +82,6 @@ async def upload_case_photo(
     public_url = supabase.storage.from_("case-photos").get_public_url(path)
     return {"photo_url": public_url}
 
-@router.get("/hotspots", response_model=list[RescueHotspot])
-async def get_hotspots(
-    days: Optional[int] = Query(30, description="Look back this many days"),
-    supabase: Client = Depends(get_public_supabase),
-):
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    rows = (
-        supabase.table("rescue_cases")
-        .select("animal_type, lat, lng, reported_at")
-        .gte("reported_at", cutoff)
-        .execute()
-        .data
-        or []
-    )
-
-    cells: dict[tuple[float, float], list[dict]] = defaultdict(list)
-    for r in rows:
-        cell_key = (
-            round(r["lat"] / GRID_SIZE) * GRID_SIZE,
-            round(r["lng"] / GRID_SIZE) * GRID_SIZE,
-        )
-        cells[cell_key].append(r)
-
-    outbreak_cutoff = datetime.now(timezone.utc) - timedelta(days=OUTBREAK_WINDOW_DAYS)
-    hotspots = []
-
-    for (grid_lat, grid_lng), cases in cells.items():
-        if len(cases) < MIN_CLUSTER_SIZE:
-            continue  # too few reports — don't expose an isolated location
-
-        breakdown: dict[str, int] = defaultdict(int)
-        for c in cases:
-            breakdown[c["animal_type"]] += 1
-
-        latest = max(c["reported_at"] for c in cases)
-
-        recent_same_type_counts = defaultdict(int)
-
-        for c in cases:
-            reported_dt = datetime.fromisoformat(c["reported_at"].replace("Z", "+00:00"))
-            if reported_dt >= outbreak_cutoff:
-                recent_same_type_counts[c["animal_type"]] += 1
-        outbreak_types = [
-            animal_type for animal_type, cnt in recent_same_type_counts.items()
-            if cnt >= OUTBREAK_THRESHOLD
-        ]
-        hotspots.append(RescueHotspot(
-            grid_lat=round(grid_lat, 4),
-            grid_lng=round(grid_lng, 4),
-            count=len(cases),
-            animal_breakdown=dict(breakdown),
-            latest_report_at=latest,
-            is_active_outbreak=len(outbreak_types) > 0,
-            outbreak_animal_types=outbreak_types,
-        ))
-
-    return hotspots
 
 @router.get("/cases", response_model=list[CaseOut])
 async def list_cases(
@@ -162,10 +102,32 @@ async def update_case_status(
     case_id: str,
     payload: CaseStatusUpdate,
     supabase: Client = Depends(get_supabase),
-    current_user: dict = Depends(require_permission("rescue:manage")),
+    current_user: dict = Depends(require_permission("rescue:read")),
 ):
+    existing = (
+        supabase.table("rescue_cases")
+        .select("status")
+        .eq("id", case_id)
+        .execute()
+    )
+    if not existing.data:
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    role_name = (current_user.get("roles", {}).get("role_name") or "")
+    current_status = existing.data[0]["status"]
+
+    # Handing a freshly reported case to someone is the act of assigning, so rescue:assign
+    # covers it on its own. Every other status move is case management.
+    is_assignment_handoff = (
+        current_status == CaseStatus.reported.value
+        and payload.new_status == CaseStatus.assigned
+        and payload.assigned_to is not None
+    )
+    if payload.new_status.value != current_status and not is_assignment_handoff:
+        if not has_permission(role_name, "rescue:manage"):
+            raise HTTPException(403, "You do not have permission to change case status")
+
     if payload.assigned_to is not None:
-        role_name = (current_user.get("roles", {}).get("role_name") or "")
         is_self_assign = str(payload.assigned_to) == str(current_user["id"])
         if not is_self_assign and not has_permission(role_name, "rescue:assign"):
             raise HTTPException(403, "Only Director/HR Officer/Admin can assign cases to other staff")
@@ -177,4 +139,52 @@ async def update_case_status(
     response = supabase.table("rescue_cases").update(update_data).eq("id", case_id).execute()
     if not response.data:
         raise HTTPException(status_code=404, detail="Case not found")
+    return response.data[0]
+
+
+@router.get("/outbreak-zones", response_model=list[OutbreakZoneOut])
+async def get_outbreak_zones(
+    supabase: Client = Depends(get_public_supabase),
+):
+    """Public — active outbreak zones only. No individual case data exposed."""
+    response = (
+        supabase.table("outbreak_zones")
+        .select("*")
+        .eq("is_active", True)
+        .order("declared_at", desc=True)
+        .execute()
+    )
+    return response.data or []
+
+
+@router.post("/outbreak-zones", response_model=OutbreakZoneOut)
+async def declare_outbreak_zone(
+    payload: OutbreakZoneCreate,
+    supabase: Client = Depends(get_supabase),
+    current_user: dict = Depends(require_permission("rescue:assign")),
+):
+    response = supabase.table("outbreak_zones").insert({
+        **payload.model_dump(),
+        "declared_by": current_user["id"],
+    }).execute()
+
+    if not response.data:
+        raise HTTPException(status_code=500, detail="Failed to declare outbreak zone")
+    return response.data[0]
+
+
+@router.patch("/outbreak-zones/{zone_id}/resolve", response_model=OutbreakZoneOut)
+async def resolve_outbreak_zone(
+    zone_id: str,
+    supabase: Client = Depends(get_supabase),
+    current_user: dict = Depends(require_permission("rescue:assign")),
+):
+    response = (
+        supabase.table("outbreak_zones")
+        .update({"is_active": False, "resolved_at": datetime.now(timezone.utc).isoformat()})
+        .eq("id", zone_id)
+        .execute()
+    )
+    if not response.data:
+        raise HTTPException(status_code=404, detail="Zone not found")
     return response.data[0]

@@ -2,11 +2,13 @@
 'use client';
 
 import { useState } from 'react';
+import dynamic from 'next/dynamic';
 import { RescueCasesService } from '@/services/rescue-cases.service';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { ImagePlus, X } from 'lucide-react';
-import LocationPicker from '@/components/heatmap/LocationPicker';
+
+const LocationPicker = dynamic(() => import('@/components/heatmap/LocationPicker'), { ssr: false });
 
 type Step = 'form' | 'locating' | 'confirm-location' | 'submitting';
 

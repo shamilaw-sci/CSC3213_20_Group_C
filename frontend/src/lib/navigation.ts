@@ -11,8 +11,10 @@ import {
   RotateCcw,
   BookOpen,
   FolderOpen,
-  MapPin
+  MapPin,
+  ClipboardList
 } from 'lucide-react';
+
 import type { Permission } from './permissions';
 
 export interface NavItem {
@@ -67,10 +69,11 @@ export const NAVIGATION_CONFIG: NavSection[] = [
     ]
   },
   {
-    title: 'RESCUE CASES',
-    items: [
-      { label: 'Case Hotspots', href: '/cases', icon: MapPin },
-    ]
+  title: 'RESCUE CASES',
+  items: [
+    { label: 'Case Hotspots', href: '/cases', icon: MapPin, requiredPermission: 'rescue:read' },
+    { label: 'Case Triage', href: '/case-triage', icon: ClipboardList, requiredPermission: 'rescue:read' },
+  ]
   },
   {
     title: 'SELF SERVICE',

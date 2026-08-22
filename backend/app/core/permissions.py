@@ -23,6 +23,7 @@ class Permission(str, Enum):
     AUDIT_READ = 'audit:read'
     RESCUE_READ = 'rescue:read'
     RESCUE_MANAGE = 'rescue:manage'
+    RESCUE_ASSIGN = 'rescue:assign'
 
 # NOTE: Must stay in sync with frontend/src/lib/permissions.ts
 ROLE_PERMISSIONS = {
@@ -31,16 +32,17 @@ ROLE_PERMISSIONS = {
         Permission.PAYROLL_GENERATE.value, Permission.PAYROLL_APPROVE.value, Permission.FINANCE_READ.value,
         Permission.FINANCE_WRITE.value, Permission.INVENTORY_READ.value, Permission.INVENTORY_ISSUE.value,
         Permission.PROGRAMS_READ.value, Permission.PROGRAMS_MANAGE.value, Permission.ADMIN_USERS.value, Permission.AUDIT_READ.value,
-        Permission.RESCUE_READ.value, Permission.RESCUE_MANAGE.value
+        Permission.RESCUE_READ.value, Permission.RESCUE_MANAGE.value, Permission.RESCUE_ASSIGN.value
     ],
     UserRole.DIRECTOR.value: [
         Permission.FINANCE_READ.value, Permission.PAYROLL_APPROVE.value, Permission.PROGRAMS_READ.value,
         Permission.INVENTORY_READ.value, Permission.AUDIT_READ.value,
-        Permission.RESCUE_READ.value
+        Permission.RESCUE_READ.value, Permission.RESCUE_ASSIGN.value
     ],
     UserRole.HR_OFFICER.value: [
         Permission.HR_MANAGE.value, Permission.HR_ATTENDANCE_MANAGE.value, Permission.HR_ATTENDANCE_SELF.value,
-        Permission.PAYROLL_GENERATE.value
+        Permission.PAYROLL_GENERATE.value,
+        Permission.RESCUE_READ.value, Permission.RESCUE_ASSIGN.value
     ],
     UserRole.FINANCE_OFFICER.value: [
         Permission.FINANCE_READ.value, Permission.FINANCE_WRITE.value, Permission.PAYROLL_GENERATE.value,
@@ -48,11 +50,10 @@ ROLE_PERMISSIONS = {
     ],
     UserRole.STAFF.value: [
         Permission.HR_ATTENDANCE_SELF.value, Permission.PROGRAMS_READ.value, Permission.INVENTORY_ISSUE.value,
-        Permission.RESCUE_READ.value
+        Permission.RESCUE_READ.value, Permission.RESCUE_MANAGE.value
     ]
 }
 
 def has_permission(role: str, permission: str) -> bool:
     role_perms = ROLE_PERMISSIONS.get(role, [])
-    print(f"[perm] role={role!r} needs={permission!r} has={role_perms}")
     return permission in role_perms

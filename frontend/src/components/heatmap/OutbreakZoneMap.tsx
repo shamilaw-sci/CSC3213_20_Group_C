@@ -1,12 +1,12 @@
-// frontend/src/components/heatmap/CaseHotspotMap.tsx
+// frontend/src/components/heatmap/OutbreakZoneMap.tsx
 'use client';
 
 import { useEffect, useRef } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { Hotspot } from '@/services/rescue-cases.service';
+import { OutbreakZone } from '@/services/rescue-cases.service';
 
-export default function CaseHotspotMap({ hotspots }: { hotspots: Hotspot[] }) {
+export default function OutbreakZoneMap({ zones }: { zones: OutbreakZone[] }) {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstance = useRef<L.Map | null>(null);
   const layerGroup = useRef<L.LayerGroup | null>(null);
@@ -28,29 +28,30 @@ export default function CaseHotspotMap({ hotspots }: { hotspots: Hotspot[] }) {
     if (!map || !group) return;
     group.clearLayers();
 
-    hotspots.forEach((h) => {
-      const radius = 8 + Math.min(h.count, 20) * 2;
-      const color = h.is_active_outbreak ? '#DC2626' : '#EF9F27';
-      const marker = L.circleMarker([h.grid_lat, h.grid_lng], {
-        radius, color, fillColor: color, fillOpacity: 0.5, weight: 2,
+    zones.forEach((z) => {
+      const circle = L.circle([z.center_lat, z.center_lng], {
+        radius: z.radius_km * 1000,
+        color: '#DC2626',
+        fillColor: '#DC2626',
+        fillOpacity: 0.15,
+        weight: 2,
       }).addTo(group);
 
-      const breakdown = Object.entries(h.animal_breakdown)
-        .map(([type, n]) => `${type}: ${n}`).join(', ');
-      const lastReport = new Date(h.latest_report_at).toLocaleDateString();
-
-      marker.bindPopup(`
+      circle.bindPopup(`
         <div style="font-size: 12px; line-height: 1.5;">
-          ${h.is_active_outbreak
-            ? `<strong style="color:#DC2626;">⚠ Active Outbreak: ${h.outbreak_animal_types.join(', ')}</strong><br/>`
-            : ''}
-          <strong>${h.count} case${h.count > 1 ? 's' : ''} reported</strong><br/>
-          ${breakdown}<br/>
-          Last report: ${lastReport}
+          <strong style="color:#DC2626;">⚠ ${z.title}</strong><br/>
+          Animal: ${z.animal_type}<br/>
+          ${z.description ? `${z.description}<br/>` : ''}
+          Declared: ${new Date(z.declared_at).toLocaleDateString()}
         </div>
       `);
     });
-  }, [hotspots]);
+
+    if (zones.length > 0) {
+      const bounds = L.latLngBounds(zones.map((z) => [z.center_lat, z.center_lng] as [number, number]));
+      map.fitBounds(bounds, { padding: [50, 50], maxZoom: 12 });
+    }
+  }, [zones]);
 
   return <div ref={mapRef} style={{ height: '500px', width: '100%', borderRadius: '8px' }} />;
 }
