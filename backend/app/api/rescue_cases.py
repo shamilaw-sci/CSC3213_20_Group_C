@@ -106,7 +106,7 @@ async def update_case_status(
 ):
     existing = (
         supabase.table("rescue_cases")
-        .select("status")
+        .select("status, assigned_to")
         .eq("id", case_id)
         .execute()
     )
@@ -115,12 +115,14 @@ async def update_case_status(
 
     role_name = (current_user.get("roles", {}).get("role_name") or "")
     current_status = existing.data[0]["status"]
+    current_assignee = existing.data[0]["assigned_to"]
 
-    # Handing a freshly reported case to someone is the act of assigning, so rescue:assign
-    # covers it on its own. Every other status move is case management.
+    # Claiming a freshly reported case is the act of assigning, so rescue:assign covers
+    # it on its own — claiming a case also starts it, moving it straight to In Treatment.
+    # Every other status move (including reopening a Resolved case) is case management.
     is_assignment_handoff = (
         current_status == CaseStatus.reported.value
-        and payload.new_status == CaseStatus.assigned
+        and payload.new_status == CaseStatus.in_treatment
         and payload.assigned_to is not None
     )
     if payload.new_status.value != current_status and not is_assignment_handoff:
@@ -132,8 +134,19 @@ async def update_case_status(
         if not is_self_assign and not has_permission(role_name, "rescue:assign"):
             raise HTTPException(403, "Only Director/HR Officer/Admin can assign cases to other staff")
 
+    # Reported is the only stage a case can sit in unclaimed. Leaving it requires
+    # an assignee — either one already on the case or one supplied here — so a
+    # raw drag or a direct API call can't produce an "In Treatment"/"Resolved"
+    # case nobody owns.
+    if payload.new_status != CaseStatus.reported:
+        if current_assignee is None and payload.assigned_to is None:
+            raise HTTPException(400, "A case must have an assignee to move past Reported")
+
     update_data = {"status": payload.new_status.value}
-    if payload.assigned_to is not None:
+    if payload.new_status == CaseStatus.reported:
+        # Moving back to Reported always releases the claim.
+        update_data["assigned_to"] = None
+    elif payload.assigned_to is not None:
         update_data["assigned_to"] = str(payload.assigned_to)
 
     response = supabase.table("rescue_cases").update(update_data).eq("id", case_id).execute()

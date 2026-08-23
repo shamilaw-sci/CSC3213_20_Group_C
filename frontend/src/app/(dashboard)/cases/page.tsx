@@ -12,6 +12,8 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
+import { AlertTriangle } from 'lucide-react';
 
 export default function CaseHotspotsPage() {
   const { user } = useAuthStore();
@@ -73,9 +75,9 @@ export default function CaseHotspotsPage() {
   }
 
   return (
-    <div className="p-6 space-y-4">
+    <div className="space-y-8">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Rescue Case Hotspots</h1>
+        <h1 className="text-3xl font-bold font-heading tracking-tight text-text-primary">Rescue Case Hotspots</h1>
 
         <div className="flex items-center gap-3">
           <Select
@@ -88,7 +90,6 @@ export default function CaseHotspotsPage() {
             <SelectContent>
               <SelectItem value="all">All statuses</SelectItem>
               <SelectItem value="Reported">Reported</SelectItem>
-              <SelectItem value="Assigned">Assigned</SelectItem>
               <SelectItem value="In Treatment">In Treatment</SelectItem>
               <SelectItem value="Resolved">Resolved</SelectItem>
             </SelectContent>
@@ -148,8 +149,13 @@ export default function CaseHotspotsPage() {
         </div>
       )}
 
-      {isLoading && <p>Loading map...</p>}
-      {error && <p>Failed to load case data.</p>}
+      {isLoading && <Skeleton className="h-[500px] w-full bg-bg-subtle rounded-card" />}
+      {error && (
+        <div className="flex items-center gap-2 text-sm text-rose-500 bg-rose-500/10 p-4 rounded-lg border border-rose-500/20">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          Failed to load case data. Please try again.
+        </div>
+      )}
       {data && data.length === 0 && (
         <p className="text-text-secondary py-12 text-center">No cases match this filter.</p>
       )}

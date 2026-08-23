@@ -47,9 +47,10 @@ class _FakeQuery:
     read and a different one for the subsequent write.
     """
 
-    def __init__(self, rows):
+    def __init__(self, rows, on_update=None):
         self._rows = rows if isinstance(rows, dict) else {"select": rows}
         self._op = "select"
+        self._on_update = on_update
 
     def select(self, *a, **k):
         self._op = "select"
@@ -59,8 +60,10 @@ class _FakeQuery:
         self._op = "insert"
         return self
 
-    def update(self, *a, **k):
+    def update(self, data=None, *a, **k):
         self._op = "update"
+        if self._on_update is not None and data is not None:
+            self._on_update(data)
         return self
 
     def delete(self, *a, **k):
@@ -78,11 +81,12 @@ class _FakeQuery:
 
 
 class _FakeSupabase:
-    def __init__(self, tables=None):
+    def __init__(self, tables=None, on_update=None):
         self._tables = tables or {}
+        self._on_update = on_update
 
     def table(self, name):
-        return _FakeQuery(self._tables.get(name, []))
+        return _FakeQuery(self._tables.get(name, []), on_update=self._on_update)
 
     def rpc(self, name, params=None):
         return _FakeQuery(self._tables.get(f"rpc:{name}", []))
@@ -105,11 +109,14 @@ def _case_row(status="Reported", assigned_to=None):
 
 
 @contextlib.contextmanager
-def acting_as(role, tables=None, user_id=USER_ID):
+def acting_as(role, tables=None, user_id=USER_ID, capture_update=None):
     """Run requests as `role`, with supabase stubbed out.
 
     Overrides are cleared in a finally block; a failing assertion must not leak
-    an authenticated user into the next test.
+    an authenticated user into the next test. Pass a dict as `capture_update`
+    to record the payload of the first `.update(...)` call under
+    `capture_update["update_data"]`, for tests that need to verify what the
+    endpoint actually wrote rather than just the response status.
     """
 
     async def _current_user():
@@ -120,8 +127,10 @@ def acting_as(role, tables=None, user_id=USER_ID):
             "roles": {"role_name": role},
         }
 
+    on_update = (lambda data: capture_update.setdefault("update_data", data)) if capture_update is not None else None
+
     async def _supabase():
-        return _FakeSupabase(tables)
+        return _FakeSupabase(tables, on_update=on_update)
 
     app.dependency_overrides[get_current_user] = _current_user
     app.dependency_overrides[get_supabase] = _supabase
@@ -238,44 +247,49 @@ def test_permission_routes_cover_every_granted_permission():
 # update_case_status gates the route on rescue:read, then distinguishes:
 #   * changing status            -> rescue:manage
 #   * assigning to someone else  -> rescue:assign
-#   * Reported -> Assigned with an assignee is the handoff itself, so
-#     rescue:assign alone authorizes it
+#   * Reported -> In Treatment with an assignee is the claim-and-start handoff
+#     itself, so rescue:assign alone authorizes it
+# Reported is also the only stage a case can be unclaimed in — leaving it
+# requires an assignee (current or supplied), enforced independently of role.
 RESCUE_SCENARIOS = [
-    # id, current status, new status, assigned_to, roles expected to succeed
-    ("advance-status", "Reported", "In Treatment", None, {"Admin", "Staff"}),
-    ("resolve", "In Treatment", "Resolved", None, {"Admin", "Staff"}),
-    ("no-op-status", "Reported", "Reported", None,
+    # id, current_status, current_assignee, new_status, payload_assigned_to, roles expected to succeed
+    ("resolve", "In Treatment", USER_ID, "Resolved", None, {"Admin", "Staff"}),
+    ("no-op-status", "Reported", None, "Reported", None,
      {"Admin", "Director", "HR Officer", "Staff"}),
-    ("self-assign", "Reported", "Assigned", USER_ID,
+    ("self-assign", "Reported", None, "In Treatment", USER_ID,
      {"Admin", "Director", "HR Officer", "Staff"}),
-    ("handoff-to-colleague", "Reported", "Assigned", OTHER_USER_ID,
+    ("handoff-to-colleague", "Reported", None, "In Treatment", OTHER_USER_ID,
      {"Admin", "Director", "HR Officer"}),
-    ("reassign-colleague", "In Treatment", "In Treatment", OTHER_USER_ID,
+    ("reassign-colleague", "In Treatment", USER_ID, "In Treatment", OTHER_USER_ID,
      {"Admin", "Director", "HR Officer"}),
     # Re-opening a closed case is management, not assignment — the narrow
     # handoff exemption must not let rescue:assign holders through.
-    ("reopen-resolved", "Resolved", "Assigned", OTHER_USER_ID, {"Admin"}),
+    ("reopen-resolved", "Resolved", USER_ID, "In Treatment", OTHER_USER_ID, {"Admin"}),
+    # Releasing a case back to Reported needs no assignee — the endpoint
+    # clears one unconditionally, so this exercises pure status management.
+    ("release-to-reported", "In Treatment", USER_ID, "Reported", None,
+     {"Admin", "Staff"}),
 ]
 
 
 @pytest.mark.parametrize("role", ALL_ROLES)
 @pytest.mark.parametrize(
-    "scenario_id, current_status, new_status, assigned_to, allowed_roles",
+    "scenario_id, current_status, current_assignee, new_status, payload_assigned_to, allowed_roles",
     RESCUE_SCENARIOS,
     ids=[s[0] for s in RESCUE_SCENARIOS],
 )
 def test_rescue_case_status_authorization(
-    role, scenario_id, current_status, new_status, assigned_to, allowed_roles
+    role, scenario_id, current_status, current_assignee, new_status, payload_assigned_to, allowed_roles
 ):
     tables = {
         "rescue_cases": {
-            "select": [{"status": current_status}],
-            "update": [_case_row(status=new_status, assigned_to=assigned_to)],
+            "select": [{"status": current_status, "assigned_to": current_assignee}],
+            "update": [_case_row(status=new_status, assigned_to=payload_assigned_to or current_assignee)],
         }
     }
     payload = {"new_status": new_status}
-    if assigned_to is not None:
-        payload["assigned_to"] = assigned_to
+    if payload_assigned_to is not None:
+        payload["assigned_to"] = payload_assigned_to
 
     with acting_as(role, tables=tables):
         response = client.patch(
@@ -301,6 +315,48 @@ def test_rescue_case_status_404_when_case_missing():
             json={"new_status": "Resolved"},
         )
     assert response.status_code == 404
+
+
+def test_leaving_reported_without_any_assignee_is_rejected():
+    """Neither a current nor a supplied assignee -> 400, for any role, on any
+    move out of Reported. Guards against a raw drag or direct API call
+    reproducing the "In Treatment with nobody assigned" bug."""
+    tables = {
+        "rescue_cases": {
+            "select": [{"status": "Reported", "assigned_to": None}],
+            "update": [_case_row(status="In Treatment")],
+        }
+    }
+    with acting_as("Admin", tables=tables):
+        response = client.patch(
+            f"/api/rescue_cases/cases/{CASE_ID}/status",
+            json={"new_status": "In Treatment"},
+        )
+    assert response.status_code == 400
+
+
+def test_moving_to_reported_clears_existing_assignee():
+    """Releasing a case back to Reported always drops its assignee, even if
+    the caller didn't ask for that — Reported means unclaimed."""
+    captured = {}
+
+    tables = {
+        "rescue_cases": {
+            "select": [{"status": "In Treatment", "assigned_to": USER_ID}],
+            "update": [_case_row(status="Reported", assigned_to=None)],
+        }
+    }
+    with acting_as("Admin", tables=tables, capture_update=captured):
+        response = client.patch(
+            f"/api/rescue_cases/cases/{CASE_ID}/status",
+            json={"new_status": "Reported"},
+        )
+    assert response.status_code == 200
+    # Assert the key is actually present and null, not just absent — .get()
+    # can't distinguish "explicitly cleared" from "never touched".
+    update_data = captured.get("update_data", {})
+    assert "assigned_to" in update_data, f"assigned_to was never written: {update_data}"
+    assert update_data["assigned_to"] is None
 
 
 def test_rescue_read_gate_blocks_finance_officer():
