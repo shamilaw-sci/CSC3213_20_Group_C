@@ -4,6 +4,7 @@ import { useAuthStore } from '@/store/useAuthStore';
 import { useRouter, usePathname } from 'next/navigation';
 import { useEffect } from 'react';
 import { hasPermission, Permission } from '@/lib/permissions';
+import ChatWidget from '@/components/shared/ChatWidget';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -29,5 +30,10 @@ export default function ProtectedRoute({ children, requiredPermission }: Protect
     return null; // Or a loading skeleton
   }
 
-  return <>{children}</>;
+    return (
+    <>
+      {children}
+      {isAuthenticated && pathname !== '/login' && <ChatWidget />}
+    </>
+  );
 }

@@ -23,6 +23,13 @@ export function useFinanceAging() {
   });
 }
 
+export function useMonthlySummary(year: number, month: number) {
+  return useQuery({
+    queryKey: ['finance-monthly-summary', { year, month }],
+    queryFn: () => FinanceService.getMonthlySummary(year, month)
+  });
+}
+
 export function usePrograms() {
   return useQuery({
     queryKey: ['programs'],

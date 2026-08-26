@@ -45,6 +45,14 @@ export interface Transaction {
   };
 }
 
+export interface MonthlySummary {
+  month: number;
+  year: number;
+  income: number;
+  expense: number;
+  balance: number;
+}
+
 export interface Program {
   id: number;
   program_name: string;
