@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useAuthStore } from '@/store/useAuthStore';
 import { useThemeStore } from '@/store/useThemeStore';
-import { ArrowRight, Bell, User, Settings, HelpCircle, LogOut, Sun, Moon } from 'lucide-react';
+import { ArrowRight, Bell, User, Settings, HelpCircle, LogOut, Sun, Moon, Heart } from 'lucide-react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
@@ -73,6 +73,13 @@ export default function HomeHeader() {
           <Link href="/" className="hover:text-text-primary transition-colors duration-150">Home</Link>
           <Link href="/report" className="hover:text-text-primary transition-colors duration-150">Report an Animal</Link>
           <Link href="/outbreak-map" className="hover:text-text-primary transition-colors duration-150">Hotspot Map</Link>
+          <Link
+            href="/donate"
+            className="flex items-center gap-1.5 px-4 py-1.5 rounded-full bg-[#EF9F27] text-bg-brand font-bold hover:bg-[#EF9F27]/90 hover:shadow-md hover:shadow-[#EF9F27]/30 transition-all"
+          >
+            <Heart className="w-3.5 h-3.5" fill="currentColor" />
+            Donate
+          </Link>
           {isAuthenticated ? (
             <>
               <Link href="/dashboard" className="text-[#EF9F27] hover:text-[#EF9F27]/80 flex items-center gap-1 font-semibold">
@@ -90,7 +97,7 @@ export default function HomeHeader() {
                 </button>
 
                 {showNotifications && (
-                  <div className="absolute right-0 mt-2 w-80 bg-surface border border-border-brand rounded-xl shadow-xl overflow-hidden animate-in fade-in duration-100 z-50 text-left">
+                  <div className="absolute right-0 mt-2 w-80 bg-surface border border-border-brand rounded-xl shadow-xl overflow-hidden animate-in fade-induration-100 z-50 text-left">
                     <div className="px-4 py-2 border-b border-border-brand">
                       <span className="text-xs font-semibold text-text-primary font-heading">Notifications</span>
                     </div>
@@ -123,7 +130,7 @@ export default function HomeHeader() {
                 </button>
 
                 {showProfile && (
-                  <div className="absolute right-0 mt-2 w-56 bg-surface border border-border-brand rounded-xl shadow-xl overflow-hidden animate-in fade-in duration-100 z-50 text-left">
+                  <div className="absolute right-0 mt-2 w-56 bg-surface border border-border-brand rounded-xl shadow-xl overflow-hidden animate-in fade-induration-100 z-50 text-left">
                     <div className="px-4 py-3 border-b border-border-brand bg-bg-subtle/30">
                       <p className="text-xs font-semibold text-text-primary truncate font-heading">{user?.name || 'User'}</p>
                       <p className="text-[10px] text-text-secondary truncate mt-0.5 font-mono">{user?.email || 'user@example.com'}</p>
