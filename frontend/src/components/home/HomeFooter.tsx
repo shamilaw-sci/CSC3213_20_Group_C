@@ -27,6 +27,7 @@ export default function HomeFooter() {
         <div className="space-y-4">
           <span className="font-bold uppercase tracking-wider text-text-primary">Our Work</span>
           <ul className="space-y-2">
+            <li><Link href="/who-we-are" className="hover:text-text-primary">Who We Are</Link></li>
             <li>Sterilization & Vaccination</li>
             <li>Rabies Eradication</li>
             <li>Free Animal Health Clinics</li>

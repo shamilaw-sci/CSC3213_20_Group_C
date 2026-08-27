@@ -71,6 +71,7 @@ export default function HomeHeader() {
         </Link>
         <nav className="flex items-center gap-6 text-xs font-semibold text-text-secondary">
           <Link href="/" className="hover:text-text-primary transition-colors duration-150">Home</Link>
+          <Link href="/who-we-are" className="hover:text-text-primary transition-colors duration-150">Who We Are</Link>
           <Link href="/report" className="hover:text-text-primary transition-colors duration-150">Report an Animal</Link>
           <Link href="/outbreak-map" className="hover:text-text-primary transition-colors duration-150">Hotspot Map</Link>
           <Link
