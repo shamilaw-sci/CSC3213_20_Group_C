@@ -1,5 +1,5 @@
 import api from '@/lib/api-client';
-import { Transaction, Program } from '@/types';
+import { Transaction, Program, MonthlySummary } from '@/types';
 
 export const FinanceService = {
   getTransactions: async (params?: { start_date?: string, end_date?: string }) => {
@@ -48,6 +48,13 @@ settleTransaction: async (id: number) => {
 
   getAging: async () => {
     const response = await api.get<Record<string, number>>('/finance/aging');
+    return response.data;
+  },
+
+  getMonthlySummary: async (year: number, month: number) => {
+    const response = await api.get<MonthlySummary>('/finance/summary/monthly', {
+      params: { year, month },
+    });
     return response.data;
   }
 };

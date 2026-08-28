@@ -243,12 +243,19 @@ async def monthly_summary(
         .select("amount, transaction_type") \
         .gte("transaction_date", str(start_date)) \
         .lte("transaction_date", str(end_date)) \
+        .neq("status", "Voided") \
         .execute()
-        
+
     transactions = response.data or []
 
-    total_income = sum(t["amount"] for t in transactions if t["transaction_type"].lower() == "income")
-    total_expense = sum(t["amount"] for t in transactions if t["transaction_type"].lower() == "expense")
+    total_income = sum(
+        float(t["amount"]) for t in transactions
+        if t["transaction_type"].lower() == "income"
+    )
+    total_expense = sum(
+        float(t["amount"]) for t in transactions
+        if t["transaction_type"].lower() == "expense"
+    )
 
     return {
         "month": month,

@@ -45,6 +45,14 @@ export interface Transaction {
   };
 }
 
+export interface MonthlySummary {
+  month: number;
+  year: number;
+  income: number;
+  expense: number;
+  balance: number;
+}
+
 export interface Program {
   id: number;
   program_name: string;
@@ -125,7 +133,7 @@ export interface AuditLog {
 export interface RescueCaseGeo {
   id: string;
   animal_type: string;
-  status: 'Reported' | 'Assigned' | 'In Treatment' | 'Resolved';
+  status: 'Reported' | 'In Treatment' | 'Resolved';
   lat: number;
   lng: number;
   reported_at: string;
@@ -135,7 +143,7 @@ export interface CaseOut {
   id: string;
   animal_type: string;
   description?: string;
-  status: 'Reported' | 'Assigned' | 'In Treatment' | 'Resolved';
+  status: 'Reported' | 'In Treatment' | 'Resolved';
   lat: number;
   lng: number;
   photo_url?: string;

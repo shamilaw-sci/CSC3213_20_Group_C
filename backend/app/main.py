@@ -1,7 +1,6 @@
 import sys
 import os
 import logging
-
 logging.basicConfig(level=logging.INFO)
 
 vendor_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "_vendor"))
@@ -10,7 +9,11 @@ if os.path.exists(vendor_dir) and vendor_dir not in sys.path:
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+<<<<<<< HEAD
 from app.api import hr, finance, inventory, auth, reports, admin, rescue_cases, programs
+=======
+from app.api import hr, finance, inventory, auth, reports, admin, rescue_cases, chat
+>>>>>>> origin/main
 
 
 app = FastAPI(title="VFF IMS API", version="1.0.0")
@@ -38,6 +41,7 @@ app.include_router(inventory.router, prefix="/api/inventory", tags=["Inventory"]
 app.include_router(admin.router, prefix="/api/admin", tags=["Admin"])
 app.include_router(rescue_cases.router, prefix="/api/rescue_cases", tags=["Rescue Cases"])
 app.include_router(programs.router, prefix="/api/programs", tags=["Programs"])
+app.include_router(chat.router, prefix="/api/chat", tags=["Chat"])
 
 
 if __name__ == "__main__":

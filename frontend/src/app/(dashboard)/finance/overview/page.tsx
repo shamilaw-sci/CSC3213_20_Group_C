@@ -15,16 +15,14 @@ import {
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import { 
-  PlusCircle, 
-  TrendingDown, 
-  TrendingUp, 
-  Filter, 
+import {
+  PlusCircle,
+  TrendingDown,
+  TrendingUp,
   Pencil,
   Ban,
   MoreHorizontal,
-  Globe,
-  MapPin
+  Layers
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { format } from 'date-fns';
@@ -72,6 +70,7 @@ export default function FinancePage() {
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
   const [voidingTransaction, setVoidingTransaction] = useState<Transaction | null>(null);
   const [range, setRange] = useState<'12m' | '30d' | '7d'>('30d');
+  const [statusFilter, setStatusFilter] = useState<'All' | 'Income' | 'Expense'>('All');
 
   const { data: transactions, isLoading } = useQuery({
     queryKey: ['transactions'],
@@ -88,34 +87,137 @@ export default function FinancePage() {
     queryFn: FinanceService.getPrograms
   });
 
+  const { data: aging } = useQuery({
+    queryKey: ['financeAging'],
+    queryFn: FinanceService.getAging
+  });
+
   const { mutate: voidTransaction, isPending: isVoiding } = useMutation({
     mutationFn: (id: number) => FinanceService.voidTransaction(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['transactions'] });
       queryClient.invalidateQueries({ queryKey: ['financeSummary'] });
+      queryClient.invalidateQueries({ queryKey: ['financeAging'] });
       setVoidingTransaction(null);
     },
   });
 
-  // Calculate dynamic area chart data
+  // Bucket real transactions into a time series for the trend chart —
+  // this used to be Math.random(), which meant the chart lied on every render.
   const chartData = useMemo(() => {
     if (!transactions) return [];
-    const count = range === '12m' ? 12 : range === '7d' ? 7 : 30;
-    return Array.from({ length: count }, (_, i) => ({
-      name: `Day ${i + 1}`,
-      income: Math.floor(Math.random() * 400000) + 100000,
-      expense: Math.floor(Math.random() * 200000) + 50000,
-    }));
+    const now = new Date();
+
+    if (range === '12m') {
+      const months = Array.from({ length: 12 }, (_, i) => {
+        const d = new Date(now.getFullYear(), now.getMonth() - (11 - i), 1);
+        return { key: `${d.getFullYear()}-${d.getMonth()}`, name: d.toLocaleDateString('en-US', { month: 'short' }), income: 0, expense: 0 };
+      });
+      const byKey = new Map(months.map((m) => [m.key, m]));
+      transactions.forEach((tx) => {
+        if (tx.status === 'Voided') return;
+        const d = new Date(tx.transaction_date);
+        const bucket = byKey.get(`${d.getFullYear()}-${d.getMonth()}`);
+        if (!bucket) return;
+        if (tx.transaction_type === 'Income') bucket.income += tx.amount;
+        else bucket.expense += tx.amount;
+      });
+      return months;
+    }
+
+    const days = range === '7d' ? 7 : 30;
+    const daily = Array.from({ length: days }, (_, i) => {
+      const d = new Date(now);
+      d.setDate(now.getDate() - (days - 1 - i));
+      return { key: d.toISOString().slice(0, 10), name: d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), income: 0, expense: 0 };
+    });
+    const byKey = new Map(daily.map((d) => [d.key, d]));
+    transactions.forEach((tx) => {
+      if (tx.status === 'Voided') return;
+      const bucket = byKey.get(tx.transaction_date.slice(0, 10));
+      if (!bucket) return;
+      if (tx.transaction_type === 'Income') bucket.income += tx.amount;
+      else bucket.expense += tx.amount;
+    });
+    return daily;
   }, [transactions, range]);
 
-  // Program Pie chart data
+  // Program allocation split, by real accumulated cost rather than the
+  // nonexistent `budget` field (see types/index.ts — legacy, not in the DB).
   const programData = useMemo(() => {
     if (!programs) return [];
-    return programs.map(p => ({
-      name: p.program_name,
-      value: p.budget || 200000,
-    }));
+    return programs
+      .filter((p) => (p.total_cost || 0) > 0)
+      .map((p) => ({ name: p.program_name, value: p.total_cost || 0 }));
   }, [programs]);
+
+  // Month-over-month deltas for the KPI trend pills, computed from the same
+  // transaction log rather than hardcoded percentages.
+  const monthlyTrends = useMemo(() => {
+    if (!transactions) return { expenseTrend: undefined, receivablesTrend: undefined };
+    const now = new Date();
+    const thisKey = `${now.getFullYear()}-${now.getMonth()}`;
+    const prevDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const prevKey = `${prevDate.getFullYear()}-${prevDate.getMonth()}`;
+
+    let thisExpense = 0, prevExpense = 0, thisReceivable = 0, prevReceivable = 0;
+    transactions.forEach((tx) => {
+      if (tx.status === 'Voided') return;
+      const d = new Date(tx.transaction_date);
+      const key = `${d.getFullYear()}-${d.getMonth()}`;
+      if (key !== thisKey && key !== prevKey) return;
+      if (tx.transaction_type === 'Expense') {
+        if (key === thisKey) thisExpense += tx.amount; else prevExpense += tx.amount;
+      }
+      if (tx.status === 'Receivable') {
+        if (key === thisKey) thisReceivable += tx.amount; else prevReceivable += tx.amount;
+      }
+    });
+
+    const pctChange = (curr: number, prev: number) => (prev === 0 ? null : Math.round(((curr - prev) / prev) * 1000) / 10);
+    const expensePct = pctChange(thisExpense, prevExpense);
+    const receivablePct = pctChange(thisReceivable, prevReceivable);
+
+    return {
+      expenseTrend: expensePct === null ? undefined : { value: Math.abs(expensePct), isPositive: expensePct <= 0 },
+      receivablesTrend: receivablePct === null ? undefined : { value: Math.abs(receivablePct), isPositive: receivablePct <= 0 },
+    };
+  }, [transactions]);
+
+  // Real program breakdowns replacing the hardcoded "Top Expense Categories"
+  // and "Revenue by Region" lists — Transaction has no category/region field,
+  // so those cards were rendering data with no backing source at all.
+  const topExpensePrograms = useMemo(() => {
+    if (!transactions) return [];
+    const byProgram = new Map<string, number>();
+    transactions.forEach((tx) => {
+      if (tx.transaction_type !== 'Expense' || tx.status === 'Voided') return;
+      const name = tx.programs?.program_name || 'General Operations';
+      byProgram.set(name, (byProgram.get(name) || 0) + tx.amount);
+    });
+    const sorted = Array.from(byProgram.entries()).sort((a, b) => b[1] - a[1]).slice(0, 4);
+    const max = sorted[0]?.[1] || 1;
+    return sorted.map(([category, value]) => ({ category, value, percentage: Math.round((value / max) * 100) }));
+  }, [transactions]);
+
+  const incomeByProgram = useMemo(() => {
+    if (!transactions) return [];
+    const byProgram = new Map<string, number>();
+    transactions.forEach((tx) => {
+      if (tx.transaction_type !== 'Income' || tx.status === 'Voided') return;
+      const name = tx.programs?.program_name || 'General Operations';
+      byProgram.set(name, (byProgram.get(name) || 0) + tx.amount);
+    });
+    const sorted = Array.from(byProgram.entries()).sort((a, b) => b[1] - a[1]).slice(0, 4);
+    const max = sorted[0]?.[1] || 1;
+    return sorted.map(([program, value]) => ({ program, value, percentage: Math.round((value / max) * 100) }));
+  }, [transactions]);
+
+  const filteredTransactions = useMemo(() => {
+    if (!transactions) return [];
+    if (statusFilter === 'All') return transactions;
+    return transactions.filter((tx) => tx.transaction_type === statusFilter);
+  }, [transactions, statusFilter]);
 
   const COLORS = ['#EF9F27', '#16A34A', '#2563EB', '#D97706', '#DC2626'];
 
@@ -144,22 +246,21 @@ export default function FinancePage() {
 
       {/* KPI Strip */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <KPICard 
-          title="Cash Liquidity" 
-          value={formatLKR(summary?.cash_available || 0)} 
-          trend={{ value: 14.2, isPositive: true }}
+        <KPICard
+          title="Cash Liquidity"
+          value={formatLKR(summary?.cash_available || 0)}
+          description="current balance"
+        />
+        <KPICard
+          title="Total Receivables"
+          value={formatLKR(summary?.receivables || 0)}
+          trend={monthlyTrends.receivablesTrend}
           description="vs last month"
         />
-        <KPICard 
-          title="Total Receivables" 
-          value={formatLKR(summary?.receivables || 0)} 
-          trend={{ value: 2.5, isPositive: false }}
-          description="vs last month"
-        />
-        <KPICard 
-          title="Monthly Burn" 
-          value={formatLKR(summary?.monthly_expenses || 0)} 
-          trend={{ value: 8.9, isPositive: true }}
+        <KPICard
+          title="Monthly Burn"
+          value={formatLKR(summary?.monthly_expenses || 0)}
+          trend={monthlyTrends.expenseTrend}
           description="vs last month"
         />
       </div>
@@ -174,7 +275,7 @@ export default function FinancePage() {
                 Revenue Analytics
               </CardTitle>
               <CardDescription className="text-text-secondary text-xs mt-1">
-                Overview of last 30 days cash flows
+                Overview of {range === '12m' ? 'the last 12 months' : range === '7d' ? 'the last 7 days' : 'the last 30 days'} cash flows
               </CardDescription>
             </div>
             
@@ -226,13 +327,13 @@ export default function FinancePage() {
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" opacity={0.3} vertical={false} />
-                <XAxis 
-                  dataKey="name" 
-                  stroke="var(--color-text-secondary)" 
-                  fontSize={11} 
-                  tickLine={false} 
-                  axisLine={false} 
-                  hide
+                <XAxis
+                  dataKey="name"
+                  stroke="var(--color-text-secondary)"
+                  fontSize={11}
+                  tickLine={false}
+                  axisLine={false}
+                  interval={range === '30d' ? 4 : 0}
                 />
                 <YAxis 
                   stroke="var(--color-text-secondary)" 
@@ -257,38 +358,38 @@ export default function FinancePage() {
           </CardContent>
         </Card>
 
-        {/* Side Panel: Active Transactions */}
+        {/* Side Panel: Receivables Aging */}
         <Card className="bg-surface border border-border-brand rounded-card shadow-card p-5 flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold uppercase tracking-wider text-text-secondary">
-                Live visitors
+                Outstanding Receivables
               </span>
-              <span className="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse" />
+              <span className={`w-2.5 h-2.5 rounded-full ${(aging?.['61+'] || 0) > 0 ? 'bg-red-500 animate-pulse' : 'bg-green-500'}`} />
             </div>
-            
+
             <div className="mt-4">
               <div className="text-3xl font-bold font-mono text-text-primary">
-                14
+                {formatLKR(summary?.receivables || 0)}
               </div>
               <span className="text-xs text-text-secondary">
-                Live visitors on billing portal
+                Owed across all programs
               </span>
             </div>
           </div>
 
           <div className="grid grid-cols-3 gap-2 mt-6 pt-6 border-t border-border-brand text-center">
             <div>
-              <div className="text-sm font-semibold font-mono text-text-primary">Rs.24k</div>
-              <span className="text-[9px] text-text-secondary uppercase">Avg Daily</span>
+              <div className="text-sm font-semibold font-mono text-text-primary">{formatLKR(aging?.['0-30'] || 0)}</div>
+              <span className="text-[9px] text-text-secondary uppercase">0-30 Days</span>
             </div>
             <div>
-              <div className="text-sm font-semibold font-mono text-text-primary">Rs.168k</div>
-              <span className="text-[9px] text-text-secondary uppercase">Avg Weekly</span>
+              <div className="text-sm font-semibold font-mono text-text-primary">{formatLKR(aging?.['31-60'] || 0)}</div>
+              <span className="text-[9px] text-text-secondary uppercase">31-60 Days</span>
             </div>
             <div>
-              <div className="text-sm font-semibold font-mono text-text-primary">Rs.670k</div>
-              <span className="text-[9px] text-text-secondary uppercase">Avg Monthly</span>
+              <div className={`text-sm font-semibold font-mono ${(aging?.['61+'] || 0) > 0 ? 'text-negative' : 'text-text-primary'}`}>{formatLKR(aging?.['61+'] || 0)}</div>
+              <span className="text-[9px] text-text-secondary uppercase">61+ Days</span>
             </div>
           </div>
         </Card>
@@ -309,32 +410,38 @@ export default function FinancePage() {
             </button>
           </CardHeader>
           <CardContent className="h-[200px] flex items-center justify-center p-0">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={programData}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={60}
-                  outerRadius={80}
-                  paddingAngle={5}
-                  dataKey="value"
-                >
+            {programData.length === 0 ? (
+              <p className="text-xs text-text-muted">No program spend recorded yet</p>
+            ) : (
+              <>
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={programData}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={60}
+                      outerRadius={80}
+                      paddingAngle={5}
+                      dataKey="value"
+                    >
+                      {programData.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip formatter={(value) => formatLKR(Number(value))} />
+                  </PieChart>
+                </ResponsiveContainer>
+                <div className="flex flex-col gap-1.5 ml-4 shrink-0 text-left max-w-[150px] overflow-hidden">
                   {programData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                    <div key={entry.name} className="flex items-center gap-2 text-[10px] text-text-secondary truncate">
+                      <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: COLORS[index % COLORS.length] }} />
+                      <span className="truncate">{entry.name}</span>
+                    </div>
                   ))}
-                </Pie>
-                <Tooltip />
-              </PieChart>
-            </ResponsiveContainer>
-            <div className="flex flex-col gap-1.5 ml-4 shrink-0 text-left max-w-[150px] overflow-hidden">
-              {programData.map((entry, index) => (
-                <div key={entry.name} className="flex items-center gap-2 text-[10px] text-text-secondary truncate">
-                  <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: COLORS[index % COLORS.length] }} />
-                  <span className="truncate">{entry.name}</span>
                 </div>
-              ))}
-            </div>
+              </>
+            )}
           </CardContent>
         </Card>
 
@@ -355,8 +462,8 @@ export default function FinancePage() {
               <BarChart data={programData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" opacity={0.3} vertical={false} />
                 <XAxis dataKey="name" fontSize={9} stroke="var(--color-text-secondary)" tickLine={false} />
-                <YAxis fontSize={9} stroke="var(--color-text-secondary)" tickLine={false} />
-                <Tooltip />
+                <YAxis fontSize={9} stroke="var(--color-text-secondary)" tickLine={false} tickFormatter={(value) => `Rs.${value / 1000}k`} />
+                <Tooltip formatter={(value) => formatLKR(Number(value))} />
                 <Bar dataKey="value" fill="#EF9F27" radius={[4, 4, 0, 0]} barSize={24} />
               </BarChart>
             </ResponsiveContainer>
@@ -366,46 +473,45 @@ export default function FinancePage() {
 
       {/* Two Column Ranked Lists */}
       <div className="grid gap-6 md:grid-cols-2">
-        {/* Top Expense Categories */}
+        {/* Top Expense Programs */}
         <Card className="bg-surface border border-border-brand rounded-card shadow-card p-5">
           <CardHeader className="flex flex-row items-center justify-between p-0 pb-4">
             <CardTitle className="text-base font-semibold font-heading text-text-primary">
-              Top Expense Categories
+              Top Expense Programs
             </CardTitle>
             <button className="text-text-secondary hover:text-text-primary">
               <MoreHorizontal className="w-5 h-5" />
             </button>
           </CardHeader>
           <CardContent className="p-0 space-y-4">
-            {[
-              { category: 'Medical Supplies', value: 450000, percentage: 80 },
-              { category: 'Veterinary Fees', value: 250000, percentage: 44 },
-              { category: 'Food & Nutrition', value: 180000, percentage: 32 },
-              { category: 'Logistics / Transport', value: 80000, percentage: 14 }
-            ].map((item) => (
-              <div key={item.category} className="relative py-2">
-                <div className="flex items-center justify-between text-xs font-semibold relative z-10">
-                  <span className="text-text-primary">{item.category}</span>
-                  <span className="font-mono text-text-primary">{formatLKR(item.value)}</span>
+            {topExpensePrograms.length === 0 ? (
+              <p className="text-xs text-text-muted py-2">No expense transactions recorded yet</p>
+            ) : (
+              topExpensePrograms.map((item) => (
+                <div key={item.category} className="relative py-2">
+                  <div className="flex items-center justify-between text-xs font-semibold relative z-10">
+                    <span className="text-text-primary">{item.category}</span>
+                    <span className="font-mono text-text-primary">{formatLKR(item.value)}</span>
+                  </div>
+                  <div
+                    className="absolute bottom-0 left-0 h-1 bg-red-500/10 rounded-full transition-all"
+                    style={{ width: `${item.percentage}%` }}
+                  />
                 </div>
-                <div 
-                  className="absolute bottom-0 left-0 h-1 bg-red-500/10 rounded-full transition-all"
-                  style={{ width: `${item.percentage}%` }}
-                />
-              </div>
-            ))}
+              ))
+            )}
           </CardContent>
         </Card>
 
-        {/* Geographic Breakdown Card */}
+        {/* Income by Program */}
         <Card className="bg-surface border border-border-brand rounded-card shadow-card p-5">
           <CardHeader className="flex flex-row items-center justify-between p-0 pb-4">
             <div>
               <CardTitle className="text-base font-semibold font-heading text-text-primary">
-                Revenue by Region
+                Income by Program
               </CardTitle>
               <CardDescription className="text-text-secondary text-xs mt-0.5">
-                Funding distribution across locations
+                Funding distribution across active programs
               </CardDescription>
             </div>
             <button className="text-text-secondary hover:text-text-primary">
@@ -413,28 +519,25 @@ export default function FinancePage() {
             </button>
           </CardHeader>
           <CardContent className="p-0 space-y-4">
-            {[
-              { region: 'Colombo District', count: 12, percentage: 65, flag: MapPin },
-              { region: 'Gampaha District', count: 8, percentage: 40, flag: MapPin },
-              { region: 'Kandy District', count: 5, percentage: 25, flag: MapPin }
-            ].map((entry) => {
-              const Icon = entry.flag;
-              return (
-                <div key={entry.region} className="relative py-2">
+            {incomeByProgram.length === 0 ? (
+              <p className="text-xs text-text-muted py-2">No income transactions recorded yet</p>
+            ) : (
+              incomeByProgram.map((entry) => (
+                <div key={entry.program} className="relative py-2">
                   <div className="flex items-center justify-between text-xs font-semibold relative z-10">
                     <div className="flex items-center gap-2">
-                      <Icon className="w-3.5 h-3.5 text-[#EF9F27]" />
-                      <span className="text-text-primary">{entry.region}</span>
+                      <Layers className="w-3.5 h-3.5 text-[#EF9F27]" />
+                      <span className="text-text-primary">{entry.program}</span>
                     </div>
-                    <span className="font-mono text-text-primary">{entry.percentage}%</span>
+                    <span className="font-mono text-text-primary">{formatLKR(entry.value)}</span>
                   </div>
-                  <div 
+                  <div
                     className="absolute bottom-0 left-0 h-1 bg-amber-500/10 rounded-full transition-all"
                     style={{ width: `${entry.percentage}%` }}
                   />
                 </div>
-              );
-            })}
+              ))
+            )}
           </CardContent>
         </Card>
       </div>
@@ -450,10 +553,20 @@ export default function FinancePage() {
               Comprehensive log of all financial movements.
             </CardDescription>
           </div>
-          <div className="flex gap-2">
-            <Button variant="outline" size="sm" className="border-border-brand text-xs">
-              <Filter className="mr-2 h-3 w-3" /> Filter
-            </Button>
+          <div className="flex bg-bg-subtle p-1 rounded-lg border border-border-brand">
+            {(['All', 'Income', 'Expense'] as const).map((opt) => (
+              <button
+                key={opt}
+                onClick={() => setStatusFilter(opt)}
+                className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${
+                  statusFilter === opt
+                    ? 'bg-surface text-text-primary shadow-xs'
+                    : 'text-text-secondary hover:text-text-primary'
+                }`}
+              >
+                {opt}
+              </button>
+            ))}
           </div>
         </CardHeader>
         <CardContent className="p-0 pt-4">
@@ -476,12 +589,14 @@ export default function FinancePage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {transactions?.length === 0 ? (
+                  {filteredTransactions.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={6} className="text-center py-8 text-text-muted">No transactions recorded</TableCell>
+                      <TableCell colSpan={6} className="text-center py-8 text-text-muted">
+                        {transactions?.length === 0 ? 'No transactions recorded' : `No ${statusFilter.toLowerCase()} transactions`}
+                      </TableCell>
                     </TableRow>
                   ) : (
-                    transactions?.map((tx) => (
+                    filteredTransactions.map((tx) => (
                       <TableRow 
                         key={tx.id} 
                         className={`border-border-brand hover:bg-[#14161C]/40 transition-colors ${tx.status === 'Voided' ? 'opacity-50' : ''}`}
@@ -503,7 +618,7 @@ export default function FinancePage() {
                           </div>
                         </TableCell>
                         <TableCell className={`text-right font-mono font-bold text-xs ${tx.transaction_type === 'Income' ? 'text-positive' : 'text-text-primary'}`}>
-                          {tx.transaction_type === 'Income' ? '+' : '-'}${tx.amount.toLocaleString()}
+                          {tx.transaction_type === 'Income' ? '+' : '-'}{formatLKR(tx.amount)}
                         </TableCell>
                         <TableCell>
                           {tx.status === 'Voided' ? (
