@@ -144,3 +144,38 @@ export interface CaseOut {
   reported_at: string;
   updated_at: string;
 }
+
+export interface EmployeeBasic {
+  id: number;
+  first_name: string;
+  last_name: string;
+}
+
+export interface ProgramAssignment {
+  id: number;
+  program_id: number;
+  employee_id: number;
+  role_on_program: string | null;
+  assigned_at: string;
+  employee_profile?: EmployeeBasic;
+}
+
+// Full program detail, including start_date/end_date added in the
+// Step 1 migration (not present on the basic Program type used by
+// the list page, since finance.py's list endpoint doesn't return them)
+export interface ProgramDetail {
+  id: number;
+  program_name: string;
+  total_animals_treated: number;
+  status: string;
+  start_date?: string | null;
+  end_date?: string | null;
+  total_cost?: number;
+}
+
+export interface ProgramFinancials {
+  program_id: number;
+  revenue: number;
+  total_cost: number;
+  profit: number;
+}
