@@ -37,11 +37,23 @@ cd CSC3213_20_Group_C
 ```
 
 ### 2. Backend Setup
-Navigate to the backend directory and set up your environment:
+The virtual environment lives at `backend/venv` — create it there, not at the
+repository root, so everyone on the team is pointing at the same interpreter.
+Use Python 3.12; some dependencies do not yet build on 3.14.
+
+**macOS / Linux**
 ```bash
 cd backend
-python3 -m venv venv
+python3.12 -m venv venv
 source venv/bin/activate
+pip install -r requirements.txt
+```
+
+**Windows (PowerShell)**
+```powershell
+cd backend
+py -3.12 -m venv venv
+.\venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 ```
 **Environment Variables**: Create a `.env` file in the `backend/` folder:
@@ -51,11 +63,12 @@ SUPABASE_KEY=your_service_role_key
 SUPABASE_ANON_KEY=your_anon_key
 PORT=8000
 ```
-**Run Backend**:
+**Run Backend** (from the `backend/` directory, with the venv activated):
 ```bash
-export PYTHONPATH=$PYTHONPATH:.
-python3 app/main.py
+uvicorn app.main:app --reload --port 8000
 ```
+The API is then at `http://localhost:8000`, with interactive docs at
+`http://localhost:8000/docs`.
 
 ### 3. Frontend Setup
 Navigate to the frontend directory:
