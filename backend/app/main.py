@@ -3,7 +3,16 @@ import os
 import logging
 logging.basicConfig(level=logging.INFO)
 
-vendor_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "_vendor"))
+backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
+# Running this file directly puts app/ on sys.path rather than backend/, so the
+# "app" package cannot import itself. The __main__ block below exists to be run
+# that way, so put backend/ on the path instead of requiring PYTHONPATH to be
+# set by hand.
+if backend_dir not in sys.path:
+    sys.path.insert(0, backend_dir)
+
+vendor_dir = os.path.join(backend_dir, "_vendor")
 if os.path.exists(vendor_dir) and vendor_dir not in sys.path:
     sys.path.insert(0, vendor_dir)
 
