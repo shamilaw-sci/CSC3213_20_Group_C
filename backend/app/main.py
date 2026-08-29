@@ -9,11 +9,17 @@ if os.path.exists(vendor_dir) and vendor_dir not in sys.path:
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-<<<<<<< HEAD
-from app.api import hr, finance, inventory, auth, reports, admin, rescue_cases, programs
-=======
-from app.api import hr, finance, inventory, auth, reports, admin, rescue_cases, chat
->>>>>>> origin/main
+from app.api import (
+    hr,
+    finance,
+    inventory,
+    auth,
+    reports,
+    admin,
+    rescue_cases,
+    programs,
+    chat,
+)
 
 
 app = FastAPI(title="VFF IMS API", version="1.0.0")

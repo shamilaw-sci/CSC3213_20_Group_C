@@ -6,6 +6,9 @@ node_modules/
 frontend/node_modules/
 frontend/.next/
 backend/venv/
+# The venv belongs at backend/venv; catch any created elsewhere by mistake.
+.venv/
+venv/
 
 # Local rules and design documents
 gemini.md
