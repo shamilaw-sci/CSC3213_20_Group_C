@@ -53,6 +53,16 @@ def _fn(name, desc, props=None, required=None):
                        "properties": props or {},
                        "required": required or []}}}
 
+def list_urgent_cases(supabase: Client) -> list:
+    """Unresolved cases sorted by urgency — for 'what needs attention' questions."""
+    rows = supabase.table("rescue_cases") \
+        .select("id, animal_type, urgency, status, description, reported_at") \
+        .neq("status", "Resolved") \
+        .execute().data or []
+
+    order = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
+    rows.sort(key=lambda r: order.get(r["urgency"], 4))
+    return rows[:10]
 
 TOOLS = {
     "get_finance_summary": {
@@ -82,5 +92,12 @@ TOOLS = {
         "permission": "programs:read",
         "impl": list_programs,
         "schema": _fn("list_programs", "All programs VFF runs."),
+    },
+    "list_urgent_cases": {
+        "permission": "rescue:read",
+        "impl": list_urgent_cases,
+        "schema": _fn("list_urgent_cases",
+                      "Unresolved rescue cases ranked by urgency (Critical first). "
+                      "Use for 'what's most urgent' or 'what needs attention' questions."),
     },
 }

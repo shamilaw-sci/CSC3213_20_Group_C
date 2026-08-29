@@ -13,6 +13,7 @@ from app.schemas.rescue_case import (
     RescueCaseGeo, CaseStatus, CaseCreate, CaseOut, CaseStatusUpdate,
     OutbreakZoneCreate, OutbreakZoneOut,
 )
+from app.services.case_classifier import classify_case_urgency
 
 router = APIRouter()
 
@@ -49,9 +50,12 @@ async def create_case(
     payload: CaseCreate,
     supabase: Client = Depends(get_public_supabase),
 ):
-    response = supabase.table("rescue_cases").insert(
-        payload.model_dump(exclude_none=True)
-    ).execute()
+    classification = await classify_case_urgency(payload.animal_type, payload.description)
+
+    response = supabase.table("rescue_cases").insert({
+        **payload.model_dump(exclude_none=True),
+        "urgency": classification["urgency"],
+    }).execute()
 
     if not response.data:
         raise HTTPException(status_code=500, detail="Failed to create case")

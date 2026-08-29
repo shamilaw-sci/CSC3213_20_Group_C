@@ -19,23 +19,45 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { AlertTriangle, GripVertical, User } from 'lucide-react';
 
-// "Assigned" used to be a fourth drag-target column, but who's handling a
-// case and what stage it's at are different things — conflating them let a
-// card sit in "Reported" with an assignee already attached, or get dragged
-// into "Assigned" with nobody actually assigned. Assignment is now a
-// persistent property shown on every card (see CaseCard) regardless of
-// stage; claiming a case moves it straight to In Treatment.
 const COLUMNS = ['Reported', 'In Treatment', 'Resolved'] as const;
 
-// Color language per stage so the board is scannable at a glance —
-// gray (untouched) -> amber (active work) -> green (done). Reuses hex
-// values already present elsewhere in the app (--color-accent,
-// --color-positive) rather than introducing a new palette.
 const STATUS_ACCENT: Record<(typeof COLUMNS)[number], string> = {
   Reported: '#6B7280',
   'In Treatment': '#EF9F27',
   Resolved: '#16A34A',
 };
+
+// Same idea as STATUS_ACCENT, applied to the AI-assigned urgency badge —
+// Critical/High reuse the same red/amber already used for outbreak zones
+// and destructive actions elsewhere, so the color language stays consistent
+// rather than introducing a third palette.
+const URGENCY_ACCENT: Record<CaseOut['urgency'], { bg: string; text: string }> = {
+  Critical: { bg: '#DC2626', text: '#FFFFFF' },
+  High: { bg: '#EF9F27', text: '#FFFFFF' },
+  Medium: { bg: 'transparent', text: '#6B7280' },
+  Low: { bg: 'transparent', text: '#9CA3AF' },
+};
+
+const URGENCY_ORDER: Record<CaseOut['urgency'], number> = {
+  Critical: 0, High: 1, Medium: 2, Low: 3,
+};
+
+function UrgencyBadge({ urgency }: { urgency: CaseOut['urgency'] }) {
+  const accent = URGENCY_ACCENT[urgency] || URGENCY_ACCENT.Medium;
+  const outlined = accent.bg === 'transparent';
+  return (
+    <span
+      style={{
+        backgroundColor: accent.bg,
+        color: accent.text,
+        borderColor: outlined ? 'currentColor' : 'transparent',
+      }}
+      className={`inline-flex items-center text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ${outlined ? 'border' : ''}`}
+    >
+      {urgency}
+    </span>
+  );
+}
 
 function CaseCard({ c, canManage, canAssign, staffList, onAssignToMe, onAssignTo }: {
   c: CaseOut;
@@ -77,7 +99,12 @@ function CaseCard({ c, canManage, canAssign, staffList, onAssignToMe, onAssignTo
         // eslint-disable-next-line @next/next/no-img-element
         <img src={c.photo_url} alt={c.animal_type} className="w-full h-28 object-cover rounded-md" />
       )}
-      <p className="text-xs font-semibold text-text-primary pr-4">{c.animal_type}</p>
+
+      <div className="flex items-center justify-between gap-2 pr-4">
+        <p className="text-xs font-semibold text-text-primary">{c.animal_type}</p>
+        <UrgencyBadge urgency={c.urgency} />
+      </div>
+
       {c.description && <p className="text-xs text-text-secondary line-clamp-2">{c.description}</p>}
       <p className="text-[10px] text-text-muted font-mono">
         {new Date(c.reported_at).toLocaleDateString()}
@@ -137,6 +164,13 @@ function Column({ status, cases, canManage, canAssign, staffList, onAssignToMe, 
   const { setNodeRef, isOver } = useDroppable({ id: status });
   const accent = STATUS_ACCENT[status];
 
+  // Critical/High cases float to the top of every column so the most
+  // urgent work is always the first thing a staff member sees, without
+  // needing a separate filter or sort control.
+  const sortedCases = [...cases].sort(
+    (a, b) => (URGENCY_ORDER[a.urgency] ?? 4) - (URGENCY_ORDER[b.urgency] ?? 4)
+  );
+
   return (
     <div
       ref={setNodeRef}
@@ -153,7 +187,7 @@ function Column({ status, cases, canManage, canAssign, staffList, onAssignToMe, 
         <span className="text-[10px] font-mono font-semibold" style={{ color: accent }}>{cases.length}</span>
       </div>
       <div className="min-h-[100px] flex-1 overflow-y-auto pr-1">
-        {cases.map((c) => (
+        {sortedCases.map((c) => (
           <CaseCard
             key={c.id}
             c={c}
@@ -197,9 +231,6 @@ export default function CaseTriagePage() {
     queryFn: () => RescueCasesService.listCases(),
   });
 
-  // Fetched unconditionally (not gated on canAssign) so any board viewer can
-  // see who a case is assigned to — the assignment dropdown itself still
-  // stays permission-gated below.
   const { data: staffList } = useQuery({
     queryKey: ['users', 'list'],
     queryFn: () => UsersService.listUsers(),
@@ -230,10 +261,6 @@ export default function CaseTriagePage() {
     const currentCase = data?.find((c) => c.id === caseId);
     if (!currentCase || currentCase.status === newStatus) return;
 
-    // Reported is the only stage a case can be unclaimed in. Dragging a case
-    // forward without an existing assignee claims it for whoever dragged it,
-    // same as clicking "Assign to me" — dragging into Reported needs nothing
-    // extra, the backend releases the claim on its own.
     const assigned_to = newStatus !== 'Reported' && !currentCase.assigned_to
       ? user?.id
       : undefined;
@@ -241,9 +268,6 @@ export default function CaseTriagePage() {
     statusMutation.mutate({ id: caseId, new_status: newStatus, assigned_to });
   }
 
-  // Claiming an unassigned case also starts it — a fresh Reported case moves
-  // straight to In Treatment. Claiming a case that's already past Reported
-  // just attaches the assignee without disturbing its current stage.
   function handleAssignToMe(caseId: string) {
     if (!user?.id) return;
     const currentCase = data?.find((c) => c.id === caseId);

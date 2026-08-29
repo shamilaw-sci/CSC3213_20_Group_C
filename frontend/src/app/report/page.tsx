@@ -9,7 +9,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
 import { ImagePlus, X, Loader2, MapPin, CheckCircle2, PawPrint } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { cn, getErrorMessage } from '@/lib/utils';
 import Image from 'next/image';
 
 const LocationPicker = dynamic(() => import('@/components/heatmap/LocationPicker'), { ssr: false });
@@ -17,6 +17,14 @@ const LocationPicker = dynamic(() => import('@/components/heatmap/LocationPicker
 type Step = 'form' | 'locating' | 'confirm-location' | 'submitting';
 
 const ANIMAL_TYPES = ['Dog', 'Cat', 'Cow', 'Other'];
+
+// Kept in step with the limits enforced in
+// backend/app/api/rescue_cases.py::upload_case_photo. Checking here as well
+// means someone photographing an animal in the field is told immediately,
+// rather than after filling in the form, granting location access and
+// waiting for a multi-megabyte upload to be rejected.
+const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
+const ACCEPTED_PHOTO_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 
 const STEPS: { key: Exclude<Step, 'locating' | 'submitting'> | 'confirm-location'; label: string }[] = [
   { key: 'form', label: 'Details' },
@@ -35,6 +43,20 @@ export default function ReportCasePage() {
   function handlePhotoChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    if (!ACCEPTED_PHOTO_TYPES.includes(file.type)) {
+      toast.error('Please choose a JPEG, PNG or WebP image.');
+      e.target.value = '';
+      return;
+    }
+
+    if (file.size > MAX_PHOTO_BYTES) {
+      const mb = (file.size / (1024 * 1024)).toFixed(1);
+      toast.error(`That photo is ${mb}MB. Please choose one under 5MB.`);
+      e.target.value = '';
+      return;
+    }
+
     setPhotoFile(file);
     setPhotoPreview(URL.createObjectURL(file));
   }
@@ -100,7 +122,11 @@ export default function ReportCasePage() {
       clearPhoto();
       setStep('form');
     } catch (err) {
-      toast.error("Couldn't submit your report. Please try again.");
+      // The server explains why it rejected a photo or a report; showing a
+      // generic message instead left people with no way to act on it.
+      toast.error(
+        getErrorMessage(err) || "Couldn't submit your report. Please try again."
+      );
       setStep('confirm-location');
     }
   }
