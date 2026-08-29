@@ -4,9 +4,11 @@ import ProblemSection from '@/components/home/ProblemSection';
 import StatsBand from '@/components/home/StatsBand';
 import AboutSection from '@/components/home/AboutSection';
 import ProgramsSection from '@/components/home/ProgramsSection';
+import VisionBand from '@/components/home/VisionBand';
 import ImpactSection from '@/components/home/ImpactSection';
 import ProjectsSection from '@/components/home/ProjectsSection';
 import ActivitySection from '@/components/home/ActivitySection';
+import VideoSection from '@/components/home/VideoSection';
 import ClosingCTA from '@/components/home/ClosingCTA';
 import ContactSection from '@/components/home/ContactSection';
 import HomeFooter from '@/components/home/HomeFooter';
@@ -18,16 +20,18 @@ export default function Homepage() {
 
       {/* Ordered as a narrative: hook -> why it matters -> scale of the
           response -> who we are -> what we do -> what it achieved -> where
-          -> what's happening now -> act. */}
+          -> what's happening now -> outside corroboration -> act. */}
       <main className="flex-grow pt-16">
         <HeroSection />
         <ProblemSection />
         <StatsBand />
         <AboutSection />
         <ProgramsSection />
+        <VisionBand />
         <ImpactSection />
         <ProjectsSection />
         <ActivitySection />
+        <VideoSection />
         <ClosingCTA />
         <ContactSection />
       </main>

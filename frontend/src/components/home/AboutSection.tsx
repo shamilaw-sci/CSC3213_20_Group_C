@@ -11,7 +11,10 @@ export default function AboutSection() {
     <section
       id="about"
       ref={ref}
-      className="bg-bg-subtle border-y border-border-brand py-20"
+      // Plain background rather than tinted, so this alternates with the
+      // tinted Programs band directly below — two tinted sections running
+      // together merge into one slab, which is most of what reads as flat.
+      className="bg-bg-brand border-y border-border-brand py-20"
     >
       <div className="max-w-[1280px] mx-auto px-6 md:px-12 grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
         {/* The two columns enter from opposite sides rather than both

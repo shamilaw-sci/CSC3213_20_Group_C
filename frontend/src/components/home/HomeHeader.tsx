@@ -64,13 +64,14 @@ export default function HomeHeader() {
     }`}>
       <div className="max-w-[1280px] mx-auto px-6 md:px-12 h-16 flex justify-between items-center">
         <Link href="/" className="flex items-center gap-2.5 hover:opacity-90 transition-opacity">
-          <Image src="/vff-logo.png" alt="Vets For Future" width={36} height={36} priority className="h-9 w-9 object-contain" />
+          <Image src="/images/vff-logo.png" alt="Vets For Future" width={36} height={36} priority className="h-9 w-9 object-contain" />
           <span className="text-sm font-extrabold tracking-wider uppercase text-text-primary">
             VFF IMS
           </span>
         </Link>
         <nav className="flex items-center gap-6 text-xs font-semibold text-text-secondary">
           <Link href="/" className="hover:text-text-primary transition-colors duration-150">Home</Link>
+          <Link href="/who-we-are" className="hover:text-text-primary transition-colors duration-150">Who We Are</Link>
           <Link href="/report" className="hover:text-text-primary transition-colors duration-150">Report an Animal</Link>
           <Link href="/outbreak-map" className="hover:text-text-primary transition-colors duration-150">Hotspot Map</Link>
           <Link

@@ -5,16 +5,16 @@ import { useRouter } from 'next/navigation';
 import { AuthService } from '@/services/auth.service';
 import { useAuthStore } from '@/store/useAuthStore';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
-import { LogIn, Mail, Lock, Eye, EyeOff, ShieldAlert } from 'lucide-react';
+import { LogIn, Mail, Lock, ShieldAlert } from 'lucide-react';
 import Link from 'next/link';
 import { getErrorMessage } from '@/lib/utils';
+import AuthShell from '@/components/auth/AuthShell';
+import AuthField from '@/components/auth/AuthField';
 
 export default function AdminLoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const router = useRouter();
   const setAuth = useAuthStore((state) => state.setAuth);
@@ -22,10 +22,10 @@ export default function AdminLoginPage() {
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    
+
     try {
       const data = await AuthService.login({ email, password });
-      
+
       // Verify the user logging in has Admin role
       if (data.user.role !== 'Admin' && data.user.role !== 'System Administrator') {
         toast.error('Access denied. Administrator privileges required.');
@@ -36,7 +36,7 @@ export default function AdminLoginPage() {
       setAuth(data.user, data.access_token);
       toast.success('Admin access granted. Welcome back.');
       router.push('/dashboard');
-    } catch (err: any) {
+    } catch (err) {
       toast.error(getErrorMessage(err) || 'Authentication failed. Please check your credentials.');
     } finally {
       setLoading(false);
@@ -44,127 +44,62 @@ export default function AdminLoginPage() {
   };
 
   return (
-    <div className="min-h-screen grid grid-cols-1 md:grid-cols-2 bg-bg-brand text-text-primary font-sans selection:bg-[#EF9F27]/30 overflow-hidden">
-      
-      {/* Left Pane - Inset Space Visuals Container */}
-      <div className="hidden md:flex p-6 h-full w-full">
-        <div 
-          className="relative flex-1 flex flex-col justify-between p-10 bg-cover bg-center rounded-2xl overflow-hidden border border-border-brand shadow-2xl"
-          style={{ 
-            backgroundImage: "url('https://images.unsplash.com/photo-1584132967334-10e028bd69f7?w=1600&q=80')" 
-          }}
-          id="visual-pane"
+    <AuthShell
+      title="Admin portal access"
+      subtitle={
+        <span className="flex items-center gap-1.5">
+          <ShieldAlert size={13} className="text-[#EF9F27] shrink-0" />
+          Authorized IT administrator personnel only.
+        </span>
+      }
+      footer={
+        <p className="text-xs text-text-secondary text-center">
+          Not an administrator?{' '}
+          <Link href="/login" className="text-[#EF9F27] hover:underline font-semibold">
+            Standard sign in
+          </Link>
+        </p>
+      }
+    >
+      <form onSubmit={handleLogin} className="space-y-4">
+        <AuthField
+          icon={Mail}
+          id="email"
+          type="email"
+          placeholder="Admin Email Address"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          required
+        />
+
+        <AuthField
+          icon={Lock}
+          id="password"
+          type="password"
+          placeholder="Password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          required
+        />
+
+        <Button
+          type="submit"
+          className="w-full bg-[#EF9F27] hover:bg-[#EF9F27]/80 text-[#0B0D12] font-semibold text-xs py-3 px-6 mt-2 transition-all rounded-lg active:scale-95 h-11 flex items-center justify-center gap-2 border-none shadow-md shadow-[#EF9F27]/10"
+          disabled={loading}
         >
-          <div className="absolute inset-0 bg-gradient-to-b from-black/50 to-black/90 via-transparent pointer-events-none" />
-          
-          {/* Top Row: Logo & Back Button */}
-          <div className="relative flex justify-between items-center z-10">
-            <span className="text-lg font-extrabold tracking-wider text-white font-heading">
-              VFF IMS
-            </span>
-            <Link 
-              href="/"
-              className="text-[11px] font-bold text-white/90 hover:text-white bg-black/45 py-2 px-4 rounded-lg flex items-center gap-1 border border-white/10 backdrop-blur-md hover:bg-black/60 transition-all duration-150"
-            >
-              Back to website →
-            </Link>
-          </div>
-
-          {/* Bottom Row: Main Caption */}
-          <div className="relative z-10 space-y-6">
-            <h1 className="text-3xl lg:text-4xl font-bold leading-tight tracking-tight text-white font-heading">
-              System administration, <br />
-              securing access.
-            </h1>
-          </div>
-        </div>
-      </div>
-
-      {/* Right Pane - Form directly on Background */}
-      <div className="flex items-center justify-center p-6 md:p-12 lg:p-20 relative light:bg-[#F8F9FA] bg-bg-brand">
-        <div className="w-full max-w-md flex flex-col gap-8">
-          
-          {/* Header */}
-          <div className="space-y-2">
-            <div className="flex items-center gap-2 text-[#EF9F27] mb-1">
-              <ShieldAlert size={18} />
-              <span className="text-[10px] font-bold uppercase tracking-wider font-mono">Secure Node Access</span>
-            </div>
-            <h2 className="text-3xl font-bold tracking-tight text-text-primary font-heading">
-              Admin portal access
-            </h2>
-            <p className="text-xs text-text-secondary">
-              Authorized IT administrator personnel only.{' '}
-              <Link href="/login" className="text-[#EF9F27] hover:underline font-semibold">
-                User Login
-              </Link>
-            </p>
-          </div>
-
-          {/* Form */}
-          <form onSubmit={handleLogin} className="space-y-4">
-            {/* Email Field */}
-            <div className="relative">
-              <Mail className="absolute left-4 top-[14px] text-text-secondary/40" size={16} />
-              <Input 
-                id="email" 
-                type="email" 
-                placeholder="Admin Email Address" 
-                className="pl-11 bg-bg-subtle border-border-brand text-text-primary focus:border-[#EF9F27] focus:ring-1 focus:ring-[#EF9F27] h-11 rounded-lg w-full placeholder:text-text-secondary/40 text-xs"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-              />
-            </div>
-            
-            {/* Password Field */}
-            <div className="relative">
-              <Lock className="absolute left-4 top-[14px] text-text-secondary/40" size={16} />
-              <Input 
-                id="password" 
-                type={showPassword ? "text" : "password"}
-                placeholder="Password" 
-                className="pl-11 pr-10 bg-bg-subtle border-border-brand text-text-primary focus:border-[#EF9F27] focus:ring-1 focus:ring-[#EF9F27] h-11 rounded-lg w-full placeholder:text-text-secondary/40 text-xs"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-              />
-              <button
-                type="button"
-                className="absolute right-4 top-[14px] text-text-secondary/40 hover:text-text-primary"
-                onClick={() => setShowPassword(!showPassword)}
-              >
-                {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-              </button>
-            </div>
-            
-            {/* Primary Action Button */}
-            <Button 
-              type="submit" 
-              className="w-full bg-[#EF9F27] hover:bg-[#EF9F27]/80 text-[#0B0D12] font-semibold text-xs py-3 px-6 mt-2 transition-all rounded-lg active:scale-95 h-11 flex items-center justify-center gap-2 border-none shadow-md shadow-[#EF9F27]/10"
-              disabled={loading}
-            >
-              {loading ? (
-                <>
-                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-[#0B0D12] border-t-transparent" />
-                  Authenticating...
-                </>
-              ) : (
-                <>
-                  <LogIn size={16} />
-                  Authorize Admin Access
-                </>
-              )}
-            </Button>
-          </form>
-          
-          {/* Footer Terms Note */}
-          <p className="text-[10px] text-text-secondary/45 text-center">
-            Internal use only by VFF. Proprietary and Confidential.
-          </p>
-
-        </div>
-      </div>
-    </div>
+          {loading ? (
+            <>
+              <span className="h-4 w-4 animate-spin rounded-full border-2 border-[#0B0D12] border-t-transparent" />
+              Authenticating...
+            </>
+          ) : (
+            <>
+              <LogIn size={16} />
+              Authorize Admin Access
+            </>
+          )}
+        </Button>
+      </form>
+    </AuthShell>
   );
 }

@@ -13,13 +13,29 @@ export default function OutbreakZoneMap({ zones }: { zones: OutbreakZone[] }) {
 
   useEffect(() => {
     if (!mapRef.current || mapInstance.current) return;
-    const map = L.map(mapRef.current).setView([6.0, 80.3], 10);
+    // Scroll-wheel zoom is off because the map now sits on a page that
+    // scrolls — otherwise scrolling past it traps the page. Zoom controls,
+    // double-click and pinch still work.
+    const map = L.map(mapRef.current, { scrollWheelZoom: false }).setView([6.0, 80.3], 10);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '© OpenStreetMap contributors',
     }).addTo(map);
     layerGroup.current = L.layerGroup().addTo(map);
     mapInstance.current = map;
-    return () => { map.remove(); mapInstance.current = null; };
+
+    // The container is sized by its parent's CSS rather than a fixed inline
+    // height, so Leaflet can initialise before the box has its final size. If
+    // that happens the circle overlays project to a zero radius and render as
+    // "M0 0" — invisible — even though the tiles look fine. Re-measuring on
+    // every resize, including the first layout pass, re-projects them.
+    const observer = new ResizeObserver(() => map.invalidateSize());
+    observer.observe(mapRef.current);
+
+    return () => {
+      observer.disconnect();
+      map.remove();
+      mapInstance.current = null;
+    };
   }, []);
 
   useEffect(() => {
@@ -53,5 +69,7 @@ export default function OutbreakZoneMap({ zones }: { zones: OutbreakZone[] }) {
     }
   }, [zones]);
 
-  return <div ref={mapRef} style={{ height: '500px', width: '100%', borderRadius: '8px' }} />;
+  // Fills whatever the parent sizes it to, so the page controls the height
+  // rather than a hard-coded 500px.
+  return <div ref={mapRef} className="h-full w-full" />;
 }
