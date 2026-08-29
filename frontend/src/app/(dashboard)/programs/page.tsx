@@ -1,6 +1,7 @@
 'use client';
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useRouter } from 'next/navigation';
 import { FinanceService } from '@/services/finance.service';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -38,6 +39,7 @@ const MOCK_PROGRAMS = [
 export default function ProgramsPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const queryClient = useQueryClient();
+  const router = useRouter();
   
   const { data: programs, isLoading, isError } = useQuery({
     queryKey: ['programs'],
@@ -282,7 +284,12 @@ export default function ProgramsPage() {
                 </CardContent>
 
                 <CardFooter className="pt-4 border-t border-border-brand flex justify-between items-center bg-bg-subtle p-4 px-5 rounded-b-card">
-                  <Button variant="ghost" size="sm" className="text-text-secondary hover:text-text-primary hover:bg-surface -ml-2 text-xs">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-text-secondary hover:text-text-primary hover:bg-surface -ml-2 text-xs"
+                    onClick={() => router.push(`/programs/${program.id}`)}
+                  >
                     <TrendingUp className="mr-2 h-4 w-4 text-positive" /> Analytics
                   </Button>
                   <div className="flex items-center gap-2">
