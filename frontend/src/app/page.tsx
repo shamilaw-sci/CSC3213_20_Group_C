@@ -4,6 +4,7 @@ import ProblemSection from '@/components/home/ProblemSection';
 import StatsBand from '@/components/home/StatsBand';
 import AboutSection from '@/components/home/AboutSection';
 import ProgramsSection from '@/components/home/ProgramsSection';
+import VisionBand from '@/components/home/VisionBand';
 import ImpactSection from '@/components/home/ImpactSection';
 import ProjectsSection from '@/components/home/ProjectsSection';
 import ActivitySection from '@/components/home/ActivitySection';
@@ -26,6 +27,7 @@ export default function Homepage() {
         <StatsBand />
         <AboutSection />
         <ProgramsSection />
+        <VisionBand />
         <ImpactSection />
         <ProjectsSection />
         <ActivitySection />
