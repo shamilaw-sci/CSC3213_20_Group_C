@@ -66,3 +66,17 @@ class OutbreakZoneOut(BaseModel):
     declared_at: datetime
     is_active: bool
     resolved_at: Optional[datetime] = None
+
+class CaseOut(BaseModel):
+    id: UUID
+    animal_type: str
+    description: Optional[str] = None
+    status: CaseStatus
+    urgency: str  # add this
+    lat: float
+    lng: float
+    photo_url: Optional[str] = None
+    reported_by: Optional[UUID] = None
+    assigned_to: Optional[UUID] = None
+    reported_at: datetime
+    updated_at: datetime

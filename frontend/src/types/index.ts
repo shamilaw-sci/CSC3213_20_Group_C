@@ -143,7 +143,8 @@ export interface CaseOut {
   id: string;
   animal_type: string;
   description?: string;
-  status: 'Reported' | 'In Treatment' | 'Resolved';
+  status: 'Reported' | 'Assigned' | 'In Treatment' | 'Resolved';
+  urgency: 'Low' | 'Medium' | 'High' | 'Critical';  // add this
   lat: number;
   lng: number;
   photo_url?: string;
