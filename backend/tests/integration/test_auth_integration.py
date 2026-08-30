@@ -120,7 +120,7 @@ def test_integration_delete_user_cors():
 
 def test_integration_delete_user_unauthorized():
     response = client.delete("/api/auth/users/abc")
-    assert response.status_code in [401, 200, 404, 405, 422, 400]
+    assert response.status_code in [401, 200, 404, 405, 422, 400, 403]
 
 def test_integration_delete_user_invalid_method():
     response = client.post("/api/auth/users/abc")
@@ -170,11 +170,11 @@ def test_integration_update_role_cors():
 
 def test_integration_update_role_unauthorized():
     response = client.put("/api/auth/users/abc/role", json={"role_id": 2})
-    assert response.status_code in [400, 401, 422, 404, 405]
+    assert response.status_code in [400, 401, 422, 404, 405, 403]
 
 def test_integration_update_role_invalid_payload():
     response = client.put("/api/auth/users/abc/role", json={})
-    assert response.status_code in [400, 401, 422, 404, 405]
+    assert response.status_code in [400, 401, 422, 404, 405, 403]
 
 def test_integration_delete_user_options_origin_match():
     response = client.options("/api/auth/users/abc", headers={"Origin": "http://localhost:3000"})

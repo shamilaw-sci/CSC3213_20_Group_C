@@ -98,6 +98,9 @@ def _case_row(status="Reported", assigned_to=None):
         "animal_type": "Dog",
         "description": None,
         "status": status,
+        # CaseOut requires urgency; the fixture was not updated when the field
+        # was added, so every test asserting a 200 from this endpoint failed.
+        "urgency": "Medium",
         "lat": 6.9271,
         "lng": 79.8612,
         "photo_url": None,
@@ -155,6 +158,12 @@ PROTECTED_ROUTES = [
     ("GET", "/api/admin/audit-logs"),
     ("GET", "/api/rescue_cases/cases"),
     ("PATCH", f"/api/rescue_cases/cases/{CASE_ID}/status"),
+    # Previously reachable anonymously; see the Known gaps section below.
+    ("PUT", f"/api/auth/users/{OTHER_USER_ID}/role"),
+    ("DELETE", f"/api/auth/users/{OTHER_USER_ID}"),
+    ("POST", "/api/inventory/items"),
+    ("POST", "/api/inventory/transactions"),
+    ("GET", "/api/admin/audit-logs/verify"),
 ]
 
 PUBLIC_ROUTES = [
@@ -199,8 +208,13 @@ PERMISSION_ROUTES = [
     ("GET", "/api/finance/programs", "programs:read"),
     ("POST", "/api/finance/programs", "programs:manage"),
     ("GET", "/api/admin/audit-logs", "audit:read"),
+    ("GET", "/api/admin/audit-logs/verify", "audit:read"),
     ("GET", "/api/admin/stats", "admin:users"),
     ("GET", "/api/rescue_cases/cases", "rescue:read"),
+    ("PUT", f"/api/auth/users/{OTHER_USER_ID}/role", "admin:users"),
+    ("DELETE", f"/api/auth/users/{OTHER_USER_ID}", "admin:users"),
+    ("POST", "/api/inventory/items", "inventory:issue"),
+    ("POST", "/api/inventory/transactions", "inventory:issue"),
 ]
 
 
@@ -379,12 +393,8 @@ def test_rescue_read_gate_blocks_finance_officer():
 # test XPASSes and fails, prompting removal from this list.
 UNPROTECTED_ROUTES = [
     ("GET", "/api/auth/users"),
-    ("PUT", f"/api/auth/users/{OTHER_USER_ID}/role"),
-    ("DELETE", f"/api/auth/users/{OTHER_USER_ID}"),
     ("GET", "/api/inventory/items"),
-    ("POST", "/api/inventory/items"),
     ("GET", "/api/inventory/transactions"),
-    ("POST", "/api/inventory/transactions"),
 ]
 
 
