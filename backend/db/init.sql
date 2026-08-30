@@ -92,7 +92,10 @@ CREATE TABLE IF NOT EXISTS system_audit_logs (
     table_name VARCHAR(100) NOT NULL,
     old_payload JSONB,
     new_payload JSONB,
-    timestamp TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+    timestamp TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    -- Tamper-evident chain; see db/migrations/001_audit_hash_chain.sql.
+    prev_hash TEXT,
+    hash TEXT
 );
 
 -- ============================================

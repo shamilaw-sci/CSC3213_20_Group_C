@@ -9,6 +9,7 @@ import uuid
 from app.core.security import require_permission
 from app.core.security import has_permission
 from app.core.supabase import get_supabase, get_public_supabase
+from app.core.audit import log_audit_action
 from app.schemas.rescue_case import (
     RescueCaseGeo, CaseStatus, CaseCreate, CaseOut, CaseStatusUpdate,
     OutbreakZoneCreate, OutbreakZoneOut,
@@ -60,6 +61,17 @@ async def create_case(
     if not response.data:
         raise HTTPException(status_code=500, detail="Failed to create case")
 
+    # Public endpoint: reports come from anonymous members of the public, so a
+    # null user_id here is the accurate record, not a missing attribution.
+    await log_audit_action(
+        supabase,
+        user_id=None,
+        action_type="RESCUE_CASE_CREATE",
+        table_name="rescue_cases",
+        old_payload=None,
+        new_payload=response.data[0],
+    )
+
     return response.data[0]
 
 
@@ -110,7 +122,9 @@ async def update_case_status(
 ):
     existing = (
         supabase.table("rescue_cases")
-        .select("status, assigned_to")
+        # Full row rather than just the two fields the permission checks need,
+        # so the audit entry records the case as it actually stood beforehand.
+        .select("*")
         .eq("id", case_id)
         .execute()
     )
@@ -156,7 +170,36 @@ async def update_case_status(
     response = supabase.table("rescue_cases").update(update_data).eq("id", case_id).execute()
     if not response.data:
         raise HTTPException(status_code=404, detail="Case not found")
-    return response.data[0]
+
+    updated = response.data[0]
+    before = existing.data[0]
+
+    # Status change and assignment are gated on different permissions
+    # (rescue:manage vs rescue:assign) precisely because they are different
+    # kinds of act. The audit trail keeps that distinction rather than
+    # flattening one endpoint into one action type. A single request that does
+    # both emits both entries.
+    if updated.get("status") != before.get("status"):
+        await log_audit_action(
+            supabase,
+            user_id=current_user["id"],
+            action_type="RESCUE_CASE_STATUS_UPDATE",
+            table_name="rescue_cases",
+            old_payload=before,
+            new_payload=updated,
+        )
+
+    if updated.get("assigned_to") != before.get("assigned_to"):
+        await log_audit_action(
+            supabase,
+            user_id=current_user["id"],
+            action_type="RESCUE_CASE_ASSIGN",
+            table_name="rescue_cases",
+            old_payload={"id": case_id, "assigned_to": before.get("assigned_to")},
+            new_payload={"id": case_id, "assigned_to": updated.get("assigned_to")},
+        )
+
+    return updated
 
 
 @router.get("/outbreak-zones", response_model=list[OutbreakZoneOut])
@@ -187,6 +230,18 @@ async def declare_outbreak_zone(
 
     if not response.data:
         raise HTTPException(status_code=500, detail="Failed to declare outbreak zone")
+
+    # Declaring a zone publishes it to the public map, so it is a public-facing
+    # act worth attributing.
+    await log_audit_action(
+        supabase,
+        user_id=current_user["id"],
+        action_type="OUTBREAK_ZONE_DECLARE",
+        table_name="outbreak_zones",
+        old_payload=None,
+        new_payload=response.data[0],
+    )
+
     return response.data[0]
 
 
@@ -196,6 +251,15 @@ async def resolve_outbreak_zone(
     supabase: Client = Depends(get_supabase),
     current_user: dict = Depends(require_permission("rescue:assign")),
 ):
+    existing = (
+        supabase.table("outbreak_zones")
+        .select("*")
+        .eq("id", zone_id)
+        .execute()
+    )
+    if not existing.data:
+        raise HTTPException(status_code=404, detail="Zone not found")
+
     response = (
         supabase.table("outbreak_zones")
         .update({"is_active": False, "resolved_at": datetime.now(timezone.utc).isoformat()})
@@ -204,4 +268,14 @@ async def resolve_outbreak_zone(
     )
     if not response.data:
         raise HTTPException(status_code=404, detail="Zone not found")
+
+    await log_audit_action(
+        supabase,
+        user_id=current_user["id"],
+        action_type="OUTBREAK_ZONE_RESOLVE",
+        table_name="outbreak_zones",
+        old_payload=existing.data[0],
+        new_payload=response.data[0],
+    )
+
     return response.data[0]

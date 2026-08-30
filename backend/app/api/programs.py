@@ -4,6 +4,7 @@ from supabase import Client
 
 from app.core.supabase import get_supabase
 from app.core.security import require_permission
+from app.core.audit import log_audit_action
 from app.schemas.programs import ProgramAssignment, ProgramAssignmentCreate, ProgramDetail, ProgramFinancials
 
 router = APIRouter()
@@ -156,6 +157,16 @@ async def assign_worker_to_program(
         .single()
         .execute()
     )
+
+    await log_audit_action(
+        supabase,
+        user_id=user["id"],
+        action_type="PROGRAM_TEAM_ASSIGN",
+        table_name="program_assignments",
+        old_payload=None,
+        new_payload=refreshed.data,
+    )
+
     return refreshed.data
 
 
@@ -168,7 +179,9 @@ async def remove_worker_from_program(
 ):
     existing = (
         supabase.table("program_assignments")
-        .select("id")
+        # Full row, not just the id: after the delete this audit entry is the
+        # only remaining record of who was on the program and in what role.
+        .select("*")
         .eq("id", assignment_id)
         .eq("program_id", program_id)
         .execute()
@@ -177,4 +190,14 @@ async def remove_worker_from_program(
         raise HTTPException(status_code=404, detail="Assignment not found")
 
     supabase.table("program_assignments").delete().eq("id", assignment_id).execute()
+
+    await log_audit_action(
+        supabase,
+        user_id=user["id"],
+        action_type="PROGRAM_TEAM_REMOVE",
+        table_name="program_assignments",
+        old_payload=existing.data[0],
+        new_payload=None,
+    )
+
     return {"message": "Worker removed from program"}

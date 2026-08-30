@@ -5,6 +5,7 @@ from typing import List, Optional, Dict, Any
 from datetime import date, datetime, timezone
 from supabase import Client
 from app.core.security import require_permission
+from app.core.audit import log_audit_action
 from fastapi.responses import StreamingResponse
 from datetime import date as date_cls
 from fastapi import HTTPException
@@ -29,20 +30,46 @@ async def create_employee(employee: EmployeeProfileCreate, user = Depends(requir
     response = supabase.table("employee_profile").insert(employee.model_dump()).execute()
     if not response.data:
         raise HTTPException(status_code=400, detail="Failed to create employee")
+
+    await log_audit_action(
+        supabase,
+        user_id=user["id"],
+        action_type="EMPLOYEE_CREATE",
+        table_name="employee_profile",
+        old_payload=None,
+        new_payload=response.data[0],
+    )
+
     return response.data[0]
 
 @router.put("/employees/{employee_id}", response_model=EmployeeProfile)
 async def update_employee(employee_id: int, employee: EmployeeProfileCreate, user = Depends(require_permission('hr:manage')), supabase: Client = Depends(get_supabase)):
+    # Salary and role live on this row, so the prior values are the point of
+    # the audit entry.
+    existing = supabase.table("employee_profile").select("*").eq("id", employee_id).execute()
+    if not existing.data:
+        raise HTTPException(status_code=404, detail="Employee not found")
+
     response = supabase.table("employee_profile").update(employee.model_dump()).eq("id", employee_id).execute()
     if not response.data:
         raise HTTPException(status_code=404, detail="Employee not found")
+
+    await log_audit_action(
+        supabase,
+        user_id=user["id"],
+        action_type="EMPLOYEE_UPDATE",
+        table_name="employee_profile",
+        old_payload=existing.data[0],
+        new_payload=response.data[0],
+    )
+
     return response.data[0]
 
 # --- SELF SERVICE ATTENDANCE ---
 
 @router.post("/attendance/clock-in")
 async def clock_in(user = Depends(require_permission('hr:attendance:self')), supabase: Client = Depends(get_supabase)):
-    emp = get_employee_by_user_id(supabase, user['sub'])
+    emp = get_employee_by_user_id(supabase, user['id'])
     today = str(date.today())
     
     existing = supabase.table("attendance_log").select("*").eq("employee_id", emp['id']).eq("target_date", today).execute()
@@ -56,11 +83,21 @@ async def clock_in(user = Depends(require_permission('hr:attendance:self')), sup
         "is_locked": False
     }
     resp = supabase.table("attendance_log").insert(record).execute()
+
+    await log_audit_action(
+        supabase,
+        user_id=user["id"],
+        action_type="ATTENDANCE_CLOCK_IN",
+        table_name="attendance_log",
+        old_payload=None,
+        new_payload=resp.data[0] if resp.data else record,
+    )
+
     return resp.data[0]
 
 @router.post("/attendance/clock-out")
 async def clock_out(user = Depends(require_permission('hr:attendance:self')), supabase: Client = Depends(get_supabase)):
-    emp = get_employee_by_user_id(supabase, user['sub'])
+    emp = get_employee_by_user_id(supabase, user['id'])
     today = str(date.today())
     
     existing = supabase.table("attendance_log").select("*").eq("employee_id", emp['id']).eq("target_date", today).execute()
@@ -85,11 +122,23 @@ async def clock_out(user = Depends(require_permission('hr:attendance:self')), su
     }
     
     resp = supabase.table("attendance_log").update(update_data).eq("id", record['id']).execute()
+
+    # Clocking out also locks the record, which is what payroll later depends
+    # on — worth an entry showing the hours that got frozen in.
+    await log_audit_action(
+        supabase,
+        user_id=user["id"],
+        action_type="ATTENDANCE_CLOCK_OUT",
+        table_name="attendance_log",
+        old_payload=record,
+        new_payload=resp.data[0] if resp.data else update_data,
+    )
+
     return resp.data[0]
 
 @router.get("/attendance/me")
 async def get_my_attendance(month: Optional[int] = None, year: Optional[int] = None, user = Depends(require_permission('hr:attendance:self')), supabase: Client = Depends(get_supabase)):
-    emp = get_employee_by_user_id(supabase, user['sub'])
+    emp = get_employee_by_user_id(supabase, user['id'])
     query = supabase.table("attendance_log").select("*").eq("employee_id", emp['id']).order("target_date", desc=True)
     
     if month and year:
@@ -144,6 +193,16 @@ async def log_attendance(attendance: AttendanceLogCreate, user = Depends(require
     response = supabase.table("attendance_log").insert(payload).execute()
     if not response.data:
         raise HTTPException(status_code=400, detail="Failed to log attendance")
+
+    await log_audit_action(
+        supabase,
+        user_id=user["id"],
+        action_type="ATTENDANCE_CREATE",
+        table_name="attendance_log",
+        old_payload=None,
+        new_payload=response.data[0],
+    )
+
     return response.data[0]
 
 @router.get("/attendance/export")
@@ -206,13 +265,36 @@ async def update_attendance(attendance_id: int, attendance: AttendanceLogUpdate,
     response = supabase.table("attendance_log").update(payload).eq("id", attendance_id).execute()
     if not response.data:
         raise HTTPException(status_code=400, detail="Failed to update attendance")
+
+    await log_audit_action(
+        supabase,
+        user_id=user["id"],
+        action_type="ATTENDANCE_UPDATE",
+        table_name="attendance_log",
+        old_payload=current,
+        new_payload=response.data[0],
+    )
+
     return response.data[0]
 
 
 @router.post("/attendance/lock-day")
 async def lock_day_attendance(target_date: date, user = Depends(require_permission('hr:attendance:manage')), supabase: Client = Depends(get_supabase)):
     response = supabase.table("attendance_log").update({"is_locked": True}).eq("target_date", str(target_date)).execute()
-    return {"message": f"Attendance locked for {target_date}", "updated_count": len(response.data) if response.data else 0}
+    updated_count = len(response.data) if response.data else 0
+
+    # Locking a day is what makes those hours eligible for payroll, so it is a
+    # financially meaningful action even though it edits no money directly.
+    await log_audit_action(
+        supabase,
+        user_id=user["id"],
+        action_type="ATTENDANCE_LOCK_DAY",
+        table_name="attendance_log",
+        old_payload=None,
+        new_payload={"target_date": str(target_date), "updated_count": updated_count},
+    )
+
+    return {"message": f"Attendance locked for {target_date}", "updated_count": updated_count}
 
 @router.post("/attendance/lock")
 async def lock_attendance(target_date: date, user = Depends(require_permission('hr:attendance:manage')), supabase: Client = Depends(get_supabase)):
@@ -246,6 +328,24 @@ async def generate_monthly_payroll(
             "generate_monthly_payroll",
             {"p_month": month, "p_year": year}
         ).execute()
+
+        rows = result.data or []
+
+        # Distinct from PAYROLL_GENERATE_FINANCE: this path runs the database
+        # RPC rather than the inline loop in finance.py.
+        await log_audit_action(
+            supabase,
+            user_id=user["id"],
+            action_type="PAYROLL_GENERATE_HR",
+            table_name="payroll_ledger",
+            old_payload=None,
+            new_payload={
+                "month": month,
+                "year": year,
+                "rows_created": len(rows),
+                "total_payout": sum(float(r.get("net_payable") or 0) for r in rows),
+            },
+        )
 
         return result.data
 

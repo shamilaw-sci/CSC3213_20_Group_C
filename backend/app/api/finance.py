@@ -7,6 +7,7 @@ from supabase import Client
 # Internal App Imports
 from app.core.supabase import get_supabase
 from app.core.security import require_permission
+from app.core.audit import log_audit_action
 from app.schemas.finance import (
     FinancialTransaction,
     FinancialTransactionCreate,
@@ -56,6 +57,15 @@ async def create_transaction(
     if not response.data:
         raise HTTPException(status_code=400, detail="Failed to create transaction")
 
+    await log_audit_action(
+        supabase,
+        user_id=user["id"],
+        action_type="FINANCE_TRANSACTION_CREATE",
+        table_name="financial_transactions",
+        old_payload=None,
+        new_payload=response.data[0],
+    )
+
     return response.data[0]
 
 
@@ -88,6 +98,15 @@ async def update_transaction(
     data["transaction_date"] = str(data["transaction_date"])
     data["amount"] = float(data["amount"])
 
+    # Read the row before overwriting it — an amount change is exactly the kind
+    # of edit the audit trail exists to make provable.
+    existing = supabase.table("financial_transactions") \
+        .select("*") \
+        .eq("id", transaction_id) \
+        .execute()
+    if not existing.data:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+
     response = supabase.table("financial_transactions") \
         .update(data) \
         .eq("id", transaction_id) \
@@ -95,6 +114,15 @@ async def update_transaction(
 
     if not response.data:
         raise HTTPException(status_code=404, detail="Transaction not found")
+
+    await log_audit_action(
+        supabase,
+        user_id=user["id"],
+        action_type="FINANCE_TRANSACTION_UPDATE",
+        table_name="financial_transactions",
+        old_payload=existing.data[0],
+        new_payload=response.data[0],
+    )
 
     return response.data[0]
 
@@ -123,6 +151,15 @@ async def void_transaction(
         .eq("id", transaction_id) \
         .execute()
 
+    await log_audit_action(
+        supabase,
+        user_id=user["id"],
+        action_type="FINANCE_TRANSACTION_VOID",
+        table_name="financial_transactions",
+        old_payload=existing.data,
+        new_payload=response.data[0],
+    )
+
     return response.data[0]
 
 @router.patch("/transactions/{transaction_id}/settle", response_model=FinancialTransaction)
@@ -147,6 +184,15 @@ async def settle_transaction(
         .update({"status": "Cash"}) \
         .eq("id", transaction_id) \
         .execute()
+
+    await log_audit_action(
+        supabase,
+        user_id=user["id"],
+        action_type="FINANCE_TRANSACTION_SETTLE",
+        table_name="financial_transactions",
+        old_payload=existing.data,
+        new_payload=response.data[0],
+    )
 
     return response.data[0]
 
@@ -174,6 +220,15 @@ async def create_program(
 
     if not response.data:
         raise HTTPException(status_code=400, detail="Failed to create program")
+
+    await log_audit_action(
+        supabase,
+        user_id=user["id"],
+        action_type="PROGRAM_CREATE",
+        table_name="programs",
+        old_payload=None,
+        new_payload=response.data[0],
+    )
 
     return response.data[0]
 
@@ -333,9 +388,28 @@ async def calculate_monthly_payroll(
             "status": "Cash"
         }).execute()
 
-    return {
+    result = {
         "message": f"Successfully processed payroll for {processed_count} employees.",
         "month": month,
         "year": year,
         "total_payout": total_payroll_expense
     }
+
+    # Distinct from PAYROLL_GENERATE_HR: this is the inline-loop implementation,
+    # and the two paths could diverge. Collapsing them into one action_type
+    # would hide which one actually ran.
+    await log_audit_action(
+        supabase,
+        user_id=user["id"],
+        action_type="PAYROLL_GENERATE_FINANCE",
+        table_name="payroll_ledgers",
+        old_payload=None,
+        new_payload={
+            "month": month,
+            "year": year,
+            "employees_processed": processed_count,
+            "total_payout": total_payroll_expense,
+        },
+    )
+
+    return result
