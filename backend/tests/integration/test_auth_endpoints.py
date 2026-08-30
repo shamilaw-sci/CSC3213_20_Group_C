@@ -74,7 +74,11 @@ def test_endpoint_register_default_role(override_supabase):
         "password": "securepassword"
     })
     assert response.status_code == 200
-    override_supabase.table("users").insert.assert_called_once()
+    # Registration now also appends an audit row, so this shared mock records
+    # two inserts. Assert the user row specifically rather than a total count.
+    override_supabase.table("users").insert.assert_any_call(
+        {"id": "mock-user-id", "email": "test@vff.org", "role_id": 2}
+    )
 
 def test_endpoint_register_provider_failure(override_supabase):
     override_supabase.auth.sign_up.return_value = MagicMock(user=None)

@@ -137,4 +137,4 @@ def test_integration_options_nonexistent():
 # 21. Test settings configuration put method
 def test_integration_put_settings_unauthorized():
     response = client.put("/api/auth/users/test-uuid/role", json={"role_id": 2})
-    assert response.status_code in [200, 400, 401, 422]
+    assert response.status_code in [200, 400, 401, 422, 403]

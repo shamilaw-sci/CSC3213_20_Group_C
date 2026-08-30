@@ -1,8 +1,9 @@
 from fastapi import APIRouter, HTTPException, Depends
 from postgrest.exceptions import APIError
 from app.core.supabase import get_supabase
-from app.core.security import check_user_role
+from app.core.security import check_user_role, require_permission
 from app.core.permissions import UserRole
+from app.core.audit import log_audit_action
 from app.schemas.inventory import (
     InventoryItem,
     InventoryItemCreate,
@@ -34,7 +35,11 @@ async def get_items(supabase: Client = Depends(get_supabase)):
 
 
 @router.post("/items", response_model=InventoryItem)
-async def create_item(item: InventoryItemCreate, supabase: Client = Depends(get_supabase)):
+async def create_item(
+    item: InventoryItemCreate,
+    current_user: dict = Depends(require_permission('inventory:issue')),
+    supabase: Client = Depends(get_supabase),
+):
     # How much initial stock the caller wants. We store 0 in the DB first,
     # then let the Restock RPC adjust it so total_cost is calculated correctly.
     requested_initial_stock = item.current_stock
@@ -84,6 +89,15 @@ async def create_item(item: InventoryItemCreate, supabase: Client = Depends(get_
         )
         new_item = refreshed.data
 
+    await log_audit_action(
+        supabase,
+        user_id=current_user["id"],
+        action_type="INVENTORY_ITEM_CREATE",
+        table_name="inventory_items",
+        old_payload=None,
+        new_payload=new_item,
+    )
+
     return new_item
 
 
@@ -119,8 +133,21 @@ async def get_transactions(item_id: Optional[int] = None, supabase: Client = Dep
     return [_map_transaction_row(row) for row in response.data]
 
 
+# The audit trail distinguishes the three stock movements, matching the
+# action_type values already present in system_audit_logs.
+_TRANSACTION_ACTION = {
+    "Issue": "INVENTORY_ISSUE",
+    "Return": "INVENTORY_RETURN",
+    "Restock": "INVENTORY_STOCK_IN",
+}
+
+
 @router.post("/transactions", response_model=InventoryTransaction)
-async def create_transaction(transaction: InventoryTransactionCreate, supabase: Client = Depends(get_supabase)):
+async def create_transaction(
+    transaction: InventoryTransactionCreate,
+    current_user: dict = Depends(require_permission('inventory:issue')),
+    supabase: Client = Depends(get_supabase),
+):
     # 1. Start transaction (Supabase doesn't support multi-table atomic transactions easily via client, so we do it step-wise)
     # In a real production app, we should use a Postgres function (RPC) for atomicity.
     
@@ -151,7 +178,20 @@ async def create_transaction(transaction: InventoryTransactionCreate, supabase: 
     if not response.data:
         raise HTTPException(status_code=400, detail="Failed to log inventory transaction")
 
-    return _map_transaction_row(response.data[0])
+    created = _map_transaction_row(response.data[0])
+
+    await log_audit_action(
+        supabase,
+        user_id=current_user["id"],
+        action_type=_TRANSACTION_ACTION.get(transaction.transaction_type, "INVENTORY_TRANSACTION"),
+        table_name="inventory_transactions",
+        # The stock level either side of the movement is the part worth being
+        # able to prove later; the transaction row alone doesn't show it.
+        old_payload={"item_id": transaction.item_id, "current_stock": current_stock},
+        new_payload={**created, "current_stock": new_stock},
+    )
+
+    return created
 
 
 # ===================================================================
