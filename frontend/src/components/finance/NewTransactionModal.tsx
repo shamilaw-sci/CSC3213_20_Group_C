@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { FinanceService } from '@/services/finance.service';
+import { Transaction } from '@/types';
 import {
   Dialog,
   DialogContent,
@@ -20,7 +21,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { TrendingUp, TrendingDown, Loader2 } from 'lucide-react';
+import { TrendingUp, TrendingDown, Loader2, Lock, ShieldAlert } from 'lucide-react';
+import { useAuthStore } from '@/store/useAuthStore';
+import { hasPermission } from '@/lib/permissions';
 
 interface NewTransactionModalProps {
   open: boolean;
@@ -33,38 +36,77 @@ const EMPTY_FORM = {
   transaction_type: '' as 'Income' | 'Expense' | '',
   status: '' as 'Cash' | 'Receivable' | '',
   program_id: null as number | null,
+  is_restricted: false,
 };
 
 export function NewTransactionModal({ open, onClose }: NewTransactionModalProps) {
   const queryClient = useQueryClient();
   const [form, setForm] = useState(EMPTY_FORM);
   const [error, setError] = useState<string | null>(null);
+  // Set when the backend rejects an overspend with 409. Holding it separately
+  // from `error` is what lets the override affordance appear only after a real
+  // shortfall, rather than inviting an override before one exists.
+  const [shortfall, setShortfall] = useState<string | null>(null);
+
+  const { user } = useAuthStore();
+  const canOverride = hasPermission(user?.role as string, 'finance:restricted:override');
 
   const { data: programs } = useQuery({
     queryKey: ['programs'],
     queryFn: FinanceService.getPrograms,
   });
 
+  // Live balance for the chosen program, so an expense shows what is left
+  // before it is submitted rather than only after a rejection.
+  const { data: balance } = useQuery({
+    queryKey: ['restrictedBalance', form.program_id],
+    queryFn: () => FinanceService.getRestrictedBalance(form.program_id as number),
+    enabled: form.program_id !== null,
+    retry: false,
+  });
+
   const { mutate: createTransaction, isPending } = useMutation({
-    mutationFn: FinanceService.createTransaction,
+    mutationFn: (overrideRestricted: boolean) =>
+      FinanceService.createTransaction(
+        {
+          transaction_date: form.transaction_date,
+          amount: parseFloat(form.amount),
+          transaction_type: form.transaction_type as 'Income' | 'Expense',
+          status: form.status as 'Cash' | 'Receivable',
+          program_id: form.program_id,
+          is_restricted: form.is_restricted,
+        } as Omit<Transaction, 'id'>,
+        overrideRestricted,
+      ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['transactions'] });
       queryClient.invalidateQueries({ queryKey: ['financeSummary'] });
+      queryClient.invalidateQueries({ queryKey: ['restrictedBalance'] });
+      queryClient.invalidateQueries({ queryKey: ['program-financials'] });
       handleClose();
     },
     onError: (err: any) => {
-      setError(err?.response?.data?.detail || 'Failed to record transaction. Please try again.');
+      const detail = err?.response?.data?.detail;
+      if (err?.response?.status === 409) {
+        setShortfall(detail);
+        setError(null);
+        return;
+      }
+      setShortfall(null);
+      setError(detail || 'Failed to record transaction. Please try again.');
     },
   });
 
   const handleClose = () => {
     setForm(EMPTY_FORM);
     setError(null);
+    setShortfall(null);
     onClose();
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = (overrideRestricted = false) => {
     setError(null);
+    if (!overrideRestricted) setShortfall(null);
 
     if (!form.transaction_date || !form.amount || !form.transaction_type || !form.status) {
       setError('All fields except Program are required.');
@@ -77,13 +119,14 @@ export function NewTransactionModal({ open, onClose }: NewTransactionModalProps)
       return;
     }
 
-    createTransaction({
-      transaction_date: form.transaction_date,
-      amount,
-      transaction_type: form.transaction_type as 'Income' | 'Expense',
-      status: form.status as 'Cash' | 'Receivable',
-      program_id: form.program_id,
-    } as any);
+    // Mirrors the backend validator so the user is told immediately rather
+    // than by a 422 round trip. The backend remains the enforcement point.
+    if (form.is_restricted && form.program_id === null) {
+      setError('Restricted income must be assigned to a program.');
+      return;
+    }
+
+    createTransaction(overrideRestricted);
   };
 
   return (
@@ -101,7 +144,15 @@ export function NewTransactionModal({ open, onClose }: NewTransactionModalProps)
               {(['Income', 'Expense'] as const).map((type) => (
                 <button
                   key={type}
-                  onClick={() => setForm((f) => ({ ...f, transaction_type: type }))}
+                  onClick={() =>
+                    setForm((f) => ({
+                      ...f,
+                      transaction_type: type,
+                      // Only income can be earmarked; an expense draws down
+                      // restricted funds via its program, not via a flag.
+                      is_restricted: type === 'Income' ? f.is_restricted : false,
+                    }))
+                  }
                   className={`flex items-center justify-center gap-2 py-2 rounded-lg border text-xs font-semibold transition-all ${
                     form.transaction_type === type
                       ? type === 'Income'
@@ -174,14 +225,29 @@ export function NewTransactionModal({ open, onClose }: NewTransactionModalProps)
             <Select
               value={form.program_id?.toString() ?? 'none'}
               onValueChange={(v) =>
-                setForm((f) => ({
-                  ...f,
-                  program_id: v === null || v === 'none' ? null : parseInt(v),
-                }))
+                setForm((f) => {
+                  const program_id = v === null || v === 'none' ? null : parseInt(v);
+                  // Clearing the program clears the earmark with it, so the
+                  // form can never submit a restricted row with no program.
+                  return { ...f, program_id, is_restricted: program_id === null ? false : f.is_restricted };
+                })
               }
             >
               <SelectTrigger className="bg-bg-subtle border border-border-brand text-text-primary focus:border-accent text-xs rounded-lg h-10">
-                <SelectValue placeholder="No program" />
+                {/* Base UI's Select.Value renders the raw VALUE, not the
+                    selected item's label — unlike Radix. Without this function
+                    child the trigger showed the bare program id ("1"), so an
+                    officer booking a program-linked expense could not see
+                    which program they had picked. The Status select above
+                    only looks correct because its value and label are the
+                    same string. */}
+                <SelectValue placeholder="No program">
+                  {(value) =>
+                    value == null || value === 'none'
+                      ? 'No program'
+                      : programs?.find((p) => p.id.toString() === value)?.program_name ?? value
+                  }
+                </SelectValue>
               </SelectTrigger>
               <SelectContent className="bg-surface border border-border-brand text-text-primary rounded-lg">
                 <SelectItem value="none" className="text-text-muted focus:bg-bg-subtle">No program</SelectItem>
@@ -193,6 +259,98 @@ export function NewTransactionModal({ open, onClose }: NewTransactionModalProps)
               </SelectContent>
             </Select>
           </div>
+
+          {/* Restrict to program — income only */}
+          {form.transaction_type === 'Income' && (
+            <div className="space-y-1.5">
+              <button
+                type="button"
+                onClick={() => setForm((f) => ({ ...f, is_restricted: !f.is_restricted }))}
+                disabled={form.program_id === null}
+                className={`w-full flex items-start gap-3 rounded-lg border px-3 py-2.5 text-left transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
+                  form.is_restricted
+                    ? 'bg-accent/10 border-accent/40'
+                    : 'bg-bg-subtle border-border-brand hover:border-accent/40'
+                }`}
+              >
+                <span
+                  className={`mt-0.5 flex h-4 w-8 shrink-0 items-center rounded-full transition-colors ${
+                    form.is_restricted ? 'bg-accent justify-end' : 'bg-border-brand justify-start'
+                  }`}
+                >
+                  <span className="h-3 w-3 rounded-full bg-white mx-0.5" />
+                </span>
+                <span className="min-w-0">
+                  <span className="flex items-center gap-1.5 text-xs font-semibold text-text-primary">
+                    <Lock size={12} className={form.is_restricted ? 'text-accent' : 'text-text-muted'} />
+                    Restrict to program
+                  </span>
+                  <span className="block text-[10px] text-text-secondary mt-0.5 leading-relaxed">
+                    {form.program_id === null
+                      ? 'Select a program above to earmark this donation.'
+                      : 'The donor earmarked this money for this program. It cannot be spent elsewhere.'}
+                  </span>
+                </span>
+              </button>
+            </div>
+          )}
+
+          {/* Restricted position — shown for expenses so the officer sees the
+              ceiling before submitting, not only after a rejection. */}
+          {form.transaction_type === 'Expense' && form.program_id !== null && balance && balance.raised > 0 && (
+            <div className="rounded-lg border border-border-brand bg-bg-subtle px-3 py-2.5">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-text-secondary flex items-center gap-1.5">
+                <Lock size={11} className="text-accent" /> Restricted funds
+              </p>
+              <div className="mt-1.5 grid grid-cols-3 gap-2 text-xs">
+                <div>
+                  <p className="text-[10px] text-text-muted">Raised</p>
+                  <p className="font-semibold text-text-primary">Rs. {balance.raised.toLocaleString()}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] text-text-muted">Spent</p>
+                  <p className="font-semibold text-text-primary">Rs. {balance.spent.toLocaleString()}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] text-text-muted">Remaining</p>
+                  <p className={`font-semibold ${balance.remaining < 0 ? 'text-negative' : 'text-positive'}`}>
+                    Rs. {balance.remaining.toLocaleString()}
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Shortfall — the backend refused this expense */}
+          {shortfall && (
+            <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 space-y-2">
+              <p className="flex items-center gap-1.5 text-xs font-semibold text-amber-500">
+                <ShieldAlert size={13} /> Exceeds restricted funds
+              </p>
+              <p className="text-[11px] text-text-secondary leading-relaxed">{shortfall}</p>
+              {canOverride ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={isPending}
+                  onClick={() => handleSubmit(true)}
+                  className="h-8 w-full border-amber-500/40 text-amber-500 hover:bg-amber-500/10 text-[11px]"
+                >
+                  {isPending ? (
+                    <><Loader2 className="mr-2 h-3 w-3 animate-spin" /> Authorizing...</>
+                  ) : (
+                    'Authorize overspend anyway'
+                  )}
+                </Button>
+              ) : (
+                <p className="text-[10px] text-text-muted italic">
+                  You are not authorized to override this. Reduce the amount or ask an
+                  administrator.
+                </p>
+              )}
+            </div>
+          )}
 
           {/* Error */}
           {error && (
@@ -211,7 +369,7 @@ export function NewTransactionModal({ open, onClose }: NewTransactionModalProps)
             Cancel
           </Button>
           <Button
-            onClick={handleSubmit}
+            onClick={() => handleSubmit()}
             disabled={isPending}
             className="bg-accent hover:bg-accent/80 text-white font-semibold text-xs rounded-lg h-10 min-w-[120px] shadow-sm"
           >

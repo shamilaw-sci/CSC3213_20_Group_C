@@ -10,7 +10,10 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ArrowLeft, Users, TrendingUp, X, UserPlus } from 'lucide-react';
+import { ArrowLeft, Users, TrendingUp, X, UserPlus, Lock } from 'lucide-react';
+import { FinanceService } from '@/services/finance.service';
+import { useAuthStore } from '@/store/useAuthStore';
+import { hasPermission } from '@/lib/permissions';
 import { toast } from 'sonner';
 import ProtectedRoute from '@/components/layout/protected-route';
 
@@ -47,6 +50,19 @@ export default function ProgramDetailsPage() {
   const { data: employees } = useQuery({
     queryKey: ['employees'],
     queryFn: HRService.getEmployees,
+  });
+
+  // The restricted-balance endpoint is gated on finance:read, which Staff do
+  // not hold. Guarding the query avoids a guaranteed 403 on every page load
+  // for the role that most often opens this view.
+  const { user } = useAuthStore();
+  const canReadFinance = hasPermission(user?.role as string, 'finance:read');
+
+  const { data: restricted } = useQuery({
+    queryKey: ['restrictedBalance', programId],
+    queryFn: () => FinanceService.getRestrictedBalance(programId),
+    enabled: canReadFinance && !Number.isNaN(programId),
+    retry: false,
   });
 
   const assignWorker = useMutation({
@@ -126,6 +142,42 @@ export default function ProgramDetailsPage() {
                 valueClassName={financials && financials.profit < 0 ? 'text-red-500' : 'text-positive'}
               />
             </div>
+
+            {/* Restricted funds — only rendered when the program actually holds
+                earmarked money, so unrestricted programs are not cluttered
+                with three zeroes. */}
+            {restricted && restricted.raised > 0 && (
+              <Card className="bg-surface border border-border-brand rounded-card">
+                <CardHeader>
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Lock size={16} className="text-accent" /> Restricted Funds
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <StatBox
+                      label="Raised"
+                      value={`Rs. ${restricted.raised.toLocaleString()}`}
+                    />
+                    <StatBox
+                      label="Spent"
+                      value={`Rs. ${restricted.spent.toLocaleString()}`}
+                    />
+                    <StatBox
+                      label="Remaining"
+                      value={`Rs. ${restricted.remaining.toLocaleString()}`}
+                      valueClassName={restricted.remaining < 0 ? 'text-red-500' : 'text-positive'}
+                    />
+                  </div>
+                  <p className="text-[10px] text-text-secondary mt-3 leading-relaxed">
+                    Donations earmarked for this program. Only received (Cash) donations
+                    count as raised; outstanding pledges do not.
+                    {restricted.remaining < 0 &&
+                      ' This program is overdrawn — expenses exceed the funds raised for it.'}
+                  </p>
+                </CardContent>
+              </Card>
+            )}
 
             {/* Team Section */}
             <Card className="bg-surface border border-border-brand rounded-card">

@@ -1,5 +1,5 @@
 import api from '@/lib/api-client';
-import { Transaction, Program, MonthlySummary } from '@/types';
+import { Transaction, Program, MonthlySummary, RestrictedBalance } from '@/types';
 
 export const FinanceService = {
   getTransactions: async (params?: { start_date?: string, end_date?: string }) => {
@@ -7,8 +7,23 @@ export const FinanceService = {
     return response.data;
   },
   
-  createTransaction: async (transaction: Omit<Transaction, 'id'>) => {
-    const response = await api.post<Transaction>('/finance/transactions', transaction);
+  // overrideRestricted authorizes an expense that overspends a program's
+  // earmarked funds. The backend rejects it with 403 unless the caller holds
+  // finance:restricted:override, and records every use to the audit log.
+  createTransaction: async (
+    transaction: Omit<Transaction, 'id'>,
+    overrideRestricted = false,
+  ) => {
+    const response = await api.post<Transaction>('/finance/transactions', transaction, {
+      params: overrideRestricted ? { override_restricted: true } : undefined,
+    });
+    return response.data;
+  },
+
+  getRestrictedBalance: async (programId: number) => {
+    const response = await api.get<RestrictedBalance>(
+      `/finance/programs/${programId}/restricted-balance`,
+    );
     return response.data;
   },
 

@@ -40,7 +40,14 @@ export function usePrograms() {
 export function useCreateTransaction() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: FinanceService.createTransaction,
+    // Wrapped rather than passed by reference: createTransaction now takes an
+    // optional second argument (overrideRestricted), and a two-parameter
+    // function is not assignable to React Query's single-argument
+    // MutationFunction. This hook has no override affordance, so it always
+    // uses the default — an overspend from here is refused with 409, which is
+    // the correct outcome for a caller that cannot authorize one.
+    mutationFn: (transaction: Parameters<typeof FinanceService.createTransaction>[0]) =>
+      FinanceService.createTransaction(transaction),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['transactions'] });
       queryClient.invalidateQueries({ queryKey: ['finance-summary'] });

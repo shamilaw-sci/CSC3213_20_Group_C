@@ -8,6 +8,7 @@ export type Permission =
   | 'payroll:approve'
   | 'finance:read'
   | 'finance:write'
+  | 'finance:restricted:override'
   | 'inventory:read'
   | 'inventory:issue'
   | 'programs:read'
@@ -23,7 +24,8 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
   Admin: [
     'hr:manage', 'hr:attendance:self', 'hr:attendance:manage',
     'payroll:generate', 'payroll:approve', 'finance:read',
-    'finance:write', 'inventory:read', 'inventory:issue',
+    'finance:write', 'finance:restricted:override',
+    'inventory:read', 'inventory:issue',
     'programs:read', 'programs:manage', 'admin:users', 'audit:read',
     'rescue:read', 'rescue:manage', 'rescue:assign'
   ],
@@ -37,7 +39,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
   ],
   'Finance Officer': [
     'finance:read', 'finance:write', 'payroll:generate',
-    'inventory:read'
+    'inventory:read', 'programs:read'
   ],
   Staff: [
     'hr:attendance:self', 'programs:read', 'inventory:issue',

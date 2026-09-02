@@ -246,6 +246,10 @@ def test_permission_routes_cover_every_granted_permission():
         # covered by the rescue scenario tests below.
         "rescue:manage",
         "rescue:assign",
+        # Enforced conditionally inside create_transaction — it only applies to
+        # an expense that overspends a restricted program — so no route-level
+        # Depends can express it. Covered by the restricted-fund tests below.
+        "finance:restricted:override",
         # No route enforces these yet.
         "payroll:approve",
         "inventory:read",
