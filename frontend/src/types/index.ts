@@ -40,9 +40,19 @@ export interface Transaction {
   transaction_type: 'Income' | 'Expense';
   status: 'Cash' | 'Receivable' | 'Voided';
   program_id: number | null;
+  // Donor earmarked this income for program_id. Only meaningful on Income
+  // rows; expenses draw down restricted funds via program_id alone.
+  is_restricted?: boolean;
   programs?: {
     program_name: string;
   };
+}
+
+export interface RestrictedBalance {
+  program_id: number;
+  raised: number;
+  spent: number;
+  remaining: number;
 }
 
 export interface MonthlySummary {

@@ -7,12 +7,18 @@ from supabase import Client
 # Internal App Imports
 from app.core.supabase import get_supabase
 from app.core.security import require_permission
+from app.core.permissions import has_permission
 from app.core.audit import log_audit_action
+from app.services.restricted_funds import (
+    compute_restricted_balance,
+    is_program_restricted,
+)
 from app.schemas.finance import (
     FinancialTransaction,
     FinancialTransactionCreate,
     Program,
-    ProgramCreate
+    ProgramCreate,
+    RestrictedBalance,
 )
 
 router = APIRouter()
@@ -42,11 +48,111 @@ async def get_transactions(
 @router.post("/transactions", response_model=FinancialTransaction)
 async def create_transaction(
     transaction: FinancialTransactionCreate,
+    override_restricted: bool = False,
     user = Depends(require_permission('finance:write')),
     supabase: Client = Depends(get_supabase)
 ):
     if transaction.amount <= 0:
         raise HTTPException(status_code=400, detail="Transaction amount must be strictly positive.")
+
+    # Restricted-fund drawdown check.
+    #
+    # Only Expense rows charged to a program can overspend earmarked money, and
+    # only for programs that actually hold some — see is_program_restricted for
+    # why an unrestricted program must not be gated on a zero balance. A Voided
+    # row is not a real payment, so it is not checked.
+    if (
+        transaction.transaction_type == "Expense"
+        and transaction.program_id is not None
+        and transaction.status != "Voided"
+        and is_program_restricted(supabase, transaction.program_id)
+    ):
+        balance = compute_restricted_balance(supabase, transaction.program_id)
+        remaining = balance["remaining"]
+
+        if transaction.amount > remaining:
+            shortfall = transaction.amount - remaining
+            may_override = has_permission(
+                (user.get("roles") or {}).get("role_name") or "",
+                'finance:restricted:override',
+            )
+
+            if not override_restricted:
+                # Blocked rather than silently allowed. The message names the
+                # exact shortfall so the officer can either reduce the expense
+                # or seek authorization, and states whether this user is able
+                # to authorize it themselves.
+                remedy = (
+                    "Resubmit with override_restricted=true to authorize this overspend."
+                    if may_override
+                    else "Authorization from a user holding finance:restricted:override is required."
+                )
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"Expense of {transaction.amount} exceeds the restricted funds "
+                        f"remaining for program {transaction.program_id} by {shortfall}. "
+                        f"Raised: {balance['raised']}, already spent: {balance['spent']}, "
+                        f"remaining: {remaining}. {remedy}"
+                    ),
+                )
+
+            if not may_override:
+                raise HTTPException(
+                    status_code=403,
+                    detail=(
+                        "Insufficient permissions. Overspending restricted program "
+                        "funds requires finance:restricted:override."
+                    ),
+                )
+
+            # The audit row is written BEFORE the expense, and a failure to
+            # write it aborts the request.
+            #
+            # log_audit_action is fail-soft everywhere else, which is right when
+            # it records something that already happened. Here it IS the
+            # control: an override is authorized by being recorded. Inserting
+            # first and logging after would mean a dropped audit row leaves an
+            # unrecorded overspend in the ledger. Ordered this way, the only
+            # failure mode is an override logged for an expense that then
+            # failed to insert — over-recording, which is reviewable, rather
+            # than under-recording, which is not.
+            logged = await log_audit_action(
+                supabase,
+                user_id=user["id"],
+                action_type="FINANCE_RESTRICTED_OVERRIDE",
+                table_name="financial_transactions",
+                old_payload=None,
+                # Not a row diff. Follows PAYROLL_GENERATE_FINANCE below, which
+                # already packs synthetic detail into new_payload. compute_hash
+                # covers new_payload, so these figures are chain-protected.
+                #
+                # Money is recorded as a decimal STRING, never a float. A float
+                # here silently breaks verification forever: canonicalize()
+                # leaves 8000.0 as a float, but JSONB returns whole numbers as
+                # 8000, so the digest computed on insert can never be
+                # reproduced on read. Decimal serializes via compute_hash's
+                # default=str to "8000.00", which survives the round trip
+                # unchanged and keeps exact precision as a bonus.
+                new_payload={
+                    "program_id": transaction.program_id,
+                    "shortfall_amount": shortfall,
+                    "attempted_amount": transaction.amount,
+                    "restricted_raised": balance["raised"],
+                    "restricted_spent": balance["spent"],
+                    "restricted_remaining": remaining,
+                    "authorized_by": str(user["id"]),
+                },
+            )
+
+            if not logged:
+                raise HTTPException(
+                    status_code=503,
+                    detail=(
+                        "Override could not be recorded to the audit log and was "
+                        "therefore not applied. No transaction was created."
+                    ),
+                )
 
     data = transaction.model_dump()
     data["transaction_date"] = str(data["transaction_date"])  # 👈 ADD THIS
@@ -231,6 +337,29 @@ async def create_program(
     )
 
     return response.data[0]
+
+
+@router.get("/programs/{program_id}/restricted-balance", response_model=RestrictedBalance)
+async def get_program_restricted_balance(
+    program_id: int,
+    user = Depends(require_permission('finance:read')),
+    supabase: Client = Depends(get_supabase)
+):
+    """
+    Earmarked funds raised, spent, and remaining for one program.
+
+    Gated on finance:read rather than programs:read: this reports money, and
+    Staff hold programs:read but no view of the ledger.
+    """
+    program = supabase.table("programs") \
+        .select("id") \
+        .eq("id", program_id) \
+        .execute()
+
+    if not program.data:
+        raise HTTPException(status_code=404, detail="Program not found")
+
+    return compute_restricted_balance(supabase, program_id)
 
 
 # ==========================================

@@ -85,13 +85,20 @@ async def log_audit_action(
     table_name: str,
     old_payload: Optional[Any] = None,
     new_payload: Optional[Any] = None,
-):
+) -> bool:
     """
     Append a tamper-evident row to system_audit_logs.
 
     Fail-soft by contract: if anything here raises, the error is logged and
     swallowed. Audit logging must never break the user-facing request it is
     recording.
+
+    Returns True if the row was written, False if it was not. Existing callers
+    ignore this and keep their fail-soft behaviour unchanged. It exists for the
+    minority of callers where the audit row is not a record OF the control but
+    IS the control — a restricted-fund override authorizes itself by being
+    logged, so silently dropping that row would turn a governance event into an
+    unrecorded one. Those callers check the return; see create_transaction.
     """
     try:
         last = (
@@ -131,6 +138,8 @@ async def log_audit_action(
                 "hash": row_hash,
             }
         ).execute()
+        return True
     except Exception as e:
         logger.error("Failed to log audit action %s on %s: %s", action_type, table_name, e)
         # Deliberately not re-raised.
+        return False
