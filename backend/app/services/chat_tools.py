@@ -1,6 +1,9 @@
 from calendar import monthrange
 from datetime import date
+from decimal import Decimal
 from supabase import Client
+
+from app.services.restricted_funds import compute_restricted_balance
 
 # ---------- implementations ----------
 
@@ -42,6 +45,14 @@ def get_aging_summary(supabase: Client) -> dict:
 
 def list_programs(supabase: Client) -> list:
     return supabase.table("programs").select("*").execute().data or []
+
+
+def get_restricted_fund_balance(supabase: Client, program_id: int) -> dict:
+    """Earmarked funds position for one program — same helper the finance API uses."""
+    balance = compute_restricted_balance(supabase, program_id)
+    # Decimal is not JSON-serializable, and this dict is serialized straight
+    # into the tool-call result the model reads.
+    return {k: float(v) if isinstance(v, Decimal) else v for k, v in balance.items()}
 
 
 # ---------- schemas ----------
@@ -87,6 +98,17 @@ TOOLS = {
         "impl": get_aging_summary,
         "schema": _fn("get_aging_summary",
                       "Outstanding receivables bucketed by age: 0-30, 31-60, 61+ days."),
+    },
+    "get_restricted_fund_balance": {
+        "permission": "finance:read",
+        "impl": get_restricted_fund_balance,
+        "schema": _fn("get_restricted_fund_balance",
+                      "Earmarked (restricted) donation funds for one program: amount "
+                      "raised, amount spent against it, and remaining. Use for "
+                      "'how much restricted money is left for X' questions.",
+                      {"program_id": {"type": "integer",
+                                      "description": "Program id, from list_programs"}},
+                      ["program_id"]),
     },
     "list_programs": {
         "permission": "programs:read",

@@ -184,7 +184,15 @@ export function EditTransactionModal({ transaction, onClose }: EditTransactionMo
               }
             >
               <SelectTrigger className="bg-bg-subtle border border-border-brand text-text-primary focus:border-accent text-xs rounded-lg h-10">
-                <SelectValue placeholder="No program" />
+                {/* See NewTransactionModal: Base UI's Select.Value renders the
+                    raw value, so without this the trigger shows a bare id. */}
+                <SelectValue placeholder="No program">
+                  {(value) =>
+                    value == null || value === 'none'
+                      ? 'No program'
+                      : programs?.find((p) => p.id.toString() === value)?.program_name ?? value
+                  }
+                </SelectValue>
               </SelectTrigger>
               <SelectContent className="bg-surface border border-border-brand text-text-primary rounded-lg">
                 <SelectItem value="none" className="text-text-muted focus:bg-bg-subtle">No program</SelectItem>
