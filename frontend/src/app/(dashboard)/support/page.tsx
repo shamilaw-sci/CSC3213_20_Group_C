@@ -42,7 +42,9 @@ The platform utilizes a structured RBAC architecture ensuring only authorized pe
 | **Director** | Strategic oversight and budget approvals | Access Overview, Programs, Finance, Inventory. |
 | **Finance Officer** | General ledger maintenance & transaction entry | Access Finance, General Ledger, Programs tracking. |
 | **HR Officer** | Staff management & attendance recording | Access HR, Attendance records, basic directory. |
-| **Operations Lead** | Clinic management and program tracking | Access Programs, Inventory tracking, issues. |
+| **Operations Lead** | Clinic management and program tracking | Access Programs, Inventory tracking, issues, rescue cases. |
+| **General Staff** | Default role for every new account; field rescue work | Access Programs, Inventory issues, rescue cases, own attendance. |
+| **System Administrator** | Technical administration only | Access user accounts and audit logs. No HR, finance or case data. |
 
 ### Access Validation Protocol
 When a page is initialized, the system validates the logged user object's role property against the module's allowed list. If unauthorized, routes automatically trigger navigation redirect actions.

@@ -1,28 +1,48 @@
 import { NAVIGATION_CONFIG, NavItem } from '../lib/navigation';
 import { UserRole, hasPermission } from '../lib/permissions';
 
+// Hand-written on purpose: deriving these from ROLE_PERMISSIONS would make the
+// test tautological. Because the map is keyed by the UserRole union, adding a
+// role without deciding what it can see is a compile error, not a silent gap.
+const PERSONAL = ['Go to Website Home', 'Edit Profile', 'Account Settings', 'Support'];
+
 const expectedItemsPerRole: Record<UserRole, string[]> = {
   'Admin': [
-    'Overview', 'Employees', 'Attendance', 'Payroll', 'Overview', 'Ledger', 
-    'Receivables', 'Payables', 'Reports', 'Stock', 'Issue', 'Returns', 
-    'Active Programs', 'My Attendance', 'System Admin', 
-    'Go to Website Home', 'Edit Profile', 'Account Settings', 'Support'
+    'Overview', 'Employees', 'Attendance', 'Payroll', 'Overview', 'Ledger',
+    'Receivables', 'Payables', 'Reports', 'Stock', 'Issue', 'Returns',
+    'Active Programs', 'Case Hotspots', 'Case Triage', 'My Attendance', 'System Admin',
+    ...PERSONAL
   ],
+  // No Ledger: that needs finance:write, which oversight deliberately lacks.
+  // No My Attendance: Director has no hr:attendance:self.
   'Director': [
-    'Overview', 'Overview', 'Receivables', 'Payables', 'Reports', 'Stock', 
-    'Active Programs', 'Go to Website Home', 'Edit Profile', 'Account Settings', 'Support'
+    'Overview', 'Overview', 'Receivables', 'Payables', 'Reports', 'Stock',
+    'Active Programs', 'Case Hotspots', 'Case Triage', ...PERSONAL
   ],
   'HR Officer': [
-    'Overview', 'Employees', 'Attendance', 'Payroll', 'My Attendance',
-    'Go to Website Home', 'Edit Profile', 'Account Settings', 'Support'
+    'Overview', 'Employees', 'Attendance', 'Payroll',
+    'Case Hotspots', 'Case Triage', 'My Attendance', ...PERSONAL
   ],
+  // Active Programs is expected: programs:read was granted so the program
+  // picker on the transaction form renders names rather than numeric ids.
   'Finance Officer': [
-    'Overview', 'Payroll', 'Overview', 'Ledger', 'Receivables', 'Payables', 'Reports', 
-    'Stock', 'Go to Website Home', 'Edit Profile', 'Account Settings', 'Support'
+    'Overview', 'Payroll', 'Overview', 'Ledger', 'Receivables', 'Payables', 'Reports',
+    'Stock', 'Active Programs', ...PERSONAL
   ],
-  'Staff': [
-    'Overview', 'Issue', 'Returns', 'Active Programs', 'My Attendance',
-    'Go to Website Home', 'Edit Profile', 'Account Settings', 'Support'
+  // Clinic and field operations: inventory, programs and rescue, no HR/finance.
+  'Operations Lead': [
+    'Overview', 'Stock', 'Issue', 'Returns', 'Active Programs',
+    'Case Hotspots', 'Case Triage', 'My Attendance', ...PERSONAL
+  ],
+  // No Stock: General Staff can issue inventory but not browse the catalogue.
+  'General Staff': [
+    'Overview', 'Issue', 'Returns', 'Active Programs',
+    'Case Hotspots', 'Case Triage', 'My Attendance', ...PERSONAL
+  ],
+  // Technical administration only. The short list is the point: no payroll,
+  // no ledger, no case data.
+  'System Administrator': [
+    'Overview', 'System Admin', ...PERSONAL
   ]
 };
 

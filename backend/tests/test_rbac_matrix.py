@@ -271,11 +271,12 @@ def test_permission_routes_cover_every_granted_permission():
 # requires an assignee (current or supplied), enforced independently of role.
 RESCUE_SCENARIOS = [
     # id, current_status, current_assignee, new_status, payload_assigned_to, roles expected to succeed
-    ("resolve", "In Treatment", USER_ID, "Resolved", None, {"Admin", "Staff"}),
+    ("resolve", "In Treatment", USER_ID, "Resolved", None,
+     {"Admin", "General Staff", "Operations Lead"}),
     ("no-op-status", "Reported", None, "Reported", None,
-     {"Admin", "Director", "HR Officer", "Staff"}),
+     {"Admin", "Director", "HR Officer", "General Staff", "Operations Lead"}),
     ("self-assign", "Reported", None, "In Treatment", USER_ID,
-     {"Admin", "Director", "HR Officer", "Staff"}),
+     {"Admin", "Director", "HR Officer", "General Staff", "Operations Lead"}),
     ("handoff-to-colleague", "Reported", None, "In Treatment", OTHER_USER_ID,
      {"Admin", "Director", "HR Officer"}),
     ("reassign-colleague", "In Treatment", USER_ID, "In Treatment", OTHER_USER_ID,
@@ -286,7 +287,7 @@ RESCUE_SCENARIOS = [
     # Releasing a case back to Reported needs no assignee — the endpoint
     # clears one unconditionally, so this exercises pure status management.
     ("release-to-reported", "In Treatment", USER_ID, "Reported", None,
-     {"Admin", "Staff"}),
+     {"Admin", "General Staff", "Operations Lead"}),
 ]
 
 

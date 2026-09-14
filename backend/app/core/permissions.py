@@ -1,11 +1,18 @@
 from enum import Enum
 
+# These names are the authorization keys: has_permission() looks a role up by
+# the exact string stored in roles.role_name, so a name here that no row uses
+# grants nothing to anybody. They must match the seven roles the application
+# actually issues — see the role pickers in frontend admin and hr/employees
+# pages, which are the source of truth for role ids 1-7.
 class UserRole(str, Enum):
     ADMIN = 'Admin'
     DIRECTOR = 'Director'
-    HR_OFFICER = 'HR Officer'
     FINANCE_OFFICER = 'Finance Officer'
-    STAFF = 'Staff'
+    HR_OFFICER = 'HR Officer'
+    OPERATIONS_LEAD = 'Operations Lead'
+    GENERAL_STAFF = 'General Staff'
+    SYSTEM_ADMINISTRATOR = 'System Administrator'
 
 class Permission(str, Enum):
     HR_MANAGE = 'hr:manage'
@@ -66,9 +73,35 @@ ROLE_PERMISSIONS = {
         # the wrong program misdirects a restricted-fund drawdown.
         Permission.PROGRAMS_READ.value
     ],
-    UserRole.STAFF.value: [
+    # Clinic and field operations. Programs and inventory per the RBAC table on
+    # the support page ("Clinic management and program tracking"); programs:manage
+    # because leading a clinic means running the programs, not just watching them.
+    # This is the first role other than Admin to hold programs:manage.
+    #
+    # Deliberately NOT rescue:assign. An Operations Lead is arguably the most
+    # natural dispatcher in the org, but handing work to another person stays
+    # with Admin/Director/HR Officer for now. Self-assignment is unaffected:
+    # update_case_status allows it regardless of this permission.
+    UserRole.OPERATIONS_LEAD.value: [
+        Permission.HR_ATTENDANCE_SELF.value,
+        Permission.INVENTORY_READ.value, Permission.INVENTORY_ISSUE.value,
+        Permission.PROGRAMS_READ.value, Permission.PROGRAMS_MANAGE.value,
+        Permission.RESCUE_READ.value, Permission.RESCUE_MANAGE.value
+    ],
+    # The default role for every new signup, and the field staff who work rescue
+    # cases. This set is carried over verbatim from the former 'Staff' key: the
+    # grants were always correct, but the name matched no role any user could
+    # hold, so in practice this role had no permissions at all.
+    UserRole.GENERAL_STAFF.value: [
         Permission.HR_ATTENDANCE_SELF.value, Permission.PROGRAMS_READ.value, Permission.INVENTORY_ISSUE.value,
         Permission.RESCUE_READ.value, Permission.RESCUE_MANAGE.value
+    ],
+    # Technical administration, not business access. Manages accounts and reads
+    # the audit chain; has no reason to read salaries, the ledger or case data,
+    # so separation of duties keeps those out. Narrower than Admin on purpose —
+    # the two are not interchangeable despite the admin login accepting both.
+    UserRole.SYSTEM_ADMINISTRATOR.value: [
+        Permission.ADMIN_USERS.value, Permission.AUDIT_READ.value
     ]
 }
 
