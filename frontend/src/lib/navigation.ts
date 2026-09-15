@@ -12,7 +12,8 @@ import {
   BookOpen,
   FolderOpen,
   MapPin,
-  ClipboardList
+  ClipboardList,
+  Navigation
 } from 'lucide-react';
 
 import type { Permission } from './permissions';
@@ -73,6 +74,7 @@ export const NAVIGATION_CONFIG: NavSection[] = [
   items: [
     { label: 'Case Hotspots', href: '/cases', icon: MapPin, requiredPermission: 'rescue:read' },
     { label: 'Case Triage', href: '/case-triage', icon: ClipboardList, requiredPermission: 'rescue:read' },
+    { label: 'Field Dispatch', href: '/dispatch', icon: Navigation, requiredPermission: 'rescue:read' },
   ]
   },
   {
