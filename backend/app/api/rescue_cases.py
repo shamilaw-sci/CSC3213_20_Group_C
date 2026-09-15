@@ -12,9 +12,10 @@ from app.core.supabase import get_supabase, get_public_supabase
 from app.core.audit import log_audit_action
 from app.schemas.rescue_case import (
     RescueCaseGeo, CaseStatus, CaseCreate, CaseOut, CaseStatusUpdate,
-    OutbreakZoneCreate, OutbreakZoneOut,
+    OutbreakZoneCreate, OutbreakZoneOut, OptimizedRoute,
 )
 from app.services.case_classifier import classify_case_urgency
+from app.services.route_optimizer import optimize_route
 
 router = APIRouter()
 
@@ -111,6 +112,47 @@ async def list_cases(
 
     response = query.execute()
     return response.data or []
+
+
+@router.get("/my-route", response_model=OptimizedRoute)
+async def get_my_route(
+    lat: float = Query(..., ge=-90, le=90, description="Staff member's current latitude"),
+    lng: float = Query(..., ge=-180, le=180, description="Staff member's current longitude"),
+    supabase: Client = Depends(get_supabase),
+    current_user: dict = Depends(require_permission("rescue:read")),
+):
+    """
+    An efficient visiting order for the caller's own open cases.
+
+    Gated on rescue:read rather than a dedicated permission: this exposes a
+    strict subset of what GET /cases already returns to the same user, so a
+    separate permission would be granted to exactly the same roles and add a
+    second thing to keep in sync for no access-control gain.
+
+    Scoped to assigned_to = the caller. Not a parameter, deliberately — there is
+    no route-for-another-user case, and accepting a user id here would need its
+    own authorization check to stop staff enumerating each other's workloads.
+
+    Pure read, so nothing is written to the audit log.
+    """
+    response = (
+        supabase.table("rescue_cases")
+        .select("*")
+        .eq("assigned_to", str(current_user["id"]))
+        .neq("status", CaseStatus.resolved.value)
+        .order("reported_at", desc=False)
+        .execute()
+    )
+
+    cases = response.data or []
+
+    # A case with no coordinates cannot be routed to. Dropping it beats failing
+    # the whole request, and beats sending (0, 0) to the routing engine — which
+    # would silently anchor the tour in the Atlantic.
+    routable = [c for c in cases if c.get("lat") is not None and c.get("lng") is not None]
+
+    result = await optimize_route((lat, lng), routable)
+    return result
 
 
 @router.patch("/cases/{case_id}/status", response_model=CaseOut)

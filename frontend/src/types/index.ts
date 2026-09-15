@@ -164,6 +164,26 @@ export interface CaseOut {
   updated_at: string;
 }
 
+export interface RouteStop {
+  sequence: number;              // 1-based, matches the numbered map markers
+  case: CaseOut;
+  leg_distance_km: number;       // from the previous stop (or the start, for #1)
+  leg_duration_min: number;
+  cumulative_distance_km: number;
+  cumulative_duration_min: number;
+}
+
+export interface OptimizedRoute {
+  stops: RouteStop[];
+  total_distance_km: number;
+  total_duration_min: number;
+  // False when road routing was unavailable and these are straight-line
+  // estimates. Surfaced in the UI rather than passed off as driving distances.
+  used_road_distances: boolean;
+  degraded_reason?: string | null;
+  truncated: boolean;
+}
+
 export interface EmployeeBasic {
   id: number;
   first_name: string;

@@ -1,6 +1,6 @@
 // frontend/src/services/rescue-cases.service.ts
 import api from '@/lib/api-client';
-import { RescueCaseGeo , CaseOut } from '@/types';
+import { RescueCaseGeo , CaseOut, OptimizedRoute } from '@/types';
 
 export interface CaseCreatePayload {
   animal_type: string;
@@ -62,6 +62,15 @@ export const RescueCasesService = {
     listCases: async (status?: string) => {
     const response = await api.get<CaseOut[]>('/rescue_cases/cases', {
       params: status ? { status } : undefined,
+    });
+    return response.data;
+  },
+
+  // Optimized visiting order for the caller's own open cases. The backend
+  // scopes this to the authenticated user, so there is no user id to pass.
+  getMyRoute: async (lat: number, lng: number) => {
+    const response = await api.get<OptimizedRoute>('/rescue_cases/my-route', {
+      params: { lat, lng },
     });
     return response.data;
   },

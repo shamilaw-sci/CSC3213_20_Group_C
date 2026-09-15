@@ -10,18 +10,18 @@ const expectedItemsPerRole: Record<UserRole, string[]> = {
   'Admin': [
     'Overview', 'Employees', 'Attendance', 'Payroll', 'Overview', 'Ledger',
     'Receivables', 'Payables', 'Reports', 'Stock', 'Issue', 'Returns',
-    'Active Programs', 'Case Hotspots', 'Case Triage', 'My Attendance', 'System Admin',
+    'Active Programs', 'Case Hotspots', 'Case Triage', 'Field Dispatch', 'My Attendance', 'System Admin',
     ...PERSONAL
   ],
   // No Ledger: that needs finance:write, which oversight deliberately lacks.
   // No My Attendance: Director has no hr:attendance:self.
   'Director': [
     'Overview', 'Overview', 'Receivables', 'Payables', 'Reports', 'Stock',
-    'Active Programs', 'Case Hotspots', 'Case Triage', ...PERSONAL
+    'Active Programs', 'Case Hotspots', 'Case Triage', 'Field Dispatch', ...PERSONAL
   ],
   'HR Officer': [
     'Overview', 'Employees', 'Attendance', 'Payroll',
-    'Case Hotspots', 'Case Triage', 'My Attendance', ...PERSONAL
+    'Case Hotspots', 'Case Triage', 'Field Dispatch', 'My Attendance', ...PERSONAL
   ],
   // Active Programs is expected: programs:read was granted so the program
   // picker on the transaction form renders names rather than numeric ids.
@@ -32,12 +32,12 @@ const expectedItemsPerRole: Record<UserRole, string[]> = {
   // Clinic and field operations: inventory, programs and rescue, no HR/finance.
   'Operations Lead': [
     'Overview', 'Stock', 'Issue', 'Returns', 'Active Programs',
-    'Case Hotspots', 'Case Triage', 'My Attendance', ...PERSONAL
+    'Case Hotspots', 'Case Triage', 'Field Dispatch', 'My Attendance', ...PERSONAL
   ],
   // No Stock: General Staff can issue inventory but not browse the catalogue.
   'General Staff': [
     'Overview', 'Issue', 'Returns', 'Active Programs',
-    'Case Hotspots', 'Case Triage', 'My Attendance', ...PERSONAL
+    'Case Hotspots', 'Case Triage', 'Field Dispatch', 'My Attendance', ...PERSONAL
   ],
   // Technical administration only. The short list is the point: no payroll,
   // no ledger, no case data.
