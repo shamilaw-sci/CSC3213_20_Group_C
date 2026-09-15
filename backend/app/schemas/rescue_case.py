@@ -80,3 +80,25 @@ class CaseOut(BaseModel):
     assigned_to: Optional[UUID] = None
     reported_at: datetime
     updated_at: datetime
+
+
+class RouteStop(BaseModel):
+    """One case in the optimized visiting order, with the leg that reaches it."""
+    sequence: int  # 1-based, matches the numbered map markers
+    case: CaseOut
+    leg_distance_km: float       # from the previous stop (or the start, for #1)
+    leg_duration_min: float
+    cumulative_distance_km: float
+    cumulative_duration_min: float
+
+
+class OptimizedRoute(BaseModel):
+    stops: list[RouteStop]
+    total_distance_km: float
+    total_duration_min: float
+    # False when road routing was unavailable and these are straight-line
+    # estimates. The UI surfaces this rather than passing off crow-flies
+    # numbers as driving distances.
+    used_road_distances: bool
+    degraded_reason: Optional[str] = None
+    truncated: bool = False
