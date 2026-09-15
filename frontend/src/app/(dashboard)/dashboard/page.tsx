@@ -14,8 +14,11 @@ import Link from 'next/link';
 
 export default function DashboardPage() {
   const { user } = useAuthStore();
-  const role = user?.role || 'Staff';
+  const role = user?.role || 'General Staff';
 
+  // General Staff, Operations Lead and System Administrator all fall through to
+  // the staff dashboard, which is the safe default: it shows only self-service
+  // and rescue content, nothing role-privileged.
   switch (role) {
     case 'Admin':
       return <AdminDashboard />;
@@ -25,7 +28,6 @@ export default function DashboardPage() {
       return <HROfficerDashboard />;
     case 'Finance Officer':
       return <FinanceOfficerDashboard />;
-    case 'Staff':
     default:
       return <StaffDashboard />;
   }

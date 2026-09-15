@@ -17,12 +17,16 @@ from typing import List, Optional
 from datetime import date, timedelta
 from supabase import Client
 
-# Roles that have any inventory access (read or issue)
+# Roles that have any inventory access (read or issue). Operations Lead is
+# included alongside General Staff: it holds both inventory:read and
+# inventory:issue, so omitting it here would deny a role the permission table
+# grants access to.
 INVENTORY_ROLES = [
     UserRole.ADMIN.value,
     UserRole.DIRECTOR.value,
     UserRole.FINANCE_OFFICER.value,
-    UserRole.STAFF.value,
+    UserRole.OPERATIONS_LEAD.value,
+    UserRole.GENERAL_STAFF.value,
 ]
 
 router = APIRouter()

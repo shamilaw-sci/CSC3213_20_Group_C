@@ -375,7 +375,13 @@ export default function CaseTriagePage() {
   const { data: staffList } = useQuery({
     queryKey: ['users', 'list'],
     queryFn: () => UsersService.listUsers(),
-    select: (users) => users.filter((u) => ['Staff', 'Admin'].includes(u.roles?.role_name || '')),
+    // The roles that actually work cases in the field. This previously filtered
+    // on 'Staff', which no user holds, so the assignee picker silently listed
+    // Admins only and cases could not be handed to field staff at all.
+    select: (users) =>
+      users.filter((u) =>
+        ['General Staff', 'Operations Lead', 'Admin'].includes(u.roles?.role_name || '')
+      ),
   });
 
   const statusMutation = useMutation({
