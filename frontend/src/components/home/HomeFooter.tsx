@@ -22,6 +22,7 @@ export default function HomeFooter() {
           <ul className="space-y-2">
             <li><Link href="/report" className="hover:text-text-primary">Report an Animal</Link></li>
             <li><Link href="/outbreak-map" className="hover:text-text-primary">Case Hotspot Map</Link></li>
+            <li><Link href="/volunteer" className="hover:text-text-primary">Volunteer With Us</Link></li>
           </ul>
         </div>
         <div className="space-y-4">

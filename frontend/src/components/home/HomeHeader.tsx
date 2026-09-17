@@ -74,6 +74,7 @@ export default function HomeHeader() {
           <Link href="/who-we-are" className="hover:text-text-primary transition-colors duration-150">Who We Are</Link>
           <Link href="/report" className="hover:text-text-primary transition-colors duration-150">Report an Animal</Link>
           <Link href="/outbreak-map" className="hover:text-text-primary transition-colors duration-150">Hotspot Map</Link>
+          <Link href="/volunteer" className="hover:text-text-primary transition-colors duration-150">Volunteer</Link>
           <Link
             href="/donate"
             className="flex items-center gap-1.5 px-4 py-1.5 rounded-full bg-[#EF9F27] text-bg-brand font-bold hover:bg-[#EF9F27]/90 hover:shadow-md hover:shadow-[#EF9F27]/30 transition-all"
