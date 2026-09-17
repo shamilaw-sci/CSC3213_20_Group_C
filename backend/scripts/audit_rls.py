@@ -308,7 +308,15 @@ def main():
 
         if isinstance(anon_n, str):
             verdict = anon_n
-        elif anon_n == 0 and service_n:
+        elif service_n == 0:
+            # An empty table tells us nothing: anon reading 0 of 0 rows looks
+            # identical whether the policy is airtight or absent. Say so rather
+            # than letting `anon == service` report a wide-open table as
+            # "FULL READ" or a locked one as "blocked" — a verdict that depends
+            # on whether someone happened to have inserted a row yet is worse
+            # than no verdict.
+            verdict = "empty (n/a)"
+        elif anon_n == 0:
             verdict = "blocked"
         elif anon_n == service_n:
             verdict = "FULL READ"
