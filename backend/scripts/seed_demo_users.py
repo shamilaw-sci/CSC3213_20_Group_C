@@ -20,13 +20,21 @@ def seed_users():
     
     print("Seeding demo users...")
     
-    # We define the users to seed
+    # We define the users to seed.
+    #
+    # role_id must match the roles table, which is NOT in alphabetical or
+    # "obvious" order -- Finance Officer comes before HR Officer:
+    #   1 Admin            2 Director           3 Finance Officer
+    #   4 HR Officer       5 Operations Lead    6 General Staff
+    #   7 System Administrator
+    # The role name is carried alongside each entry purely so a mismatch is
+    # visible on inspection; only role_id is written to the database.
     users = [
-        {"email": "admin@vff.org", "role_id": 1, "first": "Admin", "last": "User"},
-        {"email": "director@vff.org", "role_id": 2, "first": "Director", "last": "User"},
-        {"email": "hr@vff.org", "role_id": 3, "first": "HR", "last": "User"},
-        {"email": "finance@vff.org", "role_id": 4, "first": "Finance", "last": "User"},
-        {"email": "staff@vff.org", "role_id": 5, "first": "Staff", "last": "User"}
+        {"email": "admin@vff.org", "role_id": 1, "role": "Admin", "first": "Admin", "last": "User"},
+        {"email": "director@vff.org", "role_id": 2, "role": "Director", "first": "Director", "last": "User"},
+        {"email": "hr@vff.org", "role_id": 4, "role": "HR Officer", "first": "HR", "last": "User"},
+        {"email": "finance@vff.org", "role_id": 3, "role": "Finance Officer", "first": "Finance", "last": "User"},
+        {"email": "staff@vff.org", "role_id": 6, "role": "General Staff", "first": "Staff", "last": "User"}
     ]
     
     # In a real environment with the service key, we could use supabase.auth.admin.create_user.
@@ -59,7 +67,7 @@ def seed_users():
             try:
                 # Ensure the user exists in public.users (in case the trigger didn't fire)
                 supabase.table("users").upsert({"id": user_id, "email": u["email"], "role_id": u["role_id"]}).execute()
-                print(f"  -> Set role_id={u['role_id']} for {u['email']}")
+                print(f"  -> Set role_id={u['role_id']} ({u['role']}) for {u['email']}")
                 
                 # Ensure employee profile exists
                 emp_check = supabase.table("employee_profile").select("id").eq("user_id", user_id).execute()

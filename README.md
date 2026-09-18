@@ -92,7 +92,9 @@ npm run dev
 - **Director**: Access to Operational/Financial dashboards (Finance, Programs, Inventory, Audit Logs).
 - **HR Officer**: Access to Employees, Attendance, and Payroll.
 - **Finance Officer**: Access to Finance modules (Ledger, Payables, Receivables) and Inventory.
-- **Staff**: Limited access (Self-service Attendance, active programs).
+- **Operations Lead**: Rescue dispatch and volunteer rostering, plus general staff access.
+- **General Staff**: Limited access (Self-service Attendance, active programs). This is the role every new signup receives.
+- **System Administrator**: Platform administration.
 
 ## 🔑 Demo Credentials
 The database comes pre-seeded with the following demo users (Password: `Password123!` for all):
@@ -100,7 +102,7 @@ The database comes pre-seeded with the following demo users (Password: `Password
 - `director@vff.org` (Director)
 - `hr@vff.org` (HR Officer)
 - `finance@vff.org` (Finance Officer)
-- `staff@vff.org` (Staff)
+- `staff@vff.org` (General Staff)
 
 ## 📄 License
 Internal use only by VFF. Proprietary and Confidential.
