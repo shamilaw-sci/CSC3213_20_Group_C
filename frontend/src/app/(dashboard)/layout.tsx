@@ -9,7 +9,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
 const getPageTitle = (pathname: string) => {
-  if (pathname.startsWith('/dashboard')) return "System Overview";
+  // Neutral label: each role's dashboard renders its own, more specific <h1>.
+  if (pathname.startsWith('/dashboard')) return "Dashboard";
   if (pathname.startsWith('/finance')) return "Financial Management";
   if (pathname.startsWith('/hr')) return "Human Resources";
   if (pathname.startsWith('/programs')) return "Programs & Projects";
@@ -104,7 +105,9 @@ export default function DashboardLayout({
         )}>
           <Topbar title={title} onMenuToggle={() => setIsMobileOpen(!isMobileOpen)} />
           <main className="flex-1 overflow-y-auto">
-            <div className="p-4 md:p-8 max-w-[1400px] mx-auto space-y-8">
+            {/* No vertical rhythm here: each page owns its own spacing
+                (space-y-6), and stacking both doubled the gaps. */}
+            <div className="p-4 md:p-8 max-w-[1400px] mx-auto">
               <Breadcrumbs pathname={pathname} />
               {children}
             </div>

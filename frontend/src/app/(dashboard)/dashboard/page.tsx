@@ -4,11 +4,11 @@ import { useAuthStore } from '@/store/useAuthStore';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { useMyAttendance, useClockIn, useClockOut } from '@/hooks/useHR';
-import { useFinanceSummary, useFinanceAging, useTransactions } from '@/hooks/useFinance';
+import { useFinanceSummary, useFinanceAging } from '@/hooks/useFinance';
 import { useAuditLogs, useSystemStats } from '@/hooks/useAdmin';
 import { format } from 'date-fns';
-import { Clock, Lock, ArrowUpRight, ArrowDownRight, AlertTriangle, Users, Activity, ExternalLink, BookOpen, DollarSign, Package, Calendar, ArrowRight, Wallet, ArrowDownUp, FileText, CheckCircle2, TrendingUp } from 'lucide-react';
-import { formatLKR, formatDate } from '@/lib/formatters';
+import { Clock, Lock, AlertTriangle, Users, Activity, ExternalLink, BookOpen } from 'lucide-react';
+import { formatLKR } from '@/lib/formatters';
 import { Skeleton } from '@/components/ui/skeleton';
 import Link from 'next/link';
 
@@ -143,7 +143,7 @@ function DirectorDashboard() {
           </CardHeader>
           <CardContent>
             {isSummaryLoading ? <Skeleton className="h-10 w-32" /> : (
-              <div className="text-4xl font-bold font-heading text-emerald-600 dark:text-emerald-400">
+              <div className="text-3xl font-bold font-heading text-emerald-600 dark:text-emerald-400">
                 {formatLKR(summary?.cash_available || 0)}
               </div>
             )}
@@ -156,7 +156,7 @@ function DirectorDashboard() {
           </CardHeader>
           <CardContent>
             {isSummaryLoading ? <Skeleton className="h-10 w-32" /> : (
-              <div className="text-3xl font-bold text-text-primary mb-1">
+              <div className="text-3xl font-bold font-heading text-text-primary mb-1">
                 {formatLKR(summary?.receivables || 0)}
               </div>
             )}
@@ -174,7 +174,7 @@ function DirectorDashboard() {
           </CardHeader>
           <CardContent>
             {isSummaryLoading ? <Skeleton className="h-10 w-32" /> : (
-              <div className="text-3xl font-bold text-text-primary mb-1">
+              <div className="text-3xl font-bold font-heading text-text-primary mb-1">
                 {formatLKR(summary?.monthly_expenses || 0)}
               </div>
             )}
@@ -202,7 +202,7 @@ function DirectorDashboard() {
                   <span className="text-text-secondary">31-60 Days</span>
                   <span className="font-medium text-amber-500">{formatLKR(aging?.['31-60'] || 0)}</span>
                 </div>
-                <div className="flex justify-between items-center">
+                <div className="flex justify-between items-center p-3 bg-surface border border-border/50 rounded-lg">
                   <span className="text-text-secondary">61+ Days (Overdue)</span>
                   <span className="font-medium text-rose-500">{formatLKR(aging?.['61+'] || 0)}</span>
                 </div>
@@ -235,9 +235,6 @@ function DirectorDashboard() {
 }
 
 function HROfficerDashboard() {
-  const currentMonth = new Date().getMonth() + 1;
-  const currentYear = new Date().getFullYear();
-  
   return (
     <div className="space-y-6">
       <h1 className="text-3xl font-bold font-heading text-text-primary">Attendance & Payroll Status</h1>
@@ -246,7 +243,7 @@ function HROfficerDashboard() {
           <CardHeader>
             <CardTitle>Quick Links</CardTitle>
           </CardHeader>
-          <CardContent className="grid grid-cols-2 gap-4">
+          <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Link href="/hr/attendance">
               <Button variant="outline" className="w-full h-24 flex flex-col gap-2">
                 <Lock className="w-6 h-6 text-accent" />
@@ -260,7 +257,7 @@ function HROfficerDashboard() {
               </Button>
             </Link>
             <Link href="/hr/employees">
-              <Button variant="outline" className="w-full h-24 flex flex-col gap-2 col-span-2">
+              <Button variant="outline" className="w-full h-24 flex flex-col gap-2 sm:col-span-2">
                 <Users className="w-6 h-6 text-amber-500" />
                 Employee Profiles
               </Button>
@@ -317,7 +314,7 @@ function FinanceOfficerDashboard() {
           </CardHeader>
           <CardContent>
             {isLoading ? <Skeleton className="h-8 w-24" /> : (
-              <div className="text-3xl font-bold text-text-primary mb-1">
+              <div className="text-3xl font-bold font-heading text-text-primary mb-1">
                 {formatLKR(summary?.cash_available || 0)}
               </div>
             )}
@@ -329,8 +326,8 @@ function FinanceOfficerDashboard() {
           </CardHeader>
           <CardContent>
             {isLoading ? <Skeleton className="h-8 w-24" /> : (
-              <div className="text-2xl font-bold font-heading text-amber-500">
-                LKR {(summary?.receivables || 0).toLocaleString()}
+              <div className="text-3xl font-bold font-heading text-amber-500">
+                {formatLKR(summary?.receivables || 0)}
               </div>
             )}
           </CardContent>
@@ -462,7 +459,7 @@ function StaffDashboard() {
             <CardTitle>My Assignments & Tools</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-             <div className="grid grid-cols-2 gap-4">
+             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <Link href="/programs">
                   <div className="p-4 rounded-lg border border-border-brand hover:border-accent transition-colors bg-bg-subtle cursor-pointer flex items-center gap-3">
                     <BookOpen className="w-8 h-8 text-accent" />
