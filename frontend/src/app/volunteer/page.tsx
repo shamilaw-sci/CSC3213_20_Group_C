@@ -10,7 +10,6 @@ import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
 import { Loader2, CheckCircle2, HeartHandshake } from 'lucide-react';
 import { cn, getErrorMessage } from '@/lib/utils';
-import Image from 'next/image';
 
 type Step = 'form' | 'submitting' | 'done';
 
@@ -64,22 +63,23 @@ export default function VolunteerApplyPage() {
 
   return (
     <div className="min-h-screen bg-bg-subtle text-text-primary">
-      <section className="relative bg-[#0B0D12] overflow-hidden">
-        <Image
-          src="/images/rescue-report.png"
-          alt="Animals cared for by Vets For Future"
-          width={1984}
-          height={809}
-          priority
-          className="w-full h-auto"
+      {/* Hero in the donate page's shape: fixed height, bg-cover photo,
+          gradient at the bottom only, heading sitting on the bottom edge.
+          volunteer.jpg is a single photo rather than a collage, so unlike
+          rescue-report.png on /report it crops cleanly and does not need to
+          keep its natural aspect. */}
+      <section className="relative h-[420px] md:h-[480px] overflow-hidden">
+        <div
+          className="absolute inset-0 bg-cover bg-center"
+          style={{ backgroundImage: "url('/images/volunteer.jpg')" }}
         />
-        <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-black/10" />
-        <div className="relative md:absolute md:inset-x-0 md:bottom-0 max-w-3xl mx-auto px-4 flex flex-col items-center text-center space-y-4 pt-8 pb-16 md:pb-14">
+        <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/40 to-black/10" />
+        <div className="relative h-full max-w-3xl mx-auto px-4 flex flex-col items-center justify-end text-center space-y-4 pb-14">
           <HeartHandshake className="w-10 h-10 text-[#EF9F27]" />
-          <h1 className="text-3xl md:text-5xl font-bold font-heading text-white tracking-tight">
+          <h1 className="text-4xl md:text-5xl font-bold font-heading text-white tracking-tight">
             Volunteer with us
           </h1>
-          <p className="text-sm md:text-lg text-white/85 max-w-xl leading-relaxed">
+          <p className="text-base md:text-lg text-white/85 max-w-xl leading-relaxed">
             Give what time you can — clinics, transport, fostering or a few hours
             of admin. Every bit helps an animal.
           </p>
