@@ -28,7 +28,20 @@ export type Permission =
   | 'audit:read'
   | 'rescue:read'
   | 'rescue:manage'
-  | 'rescue:assign';
+  | 'rescue:assign'
+  // Volunteers are non-staff with no login. volunteers:read governs access to
+  // their personal contact details, :approve is the vetting decision (accept or
+  // reject an application), :assign is the scheduling one (shifts, cases,
+  // programs). Split for the same reason rescue:manage and rescue:assign are.
+  // Copying a personal volunteer link is gated on :approve OR :assign, since
+  // sharing a link is contact rather than vetting or scheduling.
+  //
+  // NOTE: no apostrophes in this block. test_restricted_funds.py parses this
+  // union with a regex on single-quoted strings, so a stray apostrophe in a
+  // comment silently corrupts what it thinks the backend declared.
+  | 'volunteers:read'
+  | 'volunteers:approve'
+  | 'volunteers:assign';
 
 // NOTE: Must stay in sync with backend/app/core/permissions.py
 export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
@@ -38,15 +51,24 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'finance:write', 'finance:restricted:override',
     'inventory:read', 'inventory:issue',
     'programs:read', 'programs:manage', 'admin:users', 'audit:read',
-    'rescue:read', 'rescue:manage', 'rescue:assign'
+    'rescue:read', 'rescue:manage', 'rescue:assign',
+    'volunteers:read', 'volunteers:approve', 'volunteers:assign'
   ],
+  // volunteers:approve but not :assign — oversight of who the organisation
+  // takes on, without running the shift rota. Consistent with this role's
+  // read-heavy grants plus payroll:approve: it signs off on people and money,
+  // it does not do the scheduling.
   Director: [
     'finance:read', 'payroll:approve', 'programs:read',
-    'inventory:read', 'audit:read', 'rescue:read' , 'rescue:assign'
+    'inventory:read', 'audit:read', 'rescue:read' , 'rescue:assign',
+    'volunteers:read', 'volunteers:approve'
   ],
+  // Vetting and onboarding a person is squarely HR, so this role approves
+  // volunteer applications. It does not staff shifts — that is operations.
   'HR Officer': [
     'hr:manage', 'hr:attendance:manage', 'hr:attendance:self',
-    'payroll:generate' , 'rescue:read', 'rescue:assign'
+    'payroll:generate' , 'rescue:read', 'rescue:assign',
+    'volunteers:read', 'volunteers:approve'
   ],
   'Finance Officer': [
     'finance:read', 'finance:write', 'payroll:generate',
@@ -57,14 +79,23 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
   // this is the first role other than Admin to hold it. Deliberately no
   // rescue:assign — handing work to another person stays with
   // Admin/Director/HR Officer. Self-assignment is unaffected.
+  //
+  // volunteers:assign but not :approve — this role runs the clinics volunteers
+  // are staffed onto, so it owns the rota. Whether someone is taken on at all
+  // stays a vetting decision with HR/Director/Admin.
   'Operations Lead': [
     'hr:attendance:self', 'inventory:read', 'inventory:issue',
     'programs:read', 'programs:manage',
-    'rescue:read', 'rescue:manage'
+    'rescue:read', 'rescue:manage',
+    'volunteers:read', 'volunteers:assign'
   ],
   // Default role for every new signup, and the field staff who work rescue
   // cases. Carried over verbatim from the former 'Staff' key, which matched no
   // role any user could hold and so granted nothing in practice.
+  //
+  // Deliberately NO volunteers:read. This is the role every new account gets,
+  // so granting it would expose non-employees' names, emails and phone numbers
+  // to anyone who registers. Default-deny on third-party PII.
   'General Staff': [
     'hr:attendance:self', 'programs:read', 'inventory:issue',
     'rescue:read', 'rescue:manage'
@@ -72,6 +103,10 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
   // Technical administration, not business access: accounts and the audit
   // chain, but no payroll, ledger or case data. Narrower than Admin on
   // purpose, despite the admin login accepting both.
+  //
+  // No volunteer permissions for that same reason — a roster of third-party
+  // contact details is business data, and granting it here would make this the
+  // only role that breaches its own stated boundary.
   'System Administrator': [
     'admin:users', 'audit:read'
   ]

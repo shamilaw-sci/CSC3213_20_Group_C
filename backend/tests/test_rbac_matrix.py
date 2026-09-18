@@ -29,6 +29,8 @@ ALL_ROLES = sorted(ROLE_PERMISSIONS)
 USER_ID = "11111111-1111-1111-1111-111111111111"
 OTHER_USER_ID = "22222222-2222-2222-2222-222222222222"
 CASE_ID = "33333333-3333-3333-3333-333333333333"
+VOLUNTEER_ID = "44444444-4444-4444-4444-444444444444"
+ASSIGNMENT_ID = "55555555-5555-5555-5555-555555555555"
 
 
 # --------------------------------------------------------------------------
@@ -164,11 +166,26 @@ PROTECTED_ROUTES = [
     ("POST", "/api/inventory/items"),
     ("POST", "/api/inventory/transactions"),
     ("GET", "/api/admin/audit-logs/verify"),
+    # The volunteer roster holds names, emails and phone numbers of people who
+    # are not employees, so anonymous reachability here would be worse than on
+    # most of the routes above.
+    ("GET", "/api/volunteers/"),
+    ("GET", "/api/volunteers/shifts"),
+    ("GET", "/api/volunteers/assignments"),
+    ("PATCH", f"/api/volunteers/{VOLUNTEER_ID}/review"),
+    ("POST", f"/api/volunteers/{VOLUNTEER_ID}/link-shared"),
+    ("POST", "/api/volunteers/shifts"),
+    ("POST", "/api/volunteers/assignments"),
+    ("DELETE", f"/api/volunteers/assignments/{ASSIGNMENT_ID}"),
 ]
 
 PUBLIC_ROUTES = [
     ("GET", "/api/rescue_cases/geo"),
     ("GET", "/api/rescue_cases/hotspots"),
+    # Volunteers have no login at all, so these three must work with no token —
+    # and must keep working when a stale staff token is present, which is why
+    # they depend on get_public_supabase rather than get_supabase.
+    ("GET", "/api/volunteers/my-assignments/some-unknown-token"),
 ]
 
 
@@ -215,6 +232,17 @@ PERMISSION_ROUTES = [
     ("DELETE", f"/api/auth/users/{OTHER_USER_ID}", "admin:users"),
     ("POST", "/api/inventory/items", "inventory:issue"),
     ("POST", "/api/inventory/transactions", "inventory:issue"),
+    # Volunteers. read = see the roster and rota; approve = vetting decisions;
+    # assign = scheduling. Deliberately three permissions rather than one, so
+    # this table is also what proves the split is actually enforced and not
+    # just declared in permissions.py.
+    ("GET", "/api/volunteers/", "volunteers:read"),
+    ("GET", "/api/volunteers/shifts", "volunteers:read"),
+    ("GET", "/api/volunteers/assignments", "volunteers:read"),
+    ("PATCH", f"/api/volunteers/{VOLUNTEER_ID}/review", "volunteers:approve"),
+    ("POST", "/api/volunteers/shifts", "volunteers:assign"),
+    ("POST", "/api/volunteers/assignments", "volunteers:assign"),
+    ("DELETE", f"/api/volunteers/assignments/{ASSIGNMENT_ID}", "volunteers:assign"),
 ]
 
 
@@ -256,6 +284,181 @@ def test_permission_routes_cover_every_granted_permission():
         "inventory:issue",
     }
     assert not uncovered, f"permissions with no route coverage: {sorted(uncovered)}"
+
+
+# --------------------------------------------------------------------------
+# Volunteers — the two gates PERMISSION_ROUTES cannot express
+# --------------------------------------------------------------------------
+
+def _volunteer_row(status="approved"):
+    return {
+        "id": VOLUNTEER_ID,
+        "full_name": "Nimal Perera",
+        "email": "nimal@example.com",
+        "phone": None,
+        "skills": [],
+        "skills_other": None,
+        "availability": [],
+        "status": status,
+        "access_token": "t" * 43,
+        "link_shared_at": None,
+        "applied_at": "2026-01-01T00:00:00+00:00",
+        "reviewed_at": None,
+        "reviewed_by": None,
+        "staff_notes": None,
+    }
+
+
+@pytest.mark.parametrize("role", ALL_ROLES)
+def test_link_shared_accepts_either_permission(role):
+    """
+    Copying a volunteer's link is gated on volunteers:approve OR
+    volunteers:assign, which no single-permission row in PERMISSION_ROUTES can
+    describe. Gating on either alone would strand one of the two roles: an HR
+    Officer who just approved someone and cannot send them their link, or an
+    Operations Lead who just rostered someone and cannot reach them.
+    """
+    allowed = has_permission(role, "volunteers:approve") or has_permission(
+        role, "volunteers:assign"
+    )
+    tables = {"volunteers": {"select": [_volunteer_row()],
+                             "update": [_volunteer_row()]}}
+    with acting_as(role, tables=tables):
+        response = _request("POST", f"/api/volunteers/{VOLUNTEER_ID}/link-shared")
+
+    if allowed:
+        assert response.status_code != 403, (
+            f"{role} holds approve or assign but link-shared returned 403"
+        )
+    else:
+        assert response.status_code == 403, (
+            f"{role} holds neither approve nor assign but link-shared returned "
+            f"{response.status_code}"
+        )
+
+
+@pytest.mark.parametrize("token", [
+    "obviously-not-a-real-token",
+    "' OR 1=1 --",
+    "x" * 500,
+    # Traversal-shaped input is normalised by the URL layer before routing, so
+    # it never reaches the handler and gets the framework's own 404. Included
+    # anyway: "the route does not exist" is a perfectly good outcome, and the
+    # point of the case is that it does not 500 or echo anything back.
+    "../../etc/passwd",
+])
+def test_unknown_volunteer_token_degrades_gracefully(token):
+    """
+    An invalid token must 404 cleanly — no crash, no stack trace, and nothing
+    echoed back to the caller.
+    """
+    app.dependency_overrides[get_public_supabase] = lambda: _FakeSupabase()
+    try:
+        response = client.get(f"/api/volunteers/my-assignments/{token}")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 404, response.text
+    body = response.text.lower()
+    assert "traceback" not in body
+    assert "supabase" not in body
+    # Never reflect the supplied token back — that is how a 404 page becomes a
+    # reflected-XSS or a log-poisoning vector.
+    assert token.lower() not in body
+
+
+@pytest.mark.parametrize("token", ["obviously-not-a-real-token", "' OR 1=1 --"])
+def test_invalid_token_message_is_uniform(token):
+    """
+    Every rejection the handler itself makes must be indistinguishable —
+    unknown token, pending applicant, rejected applicant, deactivated
+    volunteer. A different status or message per case would turn this route
+    into an oracle for the status of any token someone holds.
+    """
+    app.dependency_overrides[get_public_supabase] = lambda: _FakeSupabase()
+    try:
+        response = client.get(f"/api/volunteers/my-assignments/{token}")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "This link is not valid"
+
+
+def test_access_log_redacts_volunteer_token():
+    """
+    A volunteer link token is their only credential and it travels in the URL
+    path, which uvicorn's access logger writes verbatim. Without the filter in
+    app/main.py every token would be logged in plaintext on first use, then
+    shipped wherever those logs are aggregated.
+    """
+    import logging as _logging
+    from app.main import RedactVolunteerToken
+
+    token = "S3cr3tT0k3n_" + "x" * 31
+    record = _logging.LogRecord(
+        name="uvicorn.access", level=_logging.INFO, pathname="", lineno=0,
+        msg='%s - "%s %s HTTP/%s" %d', args=(
+            "127.0.0.1:1234", "GET", f"/api/volunteers/my-assignments/{token}",
+            "1.1", 200,
+        ),
+        exc_info=None,
+    )
+
+    assert RedactVolunteerToken().filter(record) is True
+    rendered = record.getMessage()
+    assert token not in rendered, "token survived into the access log"
+    assert "<redacted>" in rendered
+    # The rest of the line must still be useful for debugging.
+    assert "GET" in rendered and "200" in rendered
+
+
+def test_access_log_filter_leaves_other_paths_alone():
+    """The filter must not mangle every other route's logging."""
+    import logging as _logging
+    from app.main import RedactVolunteerToken
+
+    record = _logging.LogRecord(
+        name="uvicorn.access", level=_logging.INFO, pathname="", lineno=0,
+        msg='%s - "%s %s HTTP/%s" %d',
+        args=("127.0.0.1:1234", "GET", "/api/rescue_cases/geo", "1.1", 200),
+        exc_info=None,
+    )
+    RedactVolunteerToken().filter(record)
+    assert "/api/rescue_cases/geo" in record.getMessage()
+
+
+def test_access_log_filter_survives_unexpected_args():
+    """A uvicorn change to the access-log shape must degrade to 'not redacted',
+    never to an exception inside a logging filter — that would break logging
+    for every request in the application."""
+    import logging as _logging
+    from app.main import RedactVolunteerToken
+
+    for args in [(), ("only-one",), None, ("a", "b")]:
+        record = _logging.LogRecord(
+            name="uvicorn.access", level=_logging.INFO, pathname="", lineno=0,
+            msg="something", args=args, exc_info=None,
+        )
+        assert RedactVolunteerToken().filter(record) is True
+
+
+@pytest.mark.parametrize("status", ["pending", "rejected", "inactive"])
+def test_unapproved_volunteer_token_is_inert(status):
+    """A token exists from the moment of application, but must not work until
+    the volunteer is approved — and must fail identically to an unknown one."""
+    # The endpoint filters on status in the query, so an unapproved volunteer
+    # is simply not returned; the stub mirrors that by returning no rows.
+    app.dependency_overrides[get_public_supabase] = lambda: _FakeSupabase(
+        {"volunteers": {"select": []}}
+    )
+    try:
+        response = client.get("/api/volunteers/my-assignments/" + "t" * 43)
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "This link is not valid"
 
 
 # --------------------------------------------------------------------------

@@ -57,3 +57,28 @@ def require_permission(permission: str):
             raise HTTPException(status_code=403, detail=f"Insufficient permissions. Requires {permission}")
         return current_user
     return permission_checker
+
+
+def require_any_permission(*permissions: str):
+    """Allow the caller if they hold ANY of these permissions.
+
+    Exists for acts that legitimately belong to two different roles without
+    either implying the other. Copying a volunteer's personal link is the
+    motivating case: it is gated on volunteers:approve OR volunteers:assign,
+    because sharing a link is contact rather than a vetting or a scheduling
+    decision. Requiring approve alone would leave an Operations Lead unable to
+    reach the volunteers they just rostered; requiring assign alone would leave
+    an HR Officer who just approved someone unable to send them their link.
+    """
+    async def permission_checker(current_user: dict = Depends(get_current_user)):
+        role_name = (current_user.get("roles", {}).get("role_name") or "")
+        if not any(has_permission(role_name, p) for p in permissions):
+            logger.warning(
+                "permission denied: role '%s' holds none of %s", role_name, permissions
+            )
+            raise HTTPException(
+                status_code=403,
+                detail=f"Insufficient permissions. Requires one of: {', '.join(permissions)}",
+            )
+        return current_user
+    return permission_checker
