@@ -149,12 +149,23 @@ export interface RescueCaseGeo {
   reported_at: string;
 }
 
+// Mirrors the CHECK constraint in backend/db/migrations/005_urgency_reason.sql.
+// Anything but 'ai' means the urgency is a fail-soft placeholder, not a judgement.
+export type UrgencySource =
+  | 'ai'
+  | 'default_no_description'
+  | 'default_classifier_error'
+  | 'default_invalid_label';
+
 export interface CaseOut {
   id: string;
   animal_type: string;
   description?: string;
   status: 'Reported' | 'Assigned' | 'In Treatment' | 'Resolved';
-  urgency: 'Low' | 'Medium' | 'High' | 'Critical';  // add this
+  urgency: 'Low' | 'Medium' | 'High' | 'Critical';
+  // Both null on cases created before reasons were recorded.
+  urgency_reason?: string | null;
+  urgency_source?: UrgencySource | null;
   lat: number;
   lng: number;
   photo_url?: string;

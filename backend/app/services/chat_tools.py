@@ -64,16 +64,61 @@ def _fn(name, desc, props=None, required=None):
                        "properties": props or {},
                        "required": required or []}}}
 
-def list_urgent_cases(supabase: Client) -> list:
-    """Unresolved cases sorted by urgency — for 'what needs attention' questions."""
-    rows = supabase.table("rescue_cases") \
-        .select("id, animal_type, urgency, status, description, reported_at") \
-        .neq("status", "Resolved") \
-        .execute().data or []
+URGENT_CASES_LIMIT = 10
+_CASE_COLUMNS = ("id, animal_type, urgency, urgency_reason, urgency_source, "
+                 "status, description, reported_at")
 
+
+def list_urgent_cases(supabase: Client) -> dict:
+    """Unresolved cases for 'what needs attention' questions.
+
+    Two lists, because a fail-soft default is an UNKNOWN urgency, not a Medium
+    one. Ranked by urgency alongside real classifications, a severe case whose
+    classification failed sank below the cut and the model never saw it.
+
+      needs_manual_review  every unresolved default_* case, uncapped, fetched
+                           by its own query so neither the top-N cut nor the
+                           PostgREST row limit can drop one.
+      ranked_cases         the rest — 'ai' and legacy null-source rows — top
+                           URGENT_CASES_LIMIT by urgency.
+
+    The totals and `truncated` are there so the model knows what it was NOT
+    given. Handed a bare top-10, it answered "no" to "are there cases that
+    couldn't be assessed?" with one sitting at position 11.
+    """
+    review = supabase.table("rescue_cases") \
+        .select(_CASE_COLUMNS) \
+        .neq("status", "Resolved") \
+        .like("urgency_source", "default_%") \
+        .order("reported_at", desc=False) \
+        .execute().data or []
+    for r in review:
+        r["needs_manual_review"] = True
+
+    unresolved = supabase.table("rescue_cases") \
+        .select(_CASE_COLUMNS, count="exact") \
+        .neq("status", "Resolved") \
+        .execute()
+    # The exact count, not len(data): data is capped by PostgREST's max-rows.
+    total_unresolved = unresolved.count if unresolved.count is not None else len(unresolved.data or [])
+
+    review_ids = {r["id"] for r in review}
+    ranked = [r for r in (unresolved.data or []) if r["id"] not in review_ids]
     order = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
-    rows.sort(key=lambda r: order.get(r["urgency"], 4))
-    return rows[:10]
+    ranked.sort(key=lambda r: order.get(r["urgency"], 4))
+
+    ranked_total = total_unresolved - len(review)
+    shown = ranked[:URGENT_CASES_LIMIT]
+
+    return {
+        "total_unresolved": total_unresolved,
+        "needs_manual_review_count": len(review),
+        "needs_manual_review": review,
+        "ranked_cases_total": ranked_total,
+        "ranked_cases_shown": len(shown),
+        "truncated": ranked_total > len(shown),
+        "ranked_cases": shown,
+    }
 
 TOOLS = {
     "get_finance_summary": {
@@ -119,7 +164,19 @@ TOOLS = {
         "permission": "rescue:read",
         "impl": list_urgent_cases,
         "schema": _fn("list_urgent_cases",
-                      "Unresolved rescue cases ranked by urgency (Critical first). "
-                      "Use for 'what's most urgent' or 'what needs attention' questions."),
+                      "Unresolved rescue cases. Use for 'what's most urgent', 'what "
+                      "needs attention', or 'which cases couldn't be assessed' questions. "
+                      "needs_manual_review lists EVERY unresolved case whose urgency "
+                      "could not be classified (urgency_source 'default_*'); their "
+                      "'Medium' is a placeholder, not an assessment, and any of them "
+                      "may be severe. Always call these out explicitly as needing "
+                      "manual review, before or alongside the ranked list — never "
+                      "rank them as Medium or leave them out. "
+                      "ranked_cases holds the top classified cases (Critical first); "
+                      "urgency_reason explains each. Null urgency_source means the "
+                      "case predates reasons being recorded. "
+                      "If truncated is true, more ranked cases exist than were "
+                      "returned: use total_unresolved for counts, and make no claims "
+                      "about cases you were not given."),
     },
 }

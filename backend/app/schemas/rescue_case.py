@@ -29,20 +29,6 @@ class CaseCreate(BaseModel):
     reported_by: Optional[UUID] = None  # left out entirely for anonymous public reports
 
 
-class CaseOut(BaseModel):
-    id: UUID
-    animal_type: str
-    description: Optional[str] = None
-    status: CaseStatus
-    lat: float
-    lng: float
-    photo_url: Optional[str] = None
-    reported_by: Optional[UUID] = None
-    assigned_to: Optional[UUID] = None
-    reported_at: datetime
-    updated_at: datetime
-
-
 class CaseStatusUpdate(BaseModel):
     new_status: CaseStatus
     assigned_to: Optional[UUID] = None  # staff can self-assign or assign a colleague
@@ -72,7 +58,11 @@ class CaseOut(BaseModel):
     animal_type: str
     description: Optional[str] = None
     status: CaseStatus
-    urgency: str  # add this
+    urgency: str
+    # Null on rows created before 005_urgency_reason.sql — there is no record
+    # of how those were classified, so the UI shows nothing rather than guess.
+    urgency_reason: Optional[str] = None
+    urgency_source: Optional[str] = None
     lat: float
     lng: float
     photo_url: Optional[str] = None

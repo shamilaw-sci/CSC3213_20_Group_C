@@ -18,7 +18,7 @@ import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn, getErrorMessage } from '@/lib/utils';
-import { AlertTriangle, GripVertical, User, Inbox, RefreshCw, MoveRight } from 'lucide-react';
+import { AlertTriangle, GripVertical, User, Inbox, RefreshCw, MoveRight, Info, Sparkles } from 'lucide-react';
 
 const COLUMNS = ['Reported', 'In Treatment', 'Resolved'] as const;
 type Status = (typeof COLUMNS)[number];
@@ -58,6 +58,16 @@ const URGENCY_ORDER: Record<CaseOut['urgency'], number> = {
   Critical: 0, High: 1, Medium: 2, Low: 3,
 };
 
+// A default urgency is unknown, not Medium — the case behind it may be severe.
+// It sorts above every genuine Medium so it is seen and reassessed, but below
+// Critical/High, which a classifier actually judged to be urgent.
+const DEFAULT_URGENCY_RANK = 1.5;
+
+function sortRank(c: CaseOut): number {
+  if (c.urgency_source && c.urgency_source !== 'ai') return DEFAULT_URGENCY_RANK;
+  return URGENCY_ORDER[c.urgency] ?? 4;
+}
+
 // Only the two urgencies that demand attention get a stripe, so the signal
 // stays meaningful — striping all four would just be decoration.
 const URGENCY_STRIPE: Partial<Record<CaseOut['urgency'], string>> = {
@@ -96,6 +106,52 @@ function UrgencyBadge({ urgency }: { urgency: CaseOut['urgency'] }) {
     >
       {urgency}
     </span>
+  );
+}
+
+// A default urgency must never read as if the classifier weighed the case, so
+// these replace the stored reason with a plain statement of what happened.
+const DEFAULT_URGENCY_LABEL: Record<string, string> = {
+  default_no_description: 'Default urgency — no description to classify',
+  default_classifier_error: 'Default urgency — classification unavailable',
+  default_invalid_label: 'Default urgency — classifier gave an invalid result',
+};
+
+function UrgencyReason({ source, reason }: {
+  source: CaseOut['urgency_source'];
+  reason: CaseOut['urgency_reason'];
+}) {
+  const [expanded, setExpanded] = useState(false);
+
+  // Legacy cases: nothing is known about how they were classified.
+  if (!source) return null;
+
+  if (source !== 'ai') {
+    return (
+      <p className="flex items-center gap-1 text-[10px] text-text-muted italic">
+        <Info className="h-3 w-3 shrink-0" aria-hidden="true" />
+        {DEFAULT_URGENCY_LABEL[source] ?? 'Default urgency — classification unavailable'}
+      </p>
+    );
+  }
+
+  if (!reason) return null;
+
+  // Collapsed to one line so cards stay the same height in a full column;
+  // the button stops pointer events so expanding never starts a drag.
+  return (
+    <button
+      type="button"
+      onPointerDown={(e) => e.stopPropagation()}
+      onClick={(e) => { e.stopPropagation(); setExpanded((v) => !v); }}
+      aria-expanded={expanded}
+      title={expanded ? undefined : reason}
+      className="flex items-start gap-1 text-left text-[10px] text-text-secondary leading-snug hover:text-text-primary"
+    >
+      <Sparkles className="h-3 w-3 shrink-0 mt-px text-accent" aria-hidden="true" />
+      <span className="sr-only">AI urgency reason: </span>
+      <span className={expanded ? undefined : 'line-clamp-1'}>{reason}</span>
+    </button>
   );
 }
 
@@ -162,6 +218,8 @@ function CaseCard({ c, canManage, canAssign, staffList, onAssignToMe, onAssignTo
         <p className="text-sm font-semibold text-text-primary leading-tight">{c.animal_type}</p>
         <UrgencyBadge urgency={c.urgency} />
       </div>
+
+      <UrgencyReason source={c.urgency_source} reason={c.urgency_reason} />
 
       {c.description && (
         <p className="text-xs text-text-secondary leading-relaxed line-clamp-2">{c.description}</p>
@@ -262,9 +320,7 @@ function Column({ status, cases, canManage, canAssign, staffList, onAssignToMe, 
   // Critical/High cases float to the top of every column so the most
   // urgent work is always the first thing a staff member sees, without
   // needing a separate filter or sort control.
-  const sortedCases = [...cases].sort(
-    (a, b) => (URGENCY_ORDER[a.urgency] ?? 4) - (URGENCY_ORDER[b.urgency] ?? 4)
-  );
+  const sortedCases = [...cases].sort((a, b) => sortRank(a) - sortRank(b));
 
   return (
     <div
