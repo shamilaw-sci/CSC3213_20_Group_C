@@ -8,7 +8,10 @@ LLM_API_KEY: str = os.environ.get("LLM_API_KEY")
 LLM_BASE_URL: str = os.environ.get(
     "LLM_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai/"
 )
-LLM_MODEL: str = os.environ.get("LLM_MODEL", "gemini-2.5-flash")
+# gemini-2.5-flash was the default until Google withdrew it from new API keys
+# (it now 404s), so a deploy without LLM_MODEL set silently defaulted every
+# classification. Matches the model .env actually runs on.
+LLM_MODEL: str = os.environ.get("LLM_MODEL", "gemini-3.5-flash")
 
 if not LLM_API_KEY:
     raise ValueError("LLM_API_KEY not found in environment variables")
