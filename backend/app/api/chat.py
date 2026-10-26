@@ -21,6 +21,11 @@ MAX_TOOL_ROUNDS = 5
 # staff can act on "try again", not on a provider status code.
 UNAVAILABLE_MESSAGE = "The assistant is temporarily unavailable, please try again."
 
+# Staff will wait longer than a member of the public, so no overall cap like the
+# classifier's — but 60 s per read across up to MAX_TOOL_ROUNDS calls was
+# minutes of spinner before the error above could appear.
+CHAT_TIMEOUT = httpx.Timeout(30.0, connect=5.0)
+
 SYSTEM_PROMPT = """You are the assistant for VFF IMS, the internal management \
 system for Vets For Future, a Sri Lankan animal welfare nonprofit.
 
@@ -65,7 +70,10 @@ async def chat(
         # provider's problem, not a bug here, so they are logged without one
         # and surfaced as a 503 the widget can show.
         try:
-            data = await complete(messages, schemas)
+            # One retry on connection errors and 503 (see llm._retry_backoff_s);
+            # a 429 only if its requested wait is short, which a spent daily
+            # quota's never is.
+            data = await complete(messages, schemas, timeout=CHAT_TIMEOUT, retry=True)
             msg = data["choices"][0]["message"]
         except httpx.HTTPStatusError as e:
             logger.warning("chat: LLM returned HTTP %s (%s)",

@@ -104,3 +104,69 @@ def test_successful_reply_is_unchanged():
 
     assert r.status_code == 200
     assert r.json()["reply"] == "All clear."
+
+
+# --------------------------------------------------------------------------
+# Retry opt-in. These patch llm._post (the HTTP call) rather than complete(),
+# so the real retry logic in complete() runs between /chat and the provider.
+# --------------------------------------------------------------------------
+
+def _scripted_post(monkeypatch, *outcomes):
+    from app.services import llm
+    calls, queue = [], list(outcomes)
+
+    async def fake_post(payload, timeout):
+        calls.append(timeout)
+        outcome = queue.pop(0)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
+    async def no_sleep(_s):
+        pass
+
+    monkeypatch.setattr(llm, "_post", fake_post)
+    monkeypatch.setattr(llm, "_sleep", no_sleep)
+    return calls
+
+
+REPLY = {"choices": [{"message": {"role": "assistant", "content": "All clear."}}]}
+
+
+def test_transient_503_is_retried_and_the_reply_returned(monkeypatch):
+    calls = _scripted_post(monkeypatch, _status_error(503), REPLY)
+    with acting_as(ROLE):
+        r = _request("POST", "/api/chat", json={"message": "hi"})
+
+    assert r.status_code == 200
+    assert r.json()["reply"] == "All clear."
+    assert len(calls) == 2
+
+
+def test_persistent_503_still_ends_in_the_clean_message(monkeypatch):
+    calls = _scripted_post(monkeypatch, _status_error(503), _status_error(503))
+    with acting_as(ROLE):
+        r = _request("POST", "/api/chat", json={"message": "hi"})
+
+    assert r.status_code == 503
+    assert r.json() == {"detail": UNAVAILABLE_MESSAGE}
+    assert len(calls) == 2
+
+
+def test_read_timeout_is_not_retried(monkeypatch):
+    calls = _scripted_post(monkeypatch, httpx.ReadTimeout(""))
+    with acting_as(ROLE):
+        r = _request("POST", "/api/chat", json={"message": "hi"})
+
+    assert r.status_code == 503
+    assert len(calls) == 1
+
+
+def test_chat_uses_its_own_shorter_timeout(monkeypatch):
+    from app.api.chat import CHAT_TIMEOUT
+    calls = _scripted_post(monkeypatch, REPLY)
+    with acting_as(ROLE):
+        _request("POST", "/api/chat", json={"message": "hi"})
+
+    assert calls == [CHAT_TIMEOUT]
+    assert CHAT_TIMEOUT.read == 30.0

@@ -57,6 +57,8 @@ async def create_case(
     response = supabase.table("rescue_cases").insert({
         **payload.model_dump(exclude_none=True),
         "urgency": classification["urgency"],
+        "urgency_reason": classification["reason"],
+        "urgency_source": classification["source"],
     }).execute()
 
     if not response.data:
