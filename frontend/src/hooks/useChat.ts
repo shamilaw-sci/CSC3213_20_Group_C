@@ -1,38 +1,38 @@
 import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { ChatService, type ChatMessage } from '@/services/chat.service';
-import { toast } from 'sonner';
+import { ChatService } from '@/services/chat.service';
+import {
+  initialChatState, withUserTurn, withReply, withError, requestBody, errorMessageFrom,
+  type ChatState,
+} from '@/lib/chat-state';
 
-export interface Turn {
-  role: 'user' | 'assistant';
-  content: string;
-}
+export type { Turn } from '@/lib/chat-state';
 
 export function useChat() {
-  const [turns, setTurns] = useState<Turn[]>([]);
-  const [history, setHistory] = useState<ChatMessage[]>([]);
+  const [state, setState] = useState<ChatState>(initialChatState);
 
   const mutation = useMutation({
-    mutationFn: (message: string) => ChatService.send(message, history),
-    onSuccess: (data) => {
-      setTurns((t) => [...t, { role: 'assistant', content: data.reply }]);
-      setHistory(data.history);
+    mutationFn: (message: string) => {
+      const body = requestBody(state, message);
+      return ChatService.send(body.message, body.history);
     },
-    onError: (error: any) => {
-      setTurns((t) => t.slice(0, -1));
-      toast.error(error?.response?.data?.detail || 'Assistant is unavailable');
+    onSuccess: (data) => {
+      setState((s) => withReply(s, data.reply, data.history));
+    },
+    // Shown inline rather than as a toast: the toast vanished in seconds and
+    // the old handler also deleted the user's message, so a failure looked
+    // like nothing had happened at all.
+    onError: (error) => {
+      setState((s) => withError(s, errorMessageFrom(error)));
     },
   });
 
   const send = (message: string) => {
-    setTurns((t) => [...t, { role: 'user', content: message }]);
+    setState((s) => withUserTurn(s, message));
     mutation.mutate(message);
   };
 
-  const reset = () => {
-    setTurns([]);
-    setHistory([]);
-  };
+  const reset = () => setState(initialChatState);
 
-  return { turns, send, reset, isPending: mutation.isPending };
+  return { turns: state.turns, send, reset, isPending: mutation.isPending };
 }

@@ -1,6 +1,7 @@
 import json
 import logging
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from supabase import Client
@@ -15,6 +16,10 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 MAX_TOOL_ROUNDS = 5
+
+# Shown verbatim in the chat widget. Deliberately says nothing about the cause:
+# staff can act on "try again", not on a provider status code.
+UNAVAILABLE_MESSAGE = "The assistant is temporarily unavailable, please try again."
 
 SYSTEM_PROMPT = """You are the assistant for VFF IMS, the internal management \
 system for Vets For Future, a Sri Lankan animal welfare nonprofit.
@@ -55,8 +60,23 @@ async def chat(
     ]
 
     for _ in range(MAX_TOOL_ROUNDS):
-        data = await complete(messages, schemas)
-        msg = data["choices"][0]["message"]
+        # Upstream failures (Gemini 503/429, timeouts, dropped connections)
+        # used to escape as an unhandled 500 with a traceback. They are the
+        # provider's problem, not a bug here, so they are logged without one
+        # and surfaced as a 503 the widget can show.
+        try:
+            data = await complete(messages, schemas)
+            msg = data["choices"][0]["message"]
+        except httpx.HTTPStatusError as e:
+            logger.warning("chat: LLM returned HTTP %s (%s)",
+                           e.response.status_code, type(e).__name__)
+            raise HTTPException(503, UNAVAILABLE_MESSAGE)
+        except httpx.RequestError as e:
+            logger.warning("chat: LLM request failed: %s: %r", type(e).__name__, e)
+            raise HTTPException(503, UNAVAILABLE_MESSAGE)
+        except (KeyError, IndexError, TypeError) as e:
+            logger.warning("chat: malformed LLM response: %s: %r", type(e).__name__, e)
+            raise HTTPException(503, UNAVAILABLE_MESSAGE)
         messages.append(msg)
 
         calls = msg.get("tool_calls")
