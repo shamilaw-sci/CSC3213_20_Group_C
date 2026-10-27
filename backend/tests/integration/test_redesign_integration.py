@@ -58,8 +58,10 @@ def test_integration_finance_route_status():
 
 # 11. Test api inventory route status
 def test_integration_inventory_route_status():
+    # Previously asserted 200 — anonymous reads of the item list ran as
+    # service_role. The route now requires inventory:read or :issue.
     response = client.get("/api/inventory/items")
-    assert response.status_code == 200
+    assert response.status_code == 401
 
 # 12. Test api auth login post headers
 def test_integration_login_post_headers():

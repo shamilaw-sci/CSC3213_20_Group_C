@@ -181,7 +181,6 @@ PROTECTED_ROUTES = [
 
 PUBLIC_ROUTES = [
     ("GET", "/api/rescue_cases/geo"),
-    ("GET", "/api/rescue_cases/hotspots"),
     # Volunteers have no login at all, so these three must work with no token —
     # and must keep working when a stale staff token is present, which is why
     # they depend on get_public_supabase rather than get_supabase.
@@ -191,10 +190,10 @@ PUBLIC_ROUTES = [
 
 @pytest.mark.parametrize("method, path", PROTECTED_ROUTES)
 def test_protected_routes_reject_anonymous(method, path):
-    # HTTPBearer(auto_error=True) answers a missing Authorization header with
-    # 403 "Not authenticated" rather than 401.
+    # 401, not 403: get_current_user answers a missing token itself rather
+    # than leaving it to HTTPBearer, whose own error is a 403.
     response = _request(method, path, json={})
-    assert response.status_code == 403, f"{method} {path} was reachable anonymously"
+    assert response.status_code == 401, f"{method} {path} was reachable anonymously"
 
 
 @pytest.mark.parametrize("method, path", PUBLIC_ROUTES)
@@ -228,9 +227,12 @@ PERMISSION_ROUTES = [
     ("GET", "/api/admin/audit-logs/verify", "audit:read"),
     ("GET", "/api/admin/stats", "admin:users"),
     ("GET", "/api/rescue_cases/cases", "rescue:read"),
+    ("GET", "/api/rescue_cases/assignees", "rescue:assign"),
+    ("GET", "/api/auth/users", "admin:users"),
     ("PUT", f"/api/auth/users/{OTHER_USER_ID}/role", "admin:users"),
     ("DELETE", f"/api/auth/users/{OTHER_USER_ID}", "admin:users"),
     ("POST", "/api/inventory/items", "inventory:issue"),
+    ("GET", "/api/inventory/transactions", "inventory:read"),
     ("POST", "/api/inventory/transactions", "inventory:issue"),
     # Volunteers. read = see the roster and rota; approve = vetting decisions;
     # assign = scheduling. Deliberately three permissions rather than one, so
@@ -589,31 +591,3 @@ def test_rescue_read_gate_blocks_finance_officer():
             f"/api/rescue_cases/cases/{CASE_ID}/status",
             json={"new_status": "Reported"},
         ).status_code == 403
-
-
-# --------------------------------------------------------------------------
-# Known gaps
-# --------------------------------------------------------------------------
-
-# These routes carry no auth dependency at all. Each is reachable by an
-# unauthenticated caller; the role/user ones allow privilege escalation.
-# xfail(strict=True) keeps the suite honest: once a route is protected the
-# test XPASSes and fails, prompting removal from this list.
-UNPROTECTED_ROUTES = [
-    ("GET", "/api/auth/users"),
-    ("GET", "/api/inventory/items"),
-    ("GET", "/api/inventory/transactions"),
-]
-
-
-@pytest.mark.xfail(strict=True, reason="route has no auth dependency; see UNPROTECTED_ROUTES")
-@pytest.mark.parametrize("method, path", UNPROTECTED_ROUTES)
-def test_unprotected_routes_should_require_auth(method, path):
-    app.dependency_overrides[get_supabase] = lambda: _FakeSupabase()
-    try:
-        response = _request(method, path, json={"role_id": 1})
-    finally:
-        app.dependency_overrides.clear()
-    assert response.status_code in (401, 403), (
-        f"{method} {path} is reachable without authentication"
-    )

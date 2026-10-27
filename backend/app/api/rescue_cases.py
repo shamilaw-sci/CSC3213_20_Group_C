@@ -11,7 +11,7 @@ from app.core.security import has_permission
 from app.core.supabase import get_supabase, get_public_supabase
 from app.core.audit import log_audit_action
 from app.schemas.rescue_case import (
-    RescueCaseGeo, CaseStatus, CaseCreate, CaseOut, CaseStatusUpdate,
+    RescueCaseGeo, CaseStatus, CaseCreate, CaseOut, CaseStatusUpdate, AssigneeOption,
     OutbreakZoneCreate, OutbreakZoneOut, OptimizedRoute,
 )
 from app.services.board_events import notify_board_changed
@@ -115,8 +115,83 @@ async def list_cases(
     if status:
         query = query.eq("status", status.value)
 
-    response = query.execute()
-    return response.data or []
+    cases = query.execute().data or []
+
+    # Joined here rather than embedded by PostgREST: rescue_cases.assigned_to
+    # has no foreign key to users, so there is no relationship to embed on.
+    # Fetches only the users actually assigned to these cases.
+    assigned_ids = sorted({c["assigned_to"] for c in cases if c.get("assigned_to")})
+    if assigned_ids:
+        users = (
+            supabase.table("users").select("id, email").in_("id", assigned_ids).execute().data or []
+        )
+        names = _display_names(supabase, assigned_ids)
+        by_id = {
+            u["id"]: {"email": u["email"], "display_name": names.get(u["id"])} for u in users
+        }
+        for c in cases:
+            # A deleted user leaves assigned_to pointing at nothing; the card
+            # then shows "Assigned" rather than the request failing.
+            c["assignee"] = by_id.get(c.get("assigned_to"))
+
+    return cases
+
+
+def _display_names(supabase: Client, user_ids: list[str]) -> dict[str, str]:
+    """first + last name per user, from employee_profile where one exists.
+
+    Names only: employee_profile also holds NIC and base_salary, so the select
+    is spelled out rather than "*".
+    """
+    rows = (
+        supabase.table("employee_profile")
+        .select("user_id, first_name, last_name")
+        .in_("user_id", user_ids)
+        .execute()
+        .data
+        or []
+    )
+    names = {}
+    for r in rows:
+        name = " ".join(p for p in (r.get("first_name"), r.get("last_name")) if p)
+        if name:
+            names[r["user_id"]] = name
+    return names
+
+
+@router.get("/assignees", response_model=list[AssigneeOption])
+async def list_assignees(
+    supabase: Client = Depends(get_supabase),
+    current_user: dict = Depends(require_permission("rescue:assign")),
+):
+    """
+    Users the assign dropdown may offer. Gated on rescue:assign, the permission
+    to hand a case to someone else, so it is not a directory for every
+    rescue:read holder (General Staff is the open-signup role).
+
+    Eligible means the user's role holds rescue:manage, which is what working
+    a case through to Resolved requires. Derived from the permission table
+    rather than a role list, so it cannot drift from it. In practice: Admin,
+    Operations Lead, General Staff — the set the board filtered to before.
+    """
+    users = supabase.table("users").select("id, email, roles(role_name)").execute().data or []
+    eligible = [
+        u for u in users
+        if has_permission((u.get("roles") or {}).get("role_name") or "", "rescue:manage")
+    ]
+    names = _display_names(supabase, [u["id"] for u in eligible]) if eligible else {}
+    return sorted(
+        (
+            {
+                "id": u["id"],
+                "email": u["email"],
+                "display_name": names.get(u["id"]),
+                "role_name": u["roles"]["role_name"],
+            }
+            for u in eligible
+        ),
+        key=lambda a: (a["display_name"] or a["email"]).lower(),
+    )
 
 
 @router.get("/my-route", response_model=OptimizedRoute)

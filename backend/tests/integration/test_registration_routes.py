@@ -31,9 +31,10 @@ def test_register_payload_invalid_password_type():
     response = client.post("/api/auth/register", json={"email": "test@vff.org", "password": 123, "role_id": 2})
     assert response.status_code == 422
 
-def test_register_payload_invalid_role_type():
-    response = client.post("/api/auth/register", json={"email": "test@vff.org", "password": "Pass", "role_id": "Director"})
-    assert response.status_code == 422
+# test_register_payload_invalid_role_type was removed: role_id is no longer a
+# field, so that body is now valid and the test would perform a real signup
+# against live Supabase Auth. tests/unit/test_auth_lockdown.py covers role_id
+# being ignored, with the repository stubbed.
 
 def test_health_check_returns_api_status():
     response = client.get("/")
@@ -91,16 +92,17 @@ def test_preflight_allow_headers():
     response = client.options("/api/auth/register", headers={"Origin": "http://localhost:3000", "Access-Control-Request-Method": "POST", "Access-Control-Request-Headers": "content-type"})
     assert "content-type" in response.headers.get("access-control-allow-headers", "").lower()
 
-def test_get_users_list_route():
+def test_get_users_list_route_requires_auth():
+    # Previously asserted 200 and a list — i.e. it pinned the anonymous leak of
+    # every user's email and role as the expected behaviour.
     response = client.get("/api/auth/users")
-    assert response.status_code == 200
-    assert isinstance(response.json(), list)
+    assert response.status_code == 401
 
 def test_put_user_role_route_invalid_user():
     response = client.put("/api/auth/users/invalid-uuid-format/role", json={"role_id": 2})
-    # Since mock db will fail to find user, we expect a 400 bad request or exception
-    assert response.status_code in [400, 403]
+    # Unauthenticated: rejected before the user id is even looked at.
+    assert response.status_code == 401
 
 def test_put_user_role_route_validation_error():
     response = client.put("/api/auth/users/dee79473-fb77-4e8d-9818-06b4d0f85d0d/role", json={"role_id": "InvalidRoleID"})
-    assert response.status_code in [422, 403]
+    assert response.status_code == 401
