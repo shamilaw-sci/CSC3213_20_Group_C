@@ -331,8 +331,10 @@ async def generate_monthly_payroll(
 
         rows = result.data or []
 
-        # Distinct from PAYROLL_GENERATE_FINANCE: this path runs the database
-        # RPC rather than the inline loop in finance.py.
+        # The only payroll path. finance.py used to carry a second one
+        # (POST /finance/calculate-payroll, audited as
+        # PAYROLL_GENERATE_FINANCE) that skipped this RPC's duplicate-month
+        # guard and atomicity; historical audit rows may still carry that name.
         await log_audit_action(
             supabase,
             user_id=user["id"],
