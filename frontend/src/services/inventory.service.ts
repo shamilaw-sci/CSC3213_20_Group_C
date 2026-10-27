@@ -9,29 +9,29 @@ import {
 
 export const InventoryService = {
   getItems: async () => {
-    const response = await api.get<InventoryItem[]>('/api/inventory/items');
+    const response = await api.get<InventoryItem[]>('/inventory/items');
     return response.data;
   },
 
   createItem: async (item: Omit<InventoryItem, 'id'>) => {
-    const response = await api.post<InventoryItem>('/api/inventory/items', item);
+    const response = await api.post<InventoryItem>('/inventory/items', item);
     return response.data;
   },
 
   getTransactions: async (item_id?: number) => {
     const params = item_id ? { item_id } : {};
-    const response = await api.get<InventoryTransaction[]>('/api/inventory/transactions', { params });
+    const response = await api.get<InventoryTransaction[]>('/inventory/transactions', { params });
     return response.data;
   },
 
   createTransaction: async (transaction: Omit<InventoryTransaction, 'id' | 'total_cost'>) => {
-    const response = await api.post<InventoryTransaction>('/api/inventory/transactions', transaction);
+    const response = await api.post<InventoryTransaction>('/inventory/transactions', transaction);
     return response.data;
   },
 
   // NEW: matches GET /inventory/alerts/low-stock in inventory_api.py
   getLowStockItems: async (threshold: number = 10) => {
-    const response = await api.get<LowStockItem[]>('/api/inventory/alerts/low-stock', {
+    const response = await api.get<LowStockItem[]>('/inventory/alerts/low-stock', {
       params: { threshold },
     });
     return response.data;
@@ -39,7 +39,7 @@ export const InventoryService = {
 
   // NEW: matches GET /inventory/alerts/expiring in inventory_api.py
   getExpiringItems: async (days: number = 30) => {
-    const response = await api.get<ExpiringItem[]>('/api/inventory/alerts/expiring', {
+    const response = await api.get<ExpiringItem[]>('/inventory/alerts/expiring', {
       params: { days },
     });
     return response.data;
@@ -48,7 +48,7 @@ export const InventoryService = {
   // NEW: matches GET /inventory/analytics/cost-per-animal/{program_id}
   getCostPerAnimal: async (programId: number) => {
     const response = await api.get<CostPerAnimalResult>(
-      `/api/inventory/analytics/cost-per-animal/${programId}`
+      `/inventory/analytics/cost-per-animal/${programId}`
     );
     return response.data;
   },

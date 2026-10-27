@@ -48,3 +48,7 @@ class PayrollLedgerBase(BaseModel):
 class PayrollLedger(PayrollLedgerBase):
     id: int
     model_config = ConfigDict(from_attributes=True)
+
+class AttendanceLogUpdate(BaseModel):
+    clock_in: Optional[datetime] = None
+    clock_out: Optional[datetime] = None

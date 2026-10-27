@@ -58,8 +58,8 @@ export function useLockAttendance() {
   
   return useMutation({
     mutationFn: HRService.lockAttendance,
-    onSuccess: (_, date) => {
-      queryClient.invalidateQueries({ queryKey: ['attendance', date] });
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['attendance'] });
       toast.success('Attendance records locked for this date');
     },
     onError: () => {
@@ -97,5 +97,39 @@ export function useCreateEmployee() {
     onError: (error: any) => {
       toast.error(error?.response?.data?.detail || 'Failed to add employee');
     }
+  });
+}
+
+export function useLogAttendance() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: HRService.logAttendance,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['attendance'] });
+      toast.success('Attendance logged');
+    },
+    onError: (error: any) => toast.error(error?.response?.data?.detail || 'Failed to log attendance'),
+  });
+}
+
+export function useUpdateAttendance() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...data }: { id: number; clock_in?: string; clock_out?: string }) =>
+      HRService.updateAttendance(id, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['attendance'] });
+      toast.success('Attendance updated');
+    },
+    onError: (error: any) => toast.error(error?.response?.data?.detail || 'Failed to update attendance'),
+  });
+}
+
+export function useExportAttendance() {
+  return useMutation({
+    mutationFn: HRService.exportAttendance,
+    onError: (error: any) => {
+      toast.error(error?.response?.data?.detail || 'Failed to export attendance');
+    },
   });
 }

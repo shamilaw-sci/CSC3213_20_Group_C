@@ -40,9 +40,27 @@ export interface Transaction {
   transaction_type: 'Income' | 'Expense';
   status: 'Cash' | 'Receivable' | 'Voided';
   program_id: number | null;
+  // Donor earmarked this income for program_id. Only meaningful on Income
+  // rows; expenses draw down restricted funds via program_id alone.
+  is_restricted?: boolean;
   programs?: {
     program_name: string;
   };
+}
+
+export interface RestrictedBalance {
+  program_id: number;
+  raised: number;
+  spent: number;
+  remaining: number;
+}
+
+export interface MonthlySummary {
+  month: number;
+  year: number;
+  income: number;
+  expense: number;
+  balance: number;
 }
 
 export interface Program {
@@ -120,4 +138,94 @@ export interface AuditLog {
       role_name: string;
     };
   };
+}
+
+export interface RescueCaseGeo {
+  id: string;
+  animal_type: string;
+  status: 'Reported' | 'In Treatment' | 'Resolved';
+  lat: number;
+  lng: number;
+  reported_at: string;
+}
+
+// Mirrors the CHECK constraint in backend/db/migrations/005_urgency_reason.sql.
+// Anything but 'ai' means the urgency is a fail-soft placeholder, not a judgement.
+export type UrgencySource =
+  | 'ai'
+  | 'default_no_description'
+  | 'default_classifier_error'
+  | 'default_invalid_label';
+
+export interface CaseOut {
+  id: string;
+  animal_type: string;
+  description?: string;
+  status: 'Reported' | 'Assigned' | 'In Treatment' | 'Resolved';
+  urgency: 'Low' | 'Medium' | 'High' | 'Critical';
+  // Both null on cases created before reasons were recorded.
+  urgency_reason?: string | null;
+  urgency_source?: UrgencySource | null;
+  lat: number;
+  lng: number;
+  photo_url?: string;
+  reported_by?: string;
+  assigned_to?: string;
+  reported_at: string;
+  updated_at: string;
+}
+
+export interface RouteStop {
+  sequence: number;              // 1-based, matches the numbered map markers
+  case: CaseOut;
+  leg_distance_km: number;       // from the previous stop (or the start, for #1)
+  leg_duration_min: number;
+  cumulative_distance_km: number;
+  cumulative_duration_min: number;
+}
+
+export interface OptimizedRoute {
+  stops: RouteStop[];
+  total_distance_km: number;
+  total_duration_min: number;
+  // False when road routing was unavailable and these are straight-line
+  // estimates. Surfaced in the UI rather than passed off as driving distances.
+  used_road_distances: boolean;
+  degraded_reason?: string | null;
+  truncated: boolean;
+}
+
+export interface EmployeeBasic {
+  id: number;
+  first_name: string;
+  last_name: string;
+}
+
+export interface ProgramAssignment {
+  id: number;
+  program_id: number;
+  employee_id: number;
+  role_on_program: string | null;
+  assigned_at: string;
+  employee_profile?: EmployeeBasic;
+}
+
+// Full program detail, including start_date/end_date added in the
+// Step 1 migration (not present on the basic Program type used by
+// the list page, since finance.py's list endpoint doesn't return them)
+export interface ProgramDetail {
+  id: number;
+  program_name: string;
+  total_animals_treated: number;
+  status: string;
+  start_date?: string | null;
+  end_date?: string | null;
+  total_cost?: number;
+}
+
+export interface ProgramFinancials {
+  program_id: number;
+  revenue: number;
+  total_cost: number;
+  profit: number;
 }

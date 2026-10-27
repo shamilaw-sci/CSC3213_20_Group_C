@@ -14,6 +14,9 @@ const getPageTitle = (pathname: string) => {
   if (pathname.startsWith('/hr')) return "Human Resources";
   if (pathname.startsWith('/programs')) return "Programs & Projects";
   if (pathname.startsWith('/inventory')) return "Inventory Management";
+  if (pathname.startsWith('/case-triage')) return "Rescue Case Triage";
+  if (pathname.startsWith('/cases')) return "Rescue Case Hotspots";
+  if (pathname.startsWith('/dispatch')) return "Field Dispatch";
   if (pathname.startsWith('/admin')) return "System Admin";
   if (pathname.startsWith('/profile')) return "My Profile";
   if (pathname.startsWith('/settings')) return "Account Settings";

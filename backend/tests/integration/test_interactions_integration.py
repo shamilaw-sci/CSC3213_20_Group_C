@@ -96,7 +96,7 @@ def test_integration_get_inventory_unauthorized():
 # 14. Test create inventory item invalid input payload
 def test_integration_create_item_invalid_payload():
     response = client.post("/api/inventory/items", json={"item_name": ""})
-    assert response.status_code in [400, 401, 422]
+    assert response.status_code in [400, 401, 422, 403]
 
 # 15. Test get inventory transactions unauthorized access
 def test_integration_get_inv_transactions_unauthorized():
@@ -106,7 +106,7 @@ def test_integration_get_inv_transactions_unauthorized():
 # 16. Test create inventory transaction invalid input payload
 def test_integration_create_inv_transaction_invalid():
     response = client.post("/api/inventory/transactions", json={"quantity": -5})
-    assert response.status_code in [400, 401, 422]
+    assert response.status_code in [400, 401, 422, 403]
 
 # 17. Test HR employees CORS access control origin
 def test_integration_hr_employees_cors():

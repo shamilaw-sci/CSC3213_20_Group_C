@@ -1,23 +1,14 @@
 'use client';
 
 import { useState } from 'react';
-import { useAttendance, useLockAttendance } from '@/hooks/useHR';
+import { useAttendance, useLockAttendance, useExportAttendance } from '@/hooks/useHR';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { format, parseISO } from 'date-fns';
-import { Lock, AlertCircle, Clock, Search } from 'lucide-react';
+import { Lock, AlertCircle, Clock, Search, Download } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-  DialogFooter,
-  DialogClose,
-} from "@/components/ui/dialog";
+import {Dialog,DialogContent,DialogDescription,DialogHeader,DialogTitle,DialogTrigger,DialogFooter,DialogClose,} from "@/components/ui/dialog";
 
 export default function HRAttendancePage() {
   const [targetDate, setTargetDate] = useState(format(new Date(), 'yyyy-MM-dd'));
@@ -25,9 +16,24 @@ export default function HRAttendancePage() {
 
   const { data: attendanceLogs, isLoading } = useAttendance(targetDate);
   const { mutate: lockDay, isPending: isLocking } = useLockAttendance();
+  const { mutateAsync: exportAttendance, isPending: isExporting } = useExportAttendance();
 
   const handleLockDay = () => {
     lockDay(targetDate);
+  };
+
+  const handleExport = async () => {
+    try {
+      const blob = await exportAttendance(targetDate);
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `attendance_${targetDate}.csv`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+    } catch {
+      // error toast already handled by the hook's onError
+    }
   };
 
   const filteredLogs = attendanceLogs?.filter(log => {
@@ -62,6 +68,15 @@ export default function HRAttendancePage() {
             className={filterIncomplete ? 'bg-amber-500/10 text-amber-500 border-amber-500/30' : ''}
           >
             {filterIncomplete ? 'Show All' : 'Show Incomplete'}
+          </Button>
+
+          <Button
+            variant="outline"
+            onClick={handleExport}
+            disabled={!attendanceLogs?.length || isExporting}
+          >
+            <Download className="w-4 h-4 mr-2" />
+            {isExporting ? 'Exporting...' : 'Export'}
           </Button>
 
           <Dialog>

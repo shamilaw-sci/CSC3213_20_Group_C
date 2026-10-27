@@ -1,0 +1,21 @@
+{
+  // The virtual environment lives at backend/venv, not at the repository
+  // root, so point VS Code's interpreter discovery at backend/rather than
+  // relying on each person selecting it by hand.
+  "python.venvPath": "${workspaceFolder}/backend",
+
+  // Used when no interpreter has been picked yet, and as the fallback when a
+  // previously picked one no longer exists. The Windows path is given because
+  // the team develops on Windows; on macOS and Linux this path simply does not
+  // resolve and discovery via venvPath above takes over.
+  "python.defaultInterpreterPath": "${workspaceFolder}/backend/venv/Scripts/python.exe",
+
+  // Imports in the backend are rooted at backend/ ("from app.api import ..."),
+  // but the workspace root is the repository. Without this, Pylance cannot
+  // resolve the app package even with the right interpreter selected.
+  "python.analysis.extraPaths": ["${workspaceFolder}/backend"],
+  "python.autoComplete.extraPaths": ["${workspaceFolder}/backend"],
+
+  "python.testing.pytestArgs": ["backend/tests"],
+  "python.testing.pytestEnabled": true
+}

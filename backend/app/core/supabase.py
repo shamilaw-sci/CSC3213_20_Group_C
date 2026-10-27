@@ -37,3 +37,13 @@ def get_supabase(request: Request) -> Client:
         return client
 
     return _supabase
+
+def get_public_supabase() -> Client:
+    """Client for routes that must work regardless of caller auth state.
+
+    Always uses the shared anon-key client, ignoring any Authorization
+    header entirely — so a stale/expired token sitting in the caller's
+    browser can never break a route that was never supposed to require
+    login in the first place.
+    """
+    return _supabase

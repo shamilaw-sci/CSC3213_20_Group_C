@@ -22,6 +22,7 @@
   --font-mono: var(--font-mono);
   
   --radius-card: var(--radius-card);
+  --shadow-card: var(--shadow-card);
 
   /* shadcn compat */
   --color-background: var(--background);
@@ -56,7 +57,8 @@
   --color-negative: #DC2626;
   
   --radius-card: 12px;
-  
+  --shadow-card: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+
   --font-heading: "Space Grotesk", sans-serif;
   --font-body: "Inter", sans-serif;
   --font-mono: "JetBrains Mono", monospace;
@@ -118,7 +120,8 @@
 
 @layer base {
   * {
-    @apply border-border outline-ring/50;
+    border-color: var(--border);
+    outline-color: var(--ring);
   }
   body {
     background-color: var(--color-bg);
@@ -128,4 +131,21 @@
   h1, h2, h3, h4, h5, h6 {
     font-family: var(--font-heading);
   }
+}
+
+[popover] {
+  background-color: transparent;
+  border: none;
+  color: inherit;
+  padding: 0;
+  margin: 0;
+}
+
+[data-slot="select-content"] {
+  background-color: var(--popover) !important;
+  color: var(--popover-foreground) !important;
+}
+
+.leaflet-container {
+  z-index: 0;
 }

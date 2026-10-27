@@ -23,9 +23,9 @@ def test_user_entity_admin_role():
     assert user.role_name == "Admin"
 
 def test_user_entity_staff_role():
-    user = User(id="usr_3", email="staff@vff.org", role_id=3, role_name="Staff")
-    assert user.role_id == 3
-    assert user.role_name == "Staff"
+    user = User(id="usr_6", email="staff@vff.org", role_id=6, role_name="General Staff")
+    assert user.role_id == 6
+    assert user.role_name == "General Staff"
 
 def test_user_entity_empty_id():
     with pytest.raises(ValueError):

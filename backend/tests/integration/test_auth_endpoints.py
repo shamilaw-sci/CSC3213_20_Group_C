@@ -74,7 +74,11 @@ def test_endpoint_register_default_role(override_supabase):
         "password": "securepassword"
     })
     assert response.status_code == 200
-    override_supabase.table("users").insert.assert_called_once()
+    # Registration now also appends an audit row, so this shared mock records
+    # two inserts. Assert the user row specifically rather than a total count.
+    override_supabase.table("users").insert.assert_any_call(
+        {"id": "mock-user-id", "email": "test@vff.org", "role_id": 2}
+    )
 
 def test_endpoint_register_provider_failure(override_supabase):
     override_supabase.auth.sign_up.return_value = MagicMock(user=None)
@@ -161,15 +165,18 @@ def test_endpoint_login_role_admin(override_supabase):
     assert response.json()["user"]["role"] == "Admin"
 
 def test_endpoint_login_role_staff(override_supabase):
+    # role_id 6 / "General Staff" is the real pairing — the default role every
+    # new signup receives. The previous fixture paired id 3 (Finance Officer)
+    # with a "Staff" name no role row has ever used.
     override_supabase.table().select().eq().single().execute.return_value = MagicMock(
-        data={"id": "mock-user-id", "role_id": 3, "roles": {"role_name": "Staff"}}
+        data={"id": "mock-user-id", "role_id": 6, "roles": {"role_name": "General Staff"}}
     )
     response = client.post("/api/auth/login", json={
         "email": "test@vff.org",
         "password": "securepassword"
     })
     assert response.status_code == 200
-    assert response.json()["user"]["role"] == "Staff"
+    assert response.json()["user"]["role"] == "General Staff"
 
 def test_endpoint_login_db_error(override_supabase):
     override_supabase.table().select().eq().single().execute.side_effect = Exception("DB Connect Error")

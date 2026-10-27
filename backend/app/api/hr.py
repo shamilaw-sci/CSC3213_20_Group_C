@@ -1,10 +1,16 @@
 from fastapi import APIRouter, HTTPException, Depends
 from app.core.supabase import get_supabase
-from app.schemas.hr import EmployeeProfile, EmployeeProfileCreate, AttendanceLog, AttendanceLogCreate, PayrollLedger
+from app.schemas.hr import (EmployeeProfile, EmployeeProfileCreate,AttendanceLog, AttendanceLogCreate, AttendanceLogUpdate,PayrollLedger)
 from typing import List, Optional, Dict, Any
 from datetime import date, datetime, timezone
 from supabase import Client
 from app.core.security import require_permission
+from app.core.audit import log_audit_action
+from fastapi.responses import StreamingResponse
+from datetime import date as date_cls
+from fastapi import HTTPException
+import io
+import csv
 
 router = APIRouter()
 
@@ -24,20 +30,46 @@ async def create_employee(employee: EmployeeProfileCreate, user = Depends(requir
     response = supabase.table("employee_profile").insert(employee.model_dump()).execute()
     if not response.data:
         raise HTTPException(status_code=400, detail="Failed to create employee")
+
+    await log_audit_action(
+        supabase,
+        user_id=user["id"],
+        action_type="EMPLOYEE_CREATE",
+        table_name="employee_profile",
+        old_payload=None,
+        new_payload=response.data[0],
+    )
+
     return response.data[0]
 
 @router.put("/employees/{employee_id}", response_model=EmployeeProfile)
 async def update_employee(employee_id: int, employee: EmployeeProfileCreate, user = Depends(require_permission('hr:manage')), supabase: Client = Depends(get_supabase)):
+    # Salary and role live on this row, so the prior values are the point of
+    # the audit entry.
+    existing = supabase.table("employee_profile").select("*").eq("id", employee_id).execute()
+    if not existing.data:
+        raise HTTPException(status_code=404, detail="Employee not found")
+
     response = supabase.table("employee_profile").update(employee.model_dump()).eq("id", employee_id).execute()
     if not response.data:
         raise HTTPException(status_code=404, detail="Employee not found")
+
+    await log_audit_action(
+        supabase,
+        user_id=user["id"],
+        action_type="EMPLOYEE_UPDATE",
+        table_name="employee_profile",
+        old_payload=existing.data[0],
+        new_payload=response.data[0],
+    )
+
     return response.data[0]
 
 # --- SELF SERVICE ATTENDANCE ---
 
 @router.post("/attendance/clock-in")
 async def clock_in(user = Depends(require_permission('hr:attendance:self')), supabase: Client = Depends(get_supabase)):
-    emp = get_employee_by_user_id(supabase, user['sub'])
+    emp = get_employee_by_user_id(supabase, user['id'])
     today = str(date.today())
     
     existing = supabase.table("attendance_log").select("*").eq("employee_id", emp['id']).eq("target_date", today).execute()
@@ -51,11 +83,21 @@ async def clock_in(user = Depends(require_permission('hr:attendance:self')), sup
         "is_locked": False
     }
     resp = supabase.table("attendance_log").insert(record).execute()
+
+    await log_audit_action(
+        supabase,
+        user_id=user["id"],
+        action_type="ATTENDANCE_CLOCK_IN",
+        table_name="attendance_log",
+        old_payload=None,
+        new_payload=resp.data[0] if resp.data else record,
+    )
+
     return resp.data[0]
 
 @router.post("/attendance/clock-out")
 async def clock_out(user = Depends(require_permission('hr:attendance:self')), supabase: Client = Depends(get_supabase)):
-    emp = get_employee_by_user_id(supabase, user['sub'])
+    emp = get_employee_by_user_id(supabase, user['id'])
     today = str(date.today())
     
     existing = supabase.table("attendance_log").select("*").eq("employee_id", emp['id']).eq("target_date", today).execute()
@@ -80,11 +122,23 @@ async def clock_out(user = Depends(require_permission('hr:attendance:self')), su
     }
     
     resp = supabase.table("attendance_log").update(update_data).eq("id", record['id']).execute()
+
+    # Clocking out also locks the record, which is what payroll later depends
+    # on — worth an entry showing the hours that got frozen in.
+    await log_audit_action(
+        supabase,
+        user_id=user["id"],
+        action_type="ATTENDANCE_CLOCK_OUT",
+        table_name="attendance_log",
+        old_payload=record,
+        new_payload=resp.data[0] if resp.data else update_data,
+    )
+
     return resp.data[0]
 
 @router.get("/attendance/me")
 async def get_my_attendance(month: Optional[int] = None, year: Optional[int] = None, user = Depends(require_permission('hr:attendance:self')), supabase: Client = Depends(get_supabase)):
-    emp = get_employee_by_user_id(supabase, user['sub'])
+    emp = get_employee_by_user_id(supabase, user['id'])
     query = supabase.table("attendance_log").select("*").eq("employee_id", emp['id']).order("target_date", desc=True)
     
     if month and year:
@@ -109,20 +163,138 @@ async def get_attendance(target_date: Optional[date] = None, month: Optional[int
     response = query.execute()
     return response.data
 
-@router.post("/attendance")
+
+def _compute_worked_hours(clock_in, clock_out):
+    if clock_in and clock_out:
+        if clock_in.tzinfo is not None:
+            clock_in = clock_in.replace(tzinfo=None)
+        if clock_out.tzinfo is not None:
+            clock_out = clock_out.replace(tzinfo=None)
+        delta = (clock_out - clock_in).total_seconds() / 3600
+        if delta < 0:
+            delta += 24  # overnight shift: check-out landed after midnight
+        return round(delta, 2)
+    return None
+
+
+@router.post("/attendance", response_model=AttendanceLog)
 async def log_attendance(attendance: AttendanceLogCreate, user = Depends(require_permission('hr:attendance:manage')), supabase: Client = Depends(get_supabase)):
-    existing = supabase.table("attendance_log").select("*").eq("employee_id", attendance.employee_id).eq("target_date", str(attendance.target_date)).execute()
-    if existing.data and existing.data[0]['is_locked']:
-        raise HTTPException(status_code=403, detail="Record is locked and cannot be modified.")
-    response = supabase.table("attendance_log").insert(attendance.model_dump()).execute()
+    existing = supabase.table("attendance_log").select("*") \
+        .eq("employee_id", attendance.employee_id) \
+        .eq("target_date", str(attendance.target_date)).execute()
+    if existing.data:
+        if existing.data[0]['is_locked']:
+            raise HTTPException(status_code=403, detail="Record is locked and cannot be modified.")
+        raise HTTPException(status_code=400, detail="A log already exists for this employee on this date. Edit it instead.")
+
+    payload = attendance.model_dump(mode="json")
+    payload["worked_hours"] = _compute_worked_hours(attendance.clock_in, attendance.clock_out)
+
+    response = supabase.table("attendance_log").insert(payload).execute()
     if not response.data:
         raise HTTPException(status_code=400, detail="Failed to log attendance")
+
+    await log_audit_action(
+        supabase,
+        user_id=user["id"],
+        action_type="ATTENDANCE_CREATE",
+        table_name="attendance_log",
+        old_payload=None,
+        new_payload=response.data[0],
+    )
+
     return response.data[0]
+
+@router.get("/attendance/export")
+async def export_attendance(
+    target_date: str,
+    user = Depends(require_permission('hr:attendance:manage')),
+    supabase: Client = Depends(get_supabase),
+):
+    try:
+        parsed_date = date_cls.fromisoformat(target_date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="target_date must be in YYYY-MM-DD format")
+
+    logs = (
+        supabase.table("attendance_log")
+        .select("*, employee_profile(first_name, last_name)")
+        .eq("target_date", parsed_date.isoformat())
+        .execute()
+    )
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Employee", "Check In", "Check Out", "Worked Hours"])
+
+    for log in logs.data or []:
+        profile = log.get("employee_profile") or {}
+        full_name = f"{profile.get('first_name', '')} {profile.get('last_name', '')}".strip()
+        writer.writerow([
+            full_name,
+            log.get("clock_in"),
+            log.get("clock_out"),
+            log.get("worked_hours"),
+        ])
+
+    output.seek(0)
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=attendance_{parsed_date.isoformat()}.csv"}
+    )
+
+@router.put("/attendance/{attendance_id}", response_model=AttendanceLog)
+async def update_attendance(attendance_id: int, attendance: AttendanceLogUpdate, user = Depends(require_permission('hr:attendance:manage')), supabase: Client = Depends(get_supabase)):
+    existing = supabase.table("attendance_log").select("*").eq("id", attendance_id).execute()
+    if not existing.data:
+        raise HTTPException(status_code=404, detail="Attendance record not found")
+
+    current = existing.data[0]
+    if current["is_locked"]:
+        raise HTTPException(status_code=400, detail="This record is locked and cannot be edited")
+
+    clock_in = attendance.clock_in or current.get("clock_in")
+    clock_out = attendance.clock_out or current.get("clock_out")
+    clock_in = datetime.fromisoformat(clock_in) if isinstance(clock_in, str) else clock_in
+    clock_out = datetime.fromisoformat(clock_out) if isinstance(clock_out, str) else clock_out
+
+    payload = attendance.model_dump(mode="json", exclude_unset=True)
+    payload["worked_hours"] = _compute_worked_hours(clock_in, clock_out)
+
+    response = supabase.table("attendance_log").update(payload).eq("id", attendance_id).execute()
+    if not response.data:
+        raise HTTPException(status_code=400, detail="Failed to update attendance")
+
+    await log_audit_action(
+        supabase,
+        user_id=user["id"],
+        action_type="ATTENDANCE_UPDATE",
+        table_name="attendance_log",
+        old_payload=current,
+        new_payload=response.data[0],
+    )
+
+    return response.data[0]
+
 
 @router.post("/attendance/lock-day")
 async def lock_day_attendance(target_date: date, user = Depends(require_permission('hr:attendance:manage')), supabase: Client = Depends(get_supabase)):
     response = supabase.table("attendance_log").update({"is_locked": True}).eq("target_date", str(target_date)).execute()
-    return {"message": f"Attendance locked for {target_date}", "updated_count": len(response.data) if response.data else 0}
+    updated_count = len(response.data) if response.data else 0
+
+    # Locking a day is what makes those hours eligible for payroll, so it is a
+    # financially meaningful action even though it edits no money directly.
+    await log_audit_action(
+        supabase,
+        user_id=user["id"],
+        action_type="ATTENDANCE_LOCK_DAY",
+        table_name="attendance_log",
+        old_payload=None,
+        new_payload={"target_date": str(target_date), "updated_count": updated_count},
+    )
+
+    return {"message": f"Attendance locked for {target_date}", "updated_count": updated_count}
 
 @router.post("/attendance/lock")
 async def lock_attendance(target_date: date, user = Depends(require_permission('hr:attendance:manage')), supabase: Client = Depends(get_supabase)):
@@ -130,6 +302,7 @@ async def lock_attendance(target_date: date, user = Depends(require_permission('
     return await lock_day_attendance(target_date, user, supabase)
 
 # --- PAYROLL PIPELINE ---
+
 
 @router.get("/payroll", response_model=List[PayrollLedger])
 async def get_payroll(month: int, year: int, user = Depends(require_permission('finance:read')), supabase: Client = Depends(get_supabase)):
@@ -156,6 +329,24 @@ async def generate_monthly_payroll(
             {"p_month": month, "p_year": year}
         ).execute()
 
+        rows = result.data or []
+
+        # Distinct from PAYROLL_GENERATE_FINANCE: this path runs the database
+        # RPC rather than the inline loop in finance.py.
+        await log_audit_action(
+            supabase,
+            user_id=user["id"],
+            action_type="PAYROLL_GENERATE_HR",
+            table_name="payroll_ledger",
+            old_payload=None,
+            new_payload={
+                "month": month,
+                "year": year,
+                "rows_created": len(rows),
+                "total_payout": sum(float(r.get("net_payable") or 0) for r in rows),
+            },
+        )
+
         return result.data
 
     except HTTPException:
@@ -167,3 +358,4 @@ async def generate_monthly_payroll(
         if "No active employees found" in msg:
             raise HTTPException(status_code=404, detail=msg)
         raise HTTPException(status_code=500, detail=f"Payroll generation failed: {msg}")
+

@@ -1,24 +1,39 @@
 import api from '@/lib/api-client';
-import { Transaction, Program } from '@/types';
+import { Transaction, Program, MonthlySummary, RestrictedBalance } from '@/types';
 
 export const FinanceService = {
   getTransactions: async (params?: { start_date?: string, end_date?: string }) => {
-    const response = await api.get<Transaction[]>('/api/finance/transactions', { params });
+    const response = await api.get<Transaction[]>('/finance/transactions', { params });
     return response.data;
   },
   
-  createTransaction: async (transaction: Omit<Transaction, 'id'>) => {
-    const response = await api.post<Transaction>('/api/finance/transactions', transaction);
+  // overrideRestricted authorizes an expense that overspends a program's
+  // earmarked funds. The backend rejects it with 403 unless the caller holds
+  // finance:restricted:override, and records every use to the audit log.
+  createTransaction: async (
+    transaction: Omit<Transaction, 'id'>,
+    overrideRestricted = false,
+  ) => {
+    const response = await api.post<Transaction>('/finance/transactions', transaction, {
+      params: overrideRestricted ? { override_restricted: true } : undefined,
+    });
+    return response.data;
+  },
+
+  getRestrictedBalance: async (programId: number) => {
+    const response = await api.get<RestrictedBalance>(
+      `/finance/programs/${programId}/restricted-balance`,
+    );
     return response.data;
   },
 
   getPrograms: async () => {
-    const response = await api.get<Program[]>('/api/finance/programs');
+    const response = await api.get<Program[]>('/finance/programs');
     return response.data;
   },
 
   createProgram: async (program: Omit<Program, 'id'>) => {
-    const response = await api.post<Program>('/api/finance/programs', program);
+    const response = await api.post<Program>('/finance/programs', program);
     return response.data;
   },
 
@@ -42,12 +57,19 @@ settleTransaction: async (id: number) => {
       cash_available: number;
       receivables: number;
       monthly_expenses: number;
-    }>('/api/finance/summary');
+    }>('/finance/summary');
     return response.data;
   },
 
   getAging: async () => {
     const response = await api.get<Record<string, number>>('/finance/aging');
+    return response.data;
+  },
+
+  getMonthlySummary: async (year: number, month: number) => {
+    const response = await api.get<MonthlySummary>('/finance/summary/monthly', {
+      params: { year, month },
+    });
     return response.data;
   }
 };
