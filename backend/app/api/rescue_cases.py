@@ -14,6 +14,7 @@ from app.schemas.rescue_case import (
     RescueCaseGeo, CaseStatus, CaseCreate, CaseOut, CaseStatusUpdate,
     OutbreakZoneCreate, OutbreakZoneOut, OptimizedRoute,
 )
+from app.services.board_events import notify_board_changed
 from app.services.case_classifier import classify_case_urgency
 from app.services.route_optimizer import optimize_route
 
@@ -74,6 +75,8 @@ async def create_case(
         old_payload=None,
         new_payload=response.data[0],
     )
+
+    await notify_board_changed()
 
     return response.data[0]
 
@@ -242,6 +245,12 @@ async def update_case_status(
             old_payload={"id": case_id, "assigned_to": before.get("assigned_to")},
             new_payload={"id": case_id, "assigned_to": updated.get("assigned_to")},
         )
+
+    # Same condition as the audit entries: a no-op request (e.g. Reported ->
+    # Reported) changes nothing on the board, so it pings nobody.
+    if (updated.get("status") != before.get("status")
+            or updated.get("assigned_to") != before.get("assigned_to")):
+        await notify_board_changed()
 
     return updated
 

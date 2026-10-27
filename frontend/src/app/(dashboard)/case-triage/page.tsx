@@ -8,6 +8,7 @@ import {
   useDraggable, useDroppable, PointerSensor, useSensor, useSensors,
 } from '@dnd-kit/core';
 import { RescueCasesService } from '@/services/rescue-cases.service';
+import { useRescueBoardLive } from '@/hooks/useRescueBoardLive';
 import { UsersService, StaffUser } from '@/services/users.service';
 import { useAuthStore } from '@/store/useAuthStore';
 import { hasPermission } from '@/lib/permissions';
@@ -426,6 +427,12 @@ export default function CaseTriagePage() {
   const { data, isLoading, error, refetch, isFetching } = useQuery({
     queryKey: ['rescueCases', 'list'],
     queryFn: () => RescueCasesService.listCases(),
+    // Fallback for when the live channel is down. Pings normally keep the
+    // board current; this bounds how stale it can get without them.
+    refetchInterval: 45_000,
+    // 'always', not true: the global 60 s staleTime outlasts the polling
+    // interval, so with plain true a focus refetch would never fire.
+    refetchOnWindowFocus: 'always',
   });
 
   const { data: staffList } = useQuery({
@@ -468,8 +475,15 @@ export default function CaseTriagePage() {
       toast.error(getErrorMessage(err) || "Couldn't update the case. Please try again.");
     },
     onSuccess: () => toast.success('Case updated'),
-    onSettled: () => queryClient.invalidateQueries({ queryKey: ['rescueCases', 'list'] }),
+    onSettled: () => {
+      // This refetch already covers any ping held during the mutation —
+      // including the one the server sent for this very change.
+      live.discardPending();
+      return queryClient.invalidateQueries({ queryKey: ['rescueCases', 'list'] });
+    },
   });
+
+  const live = useRescueBoardLive(activeId !== null || statusMutation.isPending);
 
   function handleDragStart(event: DragStartEvent) {
     setActiveId(event.active.id as string);
