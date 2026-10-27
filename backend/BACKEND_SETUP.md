@@ -93,4 +93,4 @@ one. Python 3.12 is required; some dependencies do not yet build on 3.14.
 - `POST /api/v1/admin/audit` -> Logger middleware to capture user actions.
 
 ## Integration Config
-The frontend is configured to point to `/api` by default. Update `NEXT_PUBLIC_API_URL` in `.env.local` to point to your FastAPI server (e.g., `http://localhost:8000`).
+The frontend is configured to point to `/api` by default. Update `NEXT_PUBLIC_API_URL` in `.env.local` to point to your FastAPI server (e.g., `http://localhost:8000/api`).
