@@ -148,7 +148,7 @@ export const VolunteersService = {
 
   // ---- staff ----
   list: async (status?: VolunteerStatus) => {
-    const response = await api.get<Volunteer[]>('/volunteers/', {
+    const response = await api.get<Volunteer[]>('/volunteers', {
       params: status ? { status } : undefined,
     });
     return response.data;

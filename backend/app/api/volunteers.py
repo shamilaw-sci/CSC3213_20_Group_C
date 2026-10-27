@@ -324,7 +324,13 @@ async def respond_to_assignment(
 # Staff — roster
 # ===========================================================================
 
-@router.get("/", response_model=list[VolunteerOut])
+# "" rather than "/": the route answers at /api/volunteers itself. With "/",
+# a request without the slash gets a 307 to the slashed URL, and Next's dev
+# proxy always strips the slash first, so every call through it took that
+# redirect. The redirect points at the backend's own origin (localhost:8000),
+# which is cross-origin to the page, so the browser drops Authorization and
+# the retried request fails as "Not authenticated".
+@router.get("", response_model=list[VolunteerOut])
 async def list_volunteers(
     status: Optional[VolunteerStatus] = Query(None),
     supabase: Client = Depends(get_supabase),

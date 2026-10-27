@@ -169,7 +169,7 @@ PROTECTED_ROUTES = [
     # The volunteer roster holds names, emails and phone numbers of people who
     # are not employees, so anonymous reachability here would be worse than on
     # most of the routes above.
-    ("GET", "/api/volunteers/"),
+    ("GET", "/api/volunteers"),
     ("GET", "/api/volunteers/shifts"),
     ("GET", "/api/volunteers/assignments"),
     ("PATCH", f"/api/volunteers/{VOLUNTEER_ID}/review"),
@@ -236,7 +236,7 @@ PERMISSION_ROUTES = [
     # assign = scheduling. Deliberately three permissions rather than one, so
     # this table is also what proves the split is actually enforced and not
     # just declared in permissions.py.
-    ("GET", "/api/volunteers/", "volunteers:read"),
+    ("GET", "/api/volunteers", "volunteers:read"),
     ("GET", "/api/volunteers/shifts", "volunteers:read"),
     ("GET", "/api/volunteers/assignments", "volunteers:read"),
     ("PATCH", f"/api/volunteers/{VOLUNTEER_ID}/review", "volunteers:approve"),
