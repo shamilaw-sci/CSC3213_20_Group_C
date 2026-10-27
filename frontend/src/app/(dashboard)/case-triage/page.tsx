@@ -11,6 +11,7 @@ import { RescueCasesService } from '@/services/rescue-cases.service';
 import { useRescueBoardLive } from '@/hooks/useRescueBoardLive';
 import { useAuthStore } from '@/store/useAuthStore';
 import { hasPermission } from '@/lib/permissions';
+import { cardControls } from '@/lib/case-card-controls';
 import { toast } from 'sonner';
 import { AssigneeOption, CaseOut } from '@/types';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -166,9 +167,11 @@ function CaseCard({ c, canManage, canAssign, staffList, onAssignToMe, onAssignTo
   onAssignTo: (caseId: string, staffId: string) => void;
   onMove: (caseId: string, status: Status) => void;
 }) {
+  const controls = cardControls(c, canManage, canAssign, staffList);
+
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: c.id,
-    disabled: !canManage,
+    disabled: !controls.draggable,
   });
 
   const style = transform
@@ -183,11 +186,11 @@ function CaseCard({ c, canManage, canAssign, staffList, onAssignToMe, onAssignTo
     <Card
       ref={setNodeRef}
       style={style}
-      {...(canManage ? listeners : {})}
-      {...(canManage ? attributes : {})}
+      {...(controls.draggable ? listeners : {})}
+      {...(controls.draggable ? attributes : {})}
       className={cn(
         'group/case relative overflow-hidden bg-surface border border-border-brand rounded-card shadow-card p-3.5 pl-4 mb-3 gap-2.5 transition-all duration-200',
-        canManage && 'cursor-grab active:cursor-grabbing hover:shadow-lg hover:-translate-y-0.5 hover:border-accent/50',
+        controls.draggable && 'cursor-grab active:cursor-grabbing hover:shadow-lg hover:-translate-y-0.5 hover:border-accent/50',
         isDragging && 'opacity-40'
       )}
     >
@@ -201,7 +204,7 @@ function CaseCard({ c, canManage, canAssign, staffList, onAssignToMe, onAssignTo
         />
       )}
 
-      {canManage && (
+      {controls.draggable && (
         <GripVertical
           className="absolute top-2.5 right-2 h-3.5 w-3.5 text-text-muted opacity-0 group-hover/case:opacity-100 transition-opacity"
           aria-hidden="true"
@@ -250,7 +253,7 @@ function CaseCard({ c, canManage, canAssign, staffList, onAssignToMe, onAssignTo
         )}
       </div>
 
-      {canManage && !c.assigned_to && c.status !== 'Resolved' && (
+      {controls.showAssignToMe && (
         <Button
           variant="link"
           size="xs"
@@ -264,9 +267,9 @@ function CaseCard({ c, canManage, canAssign, staffList, onAssignToMe, onAssignTo
       {/* Dragging is the fast path, but it is unusable with a keyboard or a
           screen reader and awkward on a phone. These selects give every
           action a plain, reachable equivalent. */}
-      {canManage && (
+      {(controls.assignOptions || controls.showStatusSelect) && (
         <div onPointerDown={(e) => e.stopPropagation()} className="space-y-1.5">
-          {canAssign && c.status !== 'Resolved' && staffList && staffList.length > 0 && (
+          {controls.assignOptions && (
             <Select
               onValueChange={(val) => {
                 if (typeof val === 'string') onAssignTo(c.id, val);
@@ -276,15 +279,14 @@ function CaseCard({ c, canManage, canAssign, staffList, onAssignToMe, onAssignTo
                 <SelectValue placeholder={c.assigned_to ? 'Reassign staff' : 'Assign staff'} />
               </SelectTrigger>
               <SelectContent>
-                {staffList.map((s) => (
-                  <SelectItem key={s.id} value={s.id}>
-                    {s.display_name || s.email} ({s.role_name})
-                  </SelectItem>
+                {controls.assignOptions.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
           )}
 
+          {controls.showStatusSelect && (
           <Select
             value={c.status}
             onValueChange={(val) => {
@@ -301,6 +303,7 @@ function CaseCard({ c, canManage, canAssign, staffList, onAssignToMe, onAssignTo
               ))}
             </SelectContent>
           </Select>
+          )}
         </div>
       )}
     </Card>
