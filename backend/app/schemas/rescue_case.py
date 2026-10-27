@@ -53,6 +53,25 @@ class OutbreakZoneOut(BaseModel):
     is_active: bool
     resolved_at: Optional[datetime] = None
 
+class CaseAssignee(BaseModel):
+    """Who a case is assigned to — only what a card needs to show.
+
+    Embedded per case rather than served as a staff directory: General Staff
+    is the open-signup role and holds rescue:read, so a directory gated on it
+    would hand every new registrant the staff list. Embedded, a viewer learns
+    only who is on cases they can already see.
+    """
+    email: str
+    # first + last from employee_profile; None when the user has no profile.
+    display_name: Optional[str] = None
+
+
+class AssigneeOption(CaseAssignee):
+    """A user the assign dropdown may offer. rescue:assign holders only."""
+    id: UUID
+    role_name: str
+
+
 class CaseOut(BaseModel):
     id: UUID
     animal_type: str
@@ -68,6 +87,10 @@ class CaseOut(BaseModel):
     photo_url: Optional[str] = None
     reported_by: Optional[UUID] = None
     assigned_to: Optional[UUID] = None
+    # Filled by GET /cases only. Null when unassigned, and on every other
+    # endpoint returning CaseOut — including the public report form, which
+    # must never carry staff details.
+    assignee: Optional[CaseAssignee] = None
     reported_at: datetime
     updated_at: datetime
 

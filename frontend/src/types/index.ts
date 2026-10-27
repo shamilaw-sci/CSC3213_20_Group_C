@@ -171,8 +171,23 @@ export interface CaseOut {
   photo_url?: string;
   reported_by?: string;
   assigned_to?: string;
+  // Filled by GET /rescue_cases/cases only; null when unassigned or when the
+  // assigned user no longer exists.
+  assignee?: CaseAssignee | null;
   reported_at: string;
   updated_at: string;
+}
+
+export interface CaseAssignee {
+  email: string;
+  display_name?: string | null;
+}
+
+// A user the assign dropdown may offer (GET /rescue_cases/assignees,
+// rescue:assign only). Eligibility is decided server-side.
+export interface AssigneeOption extends CaseAssignee {
+  id: string;
+  role_name: string;
 }
 
 export interface RouteStop {

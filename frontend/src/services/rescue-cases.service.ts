@@ -1,6 +1,6 @@
 // frontend/src/services/rescue-cases.service.ts
 import api from '@/lib/api-client';
-import { RescueCaseGeo , CaseOut, OptimizedRoute } from '@/types';
+import { RescueCaseGeo , CaseOut, OptimizedRoute, AssigneeOption } from '@/types';
 
 export interface CaseCreatePayload {
   animal_type: string;
@@ -59,6 +59,11 @@ export const RescueCasesService = {
     );
     return response.data.photo_url;
   },
+    listAssignees: async () => {
+    const response = await api.get<AssigneeOption[]>('/rescue_cases/assignees');
+    return response.data;
+  },
+
     listCases: async (status?: string) => {
     const response = await api.get<CaseOut[]>('/rescue_cases/cases', {
       params: status ? { status } : undefined,

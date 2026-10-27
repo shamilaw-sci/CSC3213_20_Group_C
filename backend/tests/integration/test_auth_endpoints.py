@@ -22,6 +22,9 @@ def get_mock_supabase():
     # Mock database responses
     mock_table = MagicMock()
     mock_table.insert.return_value.execute.return_value = MagicMock()
+    # Registration looks up the General Staff role id by name; without a row it
+    # refuses the signup (500) rather than guess a role.
+    mock_table.select.return_value.eq.return_value.execute.return_value = MagicMock(data=[{"id": 6}])
     mock_table.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
         data={"id": "mock-user-id", "role_id": 2, "roles": {"role_name": "Director"}}
     )
@@ -67,17 +70,21 @@ def test_endpoint_register_missing_email(override_supabase):
     })
     assert response.status_code == 422
 
-def test_endpoint_register_default_role(override_supabase):
-    # Tests that default role_id is optional but defaultable
+@pytest.mark.parametrize("extra", [{}, {"role_id": 1}, {"role_id": 2}])
+def test_endpoint_register_always_general_staff(override_supabase, extra):
+    # Previously asserted role_id 2 (Director) as the default, and role_id was
+    # client-controlled. Signups now always get General Staff (id 6 here),
+    # whatever the body asks for.
     response = client.post("/api/auth/register", json={
         "email": "test@vff.org",
-        "password": "securepassword"
+        "password": "securepassword",
+        **extra,
     })
     assert response.status_code == 200
     # Registration now also appends an audit row, so this shared mock records
     # two inserts. Assert the user row specifically rather than a total count.
     override_supabase.table("users").insert.assert_any_call(
-        {"id": "mock-user-id", "email": "test@vff.org", "role_id": 2}
+        {"id": "mock-user-id", "email": "test@vff.org", "role_id": 6}
     )
 
 def test_endpoint_register_provider_failure(override_supabase):

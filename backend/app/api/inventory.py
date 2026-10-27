@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends
 from postgrest.exceptions import APIError
 from app.core.supabase import get_supabase
-from app.core.security import check_user_role, require_permission
+from app.core.security import check_user_role, require_any_permission, require_permission
 from app.core.permissions import UserRole
 from app.core.audit import log_audit_action
 from app.schemas.inventory import (
@@ -33,7 +33,12 @@ router = APIRouter()
 
 
 @router.get("/items", response_model=List[InventoryItem])
-async def get_items(supabase: Client = Depends(get_supabase)):
+async def get_items(
+    # Either permission: the Issue and Returns pages (inventory:issue, held by
+    # General Staff without inventory:read) pick from this same item list.
+    current_user: dict = Depends(require_any_permission('inventory:read', 'inventory:issue')),
+    supabase: Client = Depends(get_supabase),
+):
     response = supabase.table("inventory_items").select("*").execute()
     return response.data
 
@@ -128,7 +133,11 @@ def _map_transaction_row(row: dict) -> dict:
 # ===================================================================
 
 @router.get("/transactions", response_model=List[InventoryTransaction])
-async def get_transactions(item_id: Optional[int] = None, supabase: Client = Depends(get_supabase)):
+async def get_transactions(
+    item_id: Optional[int] = None,
+    current_user: dict = Depends(require_permission('inventory:read')),
+    supabase: Client = Depends(get_supabase),
+):
     query = supabase.table("inventory_transactions").select("*, inventory_items(item_name), programs(program_name)")
     if item_id:
         query = query.eq("item_id", item_id)
