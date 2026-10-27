@@ -471,7 +471,9 @@ def test_unapproved_volunteer_token_is_inert(status):
 #   * changing status            -> rescue:manage
 #   * assigning to someone else  -> rescue:assign
 #   * Reported -> In Treatment with an assignee is the claim-and-start handoff
-#     itself, so rescue:assign alone authorizes it
+#     itself, so rescue:assign alone authorizes it — for someone else
+#   * naming yourself as assignee (claiming) -> rescue:manage, by any route:
+#     a claimant must be able to move the case on to Resolved
 # Reported is also the only stage a case can be unclaimed in — leaving it
 # requires an assignee (current or supplied), enforced independently of role.
 RESCUE_SCENARIOS = [
@@ -480,8 +482,15 @@ RESCUE_SCENARIOS = [
      {"Admin", "General Staff", "Operations Lead"}),
     ("no-op-status", "Reported", None, "Reported", None,
      {"Admin", "Director", "HR Officer", "General Staff", "Operations Lead"}),
+    # HR Officer and Director hold rescue:assign but not rescue:manage. They
+    # could claim through the handoff until it was closed: a claimant who
+    # cannot resolve owns a case nobody can finish.
     ("self-assign", "Reported", None, "In Treatment", USER_ID,
-     {"Admin", "Director", "HR Officer", "General Staff", "Operations Lead"}),
+     {"Admin", "General Staff", "Operations Lead"}),
+    # The same claim by the other route: taking over a case already in
+    # treatment. Status is unchanged, so only the claim rule stops it.
+    ("self-reassign", "In Treatment", OTHER_USER_ID, "In Treatment", USER_ID,
+     {"Admin", "General Staff", "Operations Lead"}),
     ("handoff-to-colleague", "Reported", None, "In Treatment", OTHER_USER_ID,
      {"Admin", "Director", "HR Officer"}),
     ("reassign-colleague", "In Treatment", USER_ID, "In Treatment", OTHER_USER_ID,

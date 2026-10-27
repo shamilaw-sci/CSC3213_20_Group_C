@@ -273,6 +273,13 @@ async def update_case_status(
         is_self_assign = str(payload.assigned_to) == str(current_user["id"])
         if not is_self_assign and not has_permission(role_name, "rescue:assign"):
             raise HTTPException(403, "Only Director/HR Officer/Admin can assign cases to other staff")
+        # Claiming a case yourself means working it, and moving it on to
+        # Resolved needs rescue:manage. Without this, a rescue:assign-only role
+        # (HR Officer, Director) could claim a case through the handoff above
+        # and then own one it can never close. Matches the board, which offers
+        # those roles neither "Assign to me" nor themselves in the dropdown.
+        if is_self_assign and not has_permission(role_name, "rescue:manage"):
+            raise HTTPException(403, "Claiming a case requires permission to work it (rescue:manage)")
 
     # Reported is the only stage a case can sit in unclaimed. Leaving it requires
     # an assignee — either one already on the case or one supplied here — so a
