@@ -1,4 +1,5 @@
 import logging
+from typing import Optional
 from fastapi import Security, HTTPException, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from app.core.supabase import get_supabase
@@ -7,9 +8,18 @@ from app.core.permissions import has_permission
 
 logger = logging.getLogger(__name__)
 
-security = HTTPBearer()
+# auto_error=False so a missing token is answered here with 401. HTTPBearer's
+# own error is 403 "Not authenticated", which says "you may not" when the
+# truth is "you have not said who you are".
+security = HTTPBearer(auto_error=False)
 
-async def get_current_user(credentials: HTTPAuthorizationCredentials = Security(security), supabase: Client = Depends(get_supabase)):
+async def get_current_user(credentials: Optional[HTTPAuthorizationCredentials] = Security(security), supabase: Client = Depends(get_supabase)):
+    if credentials is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     token = credentials.credentials
 
     try:

@@ -2,7 +2,6 @@ from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, EmailStr
 from app.core.supabase import get_supabase
 from supabase import Client
-from typing import Optional
 from app.infrastructure.repositories import SupabaseUserRepository
 from app.application.use_cases import RegisterUseCase, LoginUseCase
 from app.core.security import require_permission
@@ -10,10 +9,19 @@ from app.core.audit import log_audit_action
 
 router = APIRouter()
 
+# Every self-service signup gets this role. Role changes go through
+# PUT /users/{id}/role, which requires admin:users.
+SIGNUP_ROLE = "General Staff"
+
+
 class UserRegister(BaseModel):
+    # No role field. It used to accept role_id with a default of 2 (Director),
+    # so any anonymous caller could register as Admin by sending role_id=1 —
+    # and since the register pages sent `role` as a string, which the model
+    # silently dropped, every web signup became a Director. A role_id in the
+    # body is now ignored like any other unknown field.
     email: EmailStr
     password: str
-    role_id: Optional[int] = 2  # Default to 'Director' (id: 2)
 
 class UserLogin(BaseModel):
     email: EmailStr
@@ -22,9 +30,10 @@ class UserLogin(BaseModel):
 @router.post("/register")
 async def register(user_data: UserRegister, supabase: Client = Depends(get_supabase)):
     try:
+        role_id = _signup_role_id(supabase)
         repository = SupabaseUserRepository(supabase)
         use_case = RegisterUseCase(repository)
-        user = use_case.execute(user_data.email, user_data.password, user_data.role_id)
+        user = use_case.execute(user_data.email, user_data.password, role_id)
 
         # Registration is intentionally public, so the acting user is the
         # account being created rather than an administrator.
@@ -34,12 +43,30 @@ async def register(user_data: UserRegister, supabase: Client = Depends(get_supab
             action_type="USER_REGISTER",
             table_name="users",
             old_payload=None,
-            new_payload={"id": user.id, "email": user_data.email, "role_id": user_data.role_id},
+            new_payload={"id": user.id, "email": user_data.email, "role_id": role_id},
         )
 
         return {"message": "User registered successfully", "user_id": user.id}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+def _signup_role_id(supabase: Client) -> int:
+    """The id of SIGNUP_ROLE, looked up by name rather than hardcoded.
+
+    Role ids have already been gotten wrong once in this codebase (the seed
+    script's), and a wrong hardcoded id here would silently grant a different
+    role to every new account. If the role is missing, refuse the signup
+    rather than fall back to anything.
+    """
+    rows = (
+        supabase.table("roles").select("id").eq("role_name", SIGNUP_ROLE).execute().data or []
+    )
+    if len(rows) != 1:
+        raise HTTPException(status_code=500, detail="Signup role is not configured")
+    return rows[0]["id"]
 
 @router.post("/login")
 async def login(user_data: UserLogin, supabase: Client = Depends(get_supabase)):
@@ -95,7 +122,10 @@ async def update_user_role(
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.get("/users")
-async def get_users(supabase: Client = Depends(get_supabase)):
+async def get_users(
+    current_user: dict = Depends(require_permission('admin:users')),
+    supabase: Client = Depends(get_supabase),
+):
     try:
         response = supabase.table("users").select("*, roles(role_name)").execute()
         return response.data

@@ -9,11 +9,11 @@ import {
 } from '@dnd-kit/core';
 import { RescueCasesService } from '@/services/rescue-cases.service';
 import { useRescueBoardLive } from '@/hooks/useRescueBoardLive';
-import { UsersService, StaffUser } from '@/services/users.service';
 import { useAuthStore } from '@/store/useAuthStore';
 import { hasPermission } from '@/lib/permissions';
+import { cardControls } from '@/lib/case-card-controls';
 import { toast } from 'sonner';
-import { CaseOut } from '@/types';
+import { AssigneeOption, CaseOut } from '@/types';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -89,8 +89,10 @@ function relativeTime(iso: string): string {
   return new Date(iso).toLocaleDateString();
 }
 
-function initialsOf(email: string): string {
-  return email.slice(0, 2).toUpperCase();
+// "Nimal Perera" -> "NP"; an email (no profile name) -> its first two letters.
+function initialsOf(nameOrEmail: string): string {
+  const words = nameOrEmail.trim().split(/\s+/);
+  return (words.length > 1 ? words[0][0] + words[1][0] : nameOrEmail.slice(0, 2)).toUpperCase();
 }
 
 function UrgencyBadge({ urgency }: { urgency: CaseOut['urgency'] }) {
@@ -160,32 +162,35 @@ function CaseCard({ c, canManage, canAssign, staffList, onAssignToMe, onAssignTo
   c: CaseOut;
   canManage: boolean;
   canAssign: boolean;
-  staffList?: StaffUser[];
+  staffList?: AssigneeOption[];
   onAssignToMe: (id: string) => void;
   onAssignTo: (caseId: string, staffId: string) => void;
   onMove: (caseId: string, status: Status) => void;
 }) {
+  const controls = cardControls(c, canManage, canAssign, staffList);
+
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: c.id,
-    disabled: !canManage,
+    disabled: !controls.draggable,
   });
 
   const style = transform
     ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`, zIndex: 50 }
     : undefined;
 
-  const assignee = staffList?.find((s) => s.id === c.assigned_to);
+  const assignee = c.assignee;
+  const assigneeLabel = assignee ? assignee.display_name || assignee.email.split('@')[0] : 'Assigned';
   const stripe = URGENCY_STRIPE[c.urgency];
 
   return (
     <Card
       ref={setNodeRef}
       style={style}
-      {...(canManage ? listeners : {})}
-      {...(canManage ? attributes : {})}
+      {...(controls.draggable ? listeners : {})}
+      {...(controls.draggable ? attributes : {})}
       className={cn(
         'group/case relative overflow-hidden bg-surface border border-border-brand rounded-card shadow-card p-3.5 pl-4 mb-3 gap-2.5 transition-all duration-200',
-        canManage && 'cursor-grab active:cursor-grabbing hover:shadow-lg hover:-translate-y-0.5 hover:border-accent/50',
+        controls.draggable && 'cursor-grab active:cursor-grabbing hover:shadow-lg hover:-translate-y-0.5 hover:border-accent/50',
         isDragging && 'opacity-40'
       )}
     >
@@ -199,7 +204,7 @@ function CaseCard({ c, canManage, canAssign, staffList, onAssignToMe, onAssignTo
         />
       )}
 
-      {canManage && (
+      {controls.draggable && (
         <GripVertical
           className="absolute top-2.5 right-2 h-3.5 w-3.5 text-text-muted opacity-0 group-hover/case:opacity-100 transition-opacity"
           aria-hidden="true"
@@ -235,10 +240,10 @@ function CaseCard({ c, canManage, canAssign, staffList, onAssignToMe, onAssignTo
             title={assignee ? assignee.email : 'Assigned'}
           >
             <span className="h-5 w-5 rounded-full bg-accent/15 text-accent text-[9px] font-bold flex items-center justify-center shrink-0">
-              {assignee ? initialsOf(assignee.email) : <User className="h-3 w-3" />}
+              {assignee ? initialsOf(assignee.display_name || assignee.email) : <User className="h-3 w-3" />}
             </span>
             <span className="text-[10px] text-text-secondary truncate max-w-[90px]">
-              {assignee ? assignee.email.split('@')[0] : 'Assigned'}
+              {assigneeLabel}
             </span>
           </span>
         ) : (
@@ -248,7 +253,7 @@ function CaseCard({ c, canManage, canAssign, staffList, onAssignToMe, onAssignTo
         )}
       </div>
 
-      {canManage && !c.assigned_to && c.status !== 'Resolved' && (
+      {controls.showAssignToMe && (
         <Button
           variant="link"
           size="xs"
@@ -262,9 +267,9 @@ function CaseCard({ c, canManage, canAssign, staffList, onAssignToMe, onAssignTo
       {/* Dragging is the fast path, but it is unusable with a keyboard or a
           screen reader and awkward on a phone. These selects give every
           action a plain, reachable equivalent. */}
-      {canManage && (
+      {(controls.assignOptions || controls.showStatusSelect) && (
         <div onPointerDown={(e) => e.stopPropagation()} className="space-y-1.5">
-          {canAssign && c.status !== 'Resolved' && staffList && staffList.length > 0 && (
+          {controls.assignOptions && (
             <Select
               onValueChange={(val) => {
                 if (typeof val === 'string') onAssignTo(c.id, val);
@@ -274,15 +279,14 @@ function CaseCard({ c, canManage, canAssign, staffList, onAssignToMe, onAssignTo
                 <SelectValue placeholder={c.assigned_to ? 'Reassign staff' : 'Assign staff'} />
               </SelectTrigger>
               <SelectContent>
-                {staffList.map((s) => (
-                  <SelectItem key={s.id} value={s.id}>
-                    {s.email} {s.roles?.role_name ? `(${s.roles.role_name})` : ''}
-                  </SelectItem>
+                {controls.assignOptions.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
           )}
 
+          {controls.showStatusSelect && (
           <Select
             value={c.status}
             onValueChange={(val) => {
@@ -299,6 +303,7 @@ function CaseCard({ c, canManage, canAssign, staffList, onAssignToMe, onAssignTo
               ))}
             </SelectContent>
           </Select>
+          )}
         </div>
       )}
     </Card>
@@ -310,7 +315,7 @@ function Column({ status, cases, canManage, canAssign, staffList, onAssignToMe, 
   cases: CaseOut[];
   canManage: boolean;
   canAssign: boolean;
-  staffList?: StaffUser[];
+  staffList?: AssigneeOption[];
   onAssignToMe: (id: string) => void;
   onAssignTo: (caseId: string, staffId: string) => void;
   onMove: (caseId: string, status: Status) => void;
@@ -435,16 +440,16 @@ export default function CaseTriagePage() {
     refetchOnWindowFocus: 'always',
   });
 
+  // Only for the assign dropdown. Cards name their assignee from the case
+  // itself, so viewers without rescue:assign never fetch a staff list — the
+  // endpoint would refuse them anyway. Who is eligible is decided server-side.
   const { data: staffList } = useQuery({
-    queryKey: ['users', 'list'],
-    queryFn: () => UsersService.listUsers(),
-    // The roles that actually work cases in the field. This previously filtered
-    // on 'Staff', which no user holds, so the assignee picker silently listed
-    // Admins only and cases could not be handed to field staff at all.
-    select: (users) =>
-      users.filter((u) =>
-        ['General Staff', 'Operations Lead', 'Admin'].includes(u.roles?.role_name || '')
-      ),
+    // Outside the ['rescueCases'] prefix on purpose: useRescueBoardLive
+    // invalidates that whole prefix on every case ping, and the staff list
+    // does not change when a case does.
+    queryKey: ['assignees'],
+    queryFn: () => RescueCasesService.listAssignees(),
+    enabled: canAssign,
   });
 
   const statusMutation = useMutation({

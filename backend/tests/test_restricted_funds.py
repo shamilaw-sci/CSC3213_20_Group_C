@@ -466,7 +466,7 @@ def test_restricted_balance_endpoint_404s_for_unknown_program():
 
 def test_restricted_balance_endpoint_rejects_anonymous():
     response = client.request("GET", f"/api/finance/programs/{PROGRAM_ID}/restricted-balance")
-    assert response.status_code == 403
+    assert response.status_code == 401
 
 
 # --------------------------------------------------------------------------
