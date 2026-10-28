@@ -23,6 +23,11 @@ env = Environment(loader=FileSystemLoader(str(TEMPLATE_DIR)))
 # Currency formatting filter, usable in any template as {{ value | lkr }}
 env.filters["lkr"] = lambda v: f"Rs. {Decimal(v):,.2f}"
 
+# Bare figure, {{ value | amount }}, for tables whose currency is stated once
+# above them. A "Rs. " on every cell wraps six-figure amounts onto two lines
+# once a table has more than four money columns on A4.
+env.filters["amount"] = lambda v: f"{Decimal(v):,.2f}"
+
 
 class PDFGenerationError(Exception):
     """Raised when xhtml2pdf fails to render the PDF."""

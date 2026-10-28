@@ -55,14 +55,6 @@ export interface RestrictedBalance {
   remaining: number;
 }
 
-export interface MonthlySummary {
-  month: number;
-  year: number;
-  income: number;
-  expense: number;
-  balance: number;
-}
-
 export interface Program {
   id: number;
   program_name: string;
@@ -243,4 +235,60 @@ export interface ProgramFinancials {
   revenue: number;
   total_cost: number;
   profit: number;
+}
+
+// --- Finance report (GET /reports/finance) ---
+// Mirrors build_finance_report in backend/app/services/finance_reports.py.
+
+export interface PeriodTotals {
+  income: number;
+  income_received: number;
+  income_pending: number;
+  expense: number;
+  expense_paid: number;
+  expense_unpaid: number;
+  net: number;
+}
+
+export interface OutstandingItem {
+  id: number;
+  transaction_date: string;
+  program_name: string;
+  amount: number;
+  days: number;
+}
+
+export interface OutstandingSide {
+  total: number;
+  count: number;
+  buckets: Record<'0-30' | '31-60' | '61-90' | '90+', number>;
+  items: OutstandingItem[];
+}
+
+export interface FinanceReport {
+  period: { start: string; end: string; previous_start: string; previous_end: string };
+  summary: {
+    current: PeriodTotals;
+    previous: PeriodTotals;
+    // null when the previous period had nothing to compare against.
+    change: { income_pct: number | null; expense_pct: number | null; net_difference: number };
+  };
+  monthly: { month: string; income: number; expense: number; net: number }[];
+  programs: {
+    rows: { program_id: number | null; program_name: string; income: number; expense: number; net: number }[];
+    totals: { income: number; expense: number; net: number };
+  };
+  restricted: {
+    rows: {
+      program_id: number;
+      program_name: string;
+      opening: number;
+      received: number;
+      spent: number;
+      closing: number;
+      pledged: number;
+    }[];
+    totals: { opening: number; received: number; spent: number; closing: number; pledged: number };
+  };
+  outstanding: { as_of: string; receivables: OutstandingSide; payables: OutstandingSide };
 }
