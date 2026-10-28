@@ -26,8 +26,10 @@
 
 {% set s = report.summary %}
 <p><strong>Period:</strong> {{ period }}
+   {%- if report.outstanding.as_of < report.period.end %} (in progress: figures to {{ report.outstanding.as_of }}){% endif %}
    &nbsp;&middot;&nbsp; <strong>Compared with:</strong>
    {{ report.period.previous_start }} to {{ report.period.previous_end }}</p>
+<p class="note">All amounts in Sri Lankan Rupees (LKR).</p>
 
 <h2>Income &amp; Expenditure</h2>
 <p class="note">Pending income and unpaid expenses are included in the totals and shown separately below them.</p>
@@ -40,45 +42,45 @@
     </tr>
     <tr>
         <td>Income</td>
-        <td class="num">{{ s.current.income | lkr }}</td>
-        <td class="num">{{ s.previous.income | lkr }}</td>
+        <td class="num">{{ s.current.income | amount }}</td>
+        <td class="num">{{ s.previous.income | amount }}</td>
         <td class="num">{{ change(s.change.income_pct) }}</td>
     </tr>
     <tr>
         <td>&nbsp;&nbsp;Received</td>
-        <td class="num">{{ s.current.income_received | lkr }}</td>
-        <td class="num">{{ s.previous.income_received | lkr }}</td>
+        <td class="num">{{ s.current.income_received | amount }}</td>
+        <td class="num">{{ s.previous.income_received | amount }}</td>
         <td>&nbsp;</td>
     </tr>
     <tr>
         <td>&nbsp;&nbsp;Pending</td>
-        <td class="num">{{ s.current.income_pending | lkr }}</td>
-        <td class="num">{{ s.previous.income_pending | lkr }}</td>
+        <td class="num">{{ s.current.income_pending | amount }}</td>
+        <td class="num">{{ s.previous.income_pending | amount }}</td>
         <td>&nbsp;</td>
     </tr>
     <tr>
         <td>Expenditure</td>
-        <td class="num">{{ s.current.expense | lkr }}</td>
-        <td class="num">{{ s.previous.expense | lkr }}</td>
+        <td class="num">{{ s.current.expense | amount }}</td>
+        <td class="num">{{ s.previous.expense | amount }}</td>
         <td class="num">{{ change(s.change.expense_pct) }}</td>
     </tr>
     <tr>
         <td>&nbsp;&nbsp;Paid</td>
-        <td class="num">{{ s.current.expense_paid | lkr }}</td>
-        <td class="num">{{ s.previous.expense_paid | lkr }}</td>
+        <td class="num">{{ s.current.expense_paid | amount }}</td>
+        <td class="num">{{ s.previous.expense_paid | amount }}</td>
         <td>&nbsp;</td>
     </tr>
     <tr>
         <td>&nbsp;&nbsp;Unpaid</td>
-        <td class="num">{{ s.current.expense_unpaid | lkr }}</td>
-        <td class="num">{{ s.previous.expense_unpaid | lkr }}</td>
+        <td class="num">{{ s.current.expense_unpaid | amount }}</td>
+        <td class="num">{{ s.previous.expense_unpaid | amount }}</td>
         <td>&nbsp;</td>
     </tr>
     <tr class="total">
         <td>{{ "Surplus" if s.current.net >= 0 else "Deficit" }}</td>
-        <td class="num {{ 'neg' if s.current.net < 0 }}">{{ s.current.net | lkr }}</td>
-        <td class="num {{ 'neg' if s.previous.net < 0 }}">{{ s.previous.net | lkr }}</td>
-        <td class="num">{{ s.change.net_difference | lkr }}</td>
+        <td class="num {{ 'neg' if s.current.net < 0 }}">{{ s.current.net | amount }}</td>
+        <td class="num {{ 'neg' if s.previous.net < 0 }}">{{ s.previous.net | amount }}</td>
+        <td class="num">{{ s.change.net_difference | amount }}</td>
     </tr>
 </table>
 
@@ -93,9 +95,9 @@
     {% for m in report.monthly %}
     <tr>
         <td>{{ m.month }}</td>
-        <td class="num">{{ m.income | lkr }}</td>
-        <td class="num">{{ m.expense | lkr }}</td>
-        <td class="num {{ 'neg' if m.net < 0 }}">{{ m.net | lkr }}</td>
+        <td class="num">{{ m.income | amount }}</td>
+        <td class="num">{{ m.expense | amount }}</td>
+        <td class="num {{ 'neg' if m.net < 0 }}">{{ m.net | amount }}</td>
     </tr>
     {% endfor %}
 </table>
@@ -112,16 +114,16 @@
     {% for p in report.programs.rows %}
     <tr>
         <td>{{ p.program_name }}</td>
-        <td class="num">{{ p.income | lkr }}</td>
-        <td class="num">{{ p.expense | lkr }}</td>
-        <td class="num {{ 'neg' if p.net < 0 }}">{{ p.net | lkr }}</td>
+        <td class="num">{{ p.income | amount }}</td>
+        <td class="num">{{ p.expense | amount }}</td>
+        <td class="num {{ 'neg' if p.net < 0 }}">{{ p.net | amount }}</td>
     </tr>
     {% endfor %}
     <tr class="total">
         <td>Total</td>
-        <td class="num">{{ report.programs.totals.income | lkr }}</td>
-        <td class="num">{{ report.programs.totals.expense | lkr }}</td>
-        <td class="num {{ 'neg' if report.programs.totals.net < 0 }}">{{ report.programs.totals.net | lkr }}</td>
+        <td class="num">{{ report.programs.totals.income | amount }}</td>
+        <td class="num">{{ report.programs.totals.expense | amount }}</td>
+        <td class="num {{ 'neg' if report.programs.totals.net < 0 }}">{{ report.programs.totals.net | amount }}</td>
     </tr>
 </table>
 {% else %}
@@ -143,21 +145,21 @@
     {% for r in report.restricted.rows %}
     <tr>
         <td>{{ r.program_name }}</td>
-        <td class="num {{ 'neg' if r.opening < 0 }}">{{ r.opening | lkr }}</td>
-        <td class="num">{{ r.received | lkr }}</td>
-        <td class="num">{{ r.spent | lkr }}</td>
-        <td class="num {{ 'neg' if r.closing < 0 }}">{{ r.closing | lkr }}</td>
-        <td class="num">{{ r.pledged | lkr }}</td>
+        <td class="num {{ 'neg' if r.opening < 0 }}">{{ r.opening | amount }}</td>
+        <td class="num">{{ r.received | amount }}</td>
+        <td class="num">{{ r.spent | amount }}</td>
+        <td class="num {{ 'neg' if r.closing < 0 }}">{{ r.closing | amount }}</td>
+        <td class="num">{{ r.pledged | amount }}</td>
     </tr>
     {% endfor %}
     {% set rt = report.restricted.totals %}
     <tr class="total">
         <td>Total</td>
-        <td class="num {{ 'neg' if rt.opening < 0 }}">{{ rt.opening | lkr }}</td>
-        <td class="num">{{ rt.received | lkr }}</td>
-        <td class="num">{{ rt.spent | lkr }}</td>
-        <td class="num {{ 'neg' if rt.closing < 0 }}">{{ rt.closing | lkr }}</td>
-        <td class="num">{{ rt.pledged | lkr }}</td>
+        <td class="num {{ 'neg' if rt.opening < 0 }}">{{ rt.opening | amount }}</td>
+        <td class="num">{{ rt.received | amount }}</td>
+        <td class="num">{{ rt.spent | amount }}</td>
+        <td class="num {{ 'neg' if rt.closing < 0 }}">{{ rt.closing | amount }}</td>
+        <td class="num">{{ rt.pledged | amount }}</td>
     </tr>
 </table>
 {% else %}
@@ -178,11 +180,11 @@
     {% for label, side in [("Receivables", report.outstanding.receivables), ("Payables", report.outstanding.payables)] %}
     <tr>
         <td>{{ label }} ({{ side.count }})</td>
-        <td class="num">{{ side.buckets["0-30"] | lkr }}</td>
-        <td class="num">{{ side.buckets["31-60"] | lkr }}</td>
-        <td class="num">{{ side.buckets["61-90"] | lkr }}</td>
-        <td class="num">{{ side.buckets["90+"] | lkr }}</td>
-        <td class="num"><strong>{{ side.total | lkr }}</strong></td>
+        <td class="num">{{ side.buckets["0-30"] | amount }}</td>
+        <td class="num">{{ side.buckets["31-60"] | amount }}</td>
+        <td class="num">{{ side.buckets["61-90"] | amount }}</td>
+        <td class="num">{{ side.buckets["90+"] | amount }}</td>
+        <td class="num"><strong>{{ side.total | amount }}</strong></td>
     </tr>
     {% endfor %}
 </table>
@@ -203,7 +205,7 @@
         <td>{{ t.transaction_type }}{{ " (restricted)" if t.is_restricted }}</td>
         <td>{{ t.program_name }}</td>
         <td>{{ t.status }}</td>
-        <td class="num">{{ t.amount | lkr }}</td>
+        <td class="num">{{ t.amount | amount }}</td>
     </tr>
     {% endfor %}
 </table>
