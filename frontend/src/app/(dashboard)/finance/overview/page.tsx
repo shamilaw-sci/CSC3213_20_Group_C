@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useMemo } from 'react';
+import Link from 'next/link';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { FinanceService } from '@/services/finance.service';
 import { Transaction } from '@/types';
@@ -22,7 +23,8 @@ import {
   Pencil,
   Ban,
   MoreHorizontal,
-  Layers
+  Layers,
+  ArrowRight
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { format } from 'date-fns';
@@ -50,8 +52,8 @@ import {
   Cell
 } from 'recharts';
 import { KPICard } from '@/components/shared/kpi-card';
-import { ReportsService } from '@/services/reports.service';
-import { toast } from 'sonner';
+import { useAuthStore } from '@/store/useAuthStore';
+import { hasPermission } from '@/lib/permissions';
 
 const formatLKR = (amount: number) => {
   return new Intl.NumberFormat('en-LK', {
@@ -61,8 +63,16 @@ const formatLKR = (amount: number) => {
   }).format(amount);
 };
 
+// The Overview is the dashboard; the Ledger is the full record. This table
+// only shows the latest entries and links there for the rest.
+const RECENT_LIMIT = 10;
+
 export default function FinancePage() {
   const queryClient = useQueryClient();
+  const { user } = useAuthStore();
+  // The Ledger's nav entry is gated on finance:write, so only link to it
+  // for roles that can actually open it.
+  const canOpenLedger = hasPermission(user?.role as string, 'finance:write');
   const [showNewModal, setShowNewModal] = useState(false);
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
   const [voidingTransaction, setVoidingTransaction] = useState<Transaction | null>(null);
@@ -221,8 +231,10 @@ export default function FinancePage() {
 
   const filteredTransactions = useMemo(() => {
     if (!transactions) return [];
-    if (statusFilter === 'All') return transactions;
-    return transactions.filter((tx) => tx.transaction_type === statusFilter);
+    const matching = statusFilter === 'All'
+      ? transactions
+      : transactions.filter((tx) => tx.transaction_type === statusFilter);
+    return matching.slice(0, RECENT_LIMIT);
   }, [transactions, statusFilter]);
 
   const COLORS = ['#EF9F27', '#16A34A', '#2563EB', '#D97706', '#DC2626'];
@@ -532,9 +544,19 @@ export default function FinancePage() {
               Recent Transactions
             </CardTitle>
             <CardDescription className="text-text-secondary text-xs mt-0.5">
-              Comprehensive log of all financial movements.
+              The latest {RECENT_LIMIT} entries.
+              {canOpenLedger && ' The full record, with filters and a running balance, is in the Ledger.'}
             </CardDescription>
           </div>
+          <div className="flex items-center gap-3">
+          {canOpenLedger && (
+            <Link
+              href="/finance/ledger"
+              className="flex items-center gap-1 text-xs font-semibold text-accent hover:underline"
+            >
+              View all in Ledger <ArrowRight className="h-3.5 w-3.5" />
+            </Link>
+          )}
           <div className="flex bg-bg-subtle p-1 rounded-lg border border-border-brand">
             {(['All', 'Income', 'Expense'] as const).map((opt) => (
               <button
@@ -549,6 +571,7 @@ export default function FinancePage() {
                 {opt}
               </button>
             ))}
+          </div>
           </div>
         </CardHeader>
         <CardContent className="p-0 pt-4">

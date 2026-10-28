@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Query
 from typing import List, Optional
 from datetime import date
 from calendar import monthrange
@@ -9,6 +9,8 @@ from app.core.supabase import get_supabase
 from app.core.security import require_permission
 from app.core.permissions import has_permission
 from app.core.audit import log_audit_action
+from app.services.finance_reports import fetch_ledger
+from app.services.ledger import build_ledger_page
 from app.services.restricted_funds import (
     _to_decimal,
     compute_restricted_balance,
@@ -45,6 +47,51 @@ async def get_transactions(
 
     response = query.order("transaction_date", desc=True).execute()
     return response.data or []
+
+
+@router.get("/ledger")
+async def get_ledger(
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    transaction_type: Optional[str] = Query(None, pattern="^(Income|Expense)$"),
+    status: Optional[str] = Query(None, pattern="^(Cash|Receivable|Voided)$"),
+    # A program id, or "general" for rows charged to no program.
+    program: Optional[str] = Query(None, pattern=r"^(general|\d+)$"),
+    restricted: Optional[bool] = None,
+    q: Optional[str] = Query(None, max_length=100),
+    sort: str = Query("newest", pattern="^(newest|oldest)$"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    # For CSV export: every matching row, no paging.
+    all: bool = False,
+    user = Depends(require_permission('finance:read')),
+    supabase: Client = Depends(get_supabase)
+):
+    """
+    The ledger page: filtered, paged, totalled, with a running balance.
+
+    Every row is fetched, not just the filtered ones, because each row's
+    balance depends on everything dated before it. Filtering happens after.
+    """
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(status_code=400, detail="start_date must be on or before end_date.")
+
+    # Rows after end_date cannot change the balance of rows on or before it.
+    rows = fetch_ledger(supabase, end_date or date.max)
+    return build_ledger_page(
+        rows,
+        start=start_date,
+        end=end_date,
+        tx_type=transaction_type,
+        status=status,
+        program=program,
+        restricted=restricted,
+        q=q,
+        newest_first=sort == "newest",
+        page=page,
+        page_size=page_size,
+        everything=all,
+    )
 
 
 async def _enforce_restricted_drawdown(
