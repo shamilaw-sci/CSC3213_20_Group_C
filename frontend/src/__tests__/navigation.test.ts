@@ -11,7 +11,7 @@ const PERSONAL = ['Go to Website Home', 'Edit Profile', 'Account Settings', 'Sup
 const expectedItemsPerRole: Record<UserRole, string[]> = {
   'Admin': [
     'Overview', 'Employees', 'Attendance', 'Payroll', 'Overview', 'Ledger',
-    'Receivables', 'Payables', 'Reports', 'Stock', 'Issue', 'Returns',
+    'Reports', 'Stock', 'Issue', 'Returns',
     'Active Programs', 'Case Hotspots', 'Case Triage', 'Field Dispatch', 'My Attendance', 'System Admin',
     ...PERSONAL
   ],
@@ -19,7 +19,7 @@ const expectedItemsPerRole: Record<UserRole, string[]> = {
   // editing and voiding inside it need finance:write, which oversight lacks.
   // No My Attendance: Director has no hr:attendance:self.
   'Director': [
-    'Overview', 'Overview', 'Ledger', 'Receivables', 'Payables', 'Reports', 'Stock',
+    'Overview', 'Overview', 'Ledger', 'Reports', 'Stock',
     'Active Programs', 'Case Hotspots', 'Case Triage', 'Field Dispatch', ...PERSONAL
   ],
   'HR Officer': [
@@ -29,7 +29,7 @@ const expectedItemsPerRole: Record<UserRole, string[]> = {
   // Active Programs is expected: programs:read was granted so the program
   // picker on the transaction form renders names rather than numeric ids.
   'Finance Officer': [
-    'Overview', 'Payroll', 'Overview', 'Ledger', 'Receivables', 'Payables', 'Reports',
+    'Overview', 'Payroll', 'Overview', 'Ledger', 'Reports',
     'Stock', 'Active Programs', ...PERSONAL
   ],
   // Clinic and field operations: inventory, programs and rescue, no HR/finance.
