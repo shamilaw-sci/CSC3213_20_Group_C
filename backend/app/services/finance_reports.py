@@ -359,3 +359,45 @@ def build_finance_report(rows: list[dict], start: date, end: date, today: date) 
         "restricted": _restricted(rows, start, end),
         "outstanding": _outstanding(rows, end, today),
     }
+
+
+def finance_snapshot(rows: list[dict], today: date) -> dict:
+    """
+    The three headline figures on the finance Overview and dashboards.
+
+    Replaces the get_finance_summary RPC, whose SQL is not in this repo and
+    which counted voided expenses, and every month's, as "monthly
+    expenses": on real data it reported 883,257 when this month's spend
+    was 50,000.
+
+    cash_available    received income minus paid expenses, all time
+    receivables       income still to be received, all time
+    monthly_expenses  expenses dated this calendar month, paid or not,
+                      the same figure as this month in the Reports trend
+    Voided rows count toward none of them.
+    """
+    cash = receivables = month_expenses = ZERO
+    this_month = f"{today.year:04d}-{today.month:02d}"
+
+    for row in rows:
+        if row.get("status") == "Voided":
+            continue
+        amount = _to_decimal(row.get("amount"))
+        kind = _type(row)
+        settled = row.get("status") == "Cash"
+
+        if settled and kind == "income":
+            cash += amount
+        elif settled and kind == "expense":
+            cash -= amount
+        elif kind == "income":
+            receivables += amount
+
+        if kind == "expense" and str(row["transaction_date"])[:7] == this_month:
+            month_expenses += amount
+
+    return {
+        "cash_available": _money(cash),
+        "receivables": _money(receivables),
+        "monthly_expenses": _money(month_expenses),
+    }

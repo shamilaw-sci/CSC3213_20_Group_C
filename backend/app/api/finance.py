@@ -9,7 +9,7 @@ from app.core.supabase import get_supabase
 from app.core.security import require_permission
 from app.core.permissions import has_permission
 from app.core.audit import log_audit_action
-from app.services.finance_reports import fetch_ledger
+from app.services.finance_reports import fetch_ledger, finance_snapshot
 from app.services.ledger import build_ledger_page
 from app.services.restricted_funds import (
     _to_decimal,
@@ -497,10 +497,9 @@ async def get_financial_summary(
     user = Depends(require_permission('finance:read')),
     supabase: Client = Depends(get_supabase)
 ):
-    response = supabase.rpc("get_finance_summary", {}).execute()
-
-    # RPC already returns {"cash_available": ..., "receivables": ..., "monthly_expenses": ...}
-    return response.data
+    # Was the get_finance_summary RPC; see finance_snapshot for why. Same
+    # response shape, so the Overview and dashboards are unchanged.
+    return finance_snapshot(fetch_ledger(supabase, date.max), date.today())
 
 @router.get("/aging")
 async def get_aging_summary(
