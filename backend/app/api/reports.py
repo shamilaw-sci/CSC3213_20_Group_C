@@ -5,7 +5,7 @@ from supabase import Client
 
 # Internal App Imports
 from app.core.supabase import get_supabase
-from app.core.security import check_user_role
+from app.core.security import require_permission
 from app.services.reports import generate_pdf, PDFGenerationError
 
 router = APIRouter()
@@ -19,7 +19,7 @@ router = APIRouter()
 async def finance_summary_report(
     start_date: date,
     end_date: date,
-    user = Depends(check_user_role(["admin", "director", "finance"])),
+    user = Depends(require_permission('finance:read')),
     supabase: Client = Depends(get_supabase)
 ):
     # Same source as get_transactions/monthly_summary — a date-ranged
@@ -67,7 +67,8 @@ async def finance_summary_report(
 
 
 # Add HR / Admin report endpoints below, following the same shape:
-#   1. Depends(check_user_role([...])) for the right roles
+#   1. Depends(require_permission(...)), not check_user_role: role-name
+#      lists drift from the real role table (see test_rbac_matrix)
 #   2. fetch data via supabase (reuse existing RPCs/tables where possible)
 #   3. generate_pdf("your_template.html", {...})
 #   4. return as Response with Content-Disposition
