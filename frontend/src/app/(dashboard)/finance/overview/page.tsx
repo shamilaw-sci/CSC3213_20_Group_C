@@ -27,7 +27,6 @@ import {
 import { Button } from '@/components/ui/button';
 import { format } from 'date-fns';
 import { NewTransactionModal } from '@/components/finance/NewTransactionModal';
-import { FinanceReportButton } from '@/components/finance/FinanceReportButton';
 import { EditTransactionModal } from '@/components/finance/EditTransactionModal';
 import {
   Dialog,
@@ -241,7 +240,6 @@ export default function FinancePage() {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <FinanceReportButton />
         <Button 
           onClick={() => setShowNewModal(true)} 
           className="bg-[#EF9F27] hover:bg-[#D97706] text-white font-semibold flex items-center gap-2 rounded-lg py-2 px-4 shadow-sm transition-all"
