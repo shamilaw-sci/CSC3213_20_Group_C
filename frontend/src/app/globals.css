@@ -55,7 +55,13 @@
   --color-text-muted: #9CA3AF;
   --color-positive: #16A34A;
   --color-negative: #DC2626;
-  
+  /* Chart series: categorical slots 1-2, checked for colour-blind
+     separation against this surface. Income and expense are two series,
+     not good/bad states, so they don't reuse positive/negative, whose
+     red/green pair fails for deuteranopia. */
+  --color-series-1: #2a78d6;
+  --color-series-2: #eb6834;
+
   --radius-card: 12px;
   --shadow-card: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
 
@@ -97,7 +103,10 @@
   --color-text-muted: #6B7280;
   --color-positive: #16A34A;
   --color-negative: #DC2626;
-  
+  /* The dark-surface steps of the same two slots, checked against #14161C. */
+  --color-series-1: #3987e5;
+  --color-series-2: #d95926;
+
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);
   --card: oklch(0.205 0 0);

@@ -227,6 +227,7 @@ PERMISSION_ROUTES = [
     # role names: "finance officer" != "finance", so the Finance Officer was
     # refused their own report.
     ("GET", "/api/reports/finance/summary?start_date=2026-01-01&end_date=2026-01-31", "finance:read"),
+    ("GET", "/api/reports/finance?start_date=2026-01-01&end_date=2026-01-31", "finance:read"),
     ("GET", "/api/admin/audit-logs", "audit:read"),
     ("GET", "/api/admin/audit-logs/verify", "audit:read"),
     ("GET", "/api/admin/stats", "admin:users"),

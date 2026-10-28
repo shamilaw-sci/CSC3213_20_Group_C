@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { FinanceService } from '@/services/finance.service';
+import { ReportsService } from '@/services/reports.service';
 
 export function useTransactions(start_date?: string, end_date?: string) {
   return useQuery({
@@ -22,10 +23,14 @@ export function useFinanceAging() {
   });
 }
 
-export function useMonthlySummary(year: number, month: number) {
+export function useFinanceReport(start: string, end: string) {
   return useQuery({
-    queryKey: ['finance-monthly-summary', { year, month }],
-    queryFn: () => FinanceService.getMonthlySummary(year, month)
+    queryKey: ['finance-report', { start, end }],
+    queryFn: () => ReportsService.getFinanceReport(start, end),
+    enabled: !!start && !!end && start <= end,
+    // Changing the period swaps the data in place rather than flashing the
+    // page back to skeletons.
+    placeholderData: (previous) => previous,
   });
 }
 

@@ -7,13 +7,47 @@ from supabase import Client
 from app.core.supabase import get_supabase
 from app.core.security import require_permission
 from app.services.reports import generate_pdf, PDFGenerationError
+from app.services.finance_reports import (
+    build_finance_report,
+    fetch_ledger,
+    program_label,
+    rows_in_period,
+)
 
 router = APIRouter()
+
+# A decade of monthly buckets is already 120 rows; past that the request is a
+# typo, not a report.
+MAX_REPORT_DAYS = 3660
+
+
+def _validate_period(start_date: date, end_date: date) -> None:
+    if start_date > end_date:
+        raise HTTPException(status_code=400, detail="start_date must be on or before end_date.")
+    if (end_date - start_date).days > MAX_REPORT_DAYS:
+        raise HTTPException(status_code=400, detail="A report can cover at most 10 years.")
 
 
 # ==========================================
 # FINANCE REPORTS
 # ==========================================
+
+@router.get("/finance")
+async def finance_report(
+    start_date: date,
+    end_date: date,
+    user = Depends(require_permission('finance:read')),
+    supabase: Client = Depends(get_supabase)
+):
+    """
+    Income & expenditure, monthly trend, program breakdown, restricted funds
+    and outstanding items for one period. The PDF below renders this same
+    dict, and the page's CSV exports are written from it.
+    """
+    _validate_period(start_date, end_date)
+    rows = fetch_ledger(supabase, end_date)
+    return build_finance_report(rows, start_date, end_date, date.today())
+
 
 @router.get("/finance/summary")
 async def finance_summary_report(
@@ -22,43 +56,35 @@ async def finance_summary_report(
     user = Depends(require_permission('finance:read')),
     supabase: Client = Depends(get_supabase)
 ):
-    # Same source as get_transactions/monthly_summary — a date-ranged
-    # query against financial_transactions, since get_finance_summary()
-    # is an all-time snapshot and doesn't accept a date range.
-    response = supabase.table("financial_transactions") \
-        .select("*") \
-        .gte("transaction_date", str(start_date)) \
-        .lte("transaction_date", str(end_date)) \
-        .order("transaction_date", desc=True) \
-        .execute()
+    _validate_period(start_date, end_date)
+    rows = fetch_ledger(supabase, end_date)
+    report = build_finance_report(rows, start_date, end_date, date.today())
 
-    transactions = response.data or []
-
-    total_income = sum(
-        t["amount"] for t in transactions
-        if t["transaction_type"].lower() == "income" and t["status"] != "Voided"
+    # The PDF also lists the period's transactions, which the page leaves to
+    # the ledger. Newest first, voided rows kept and marked as such: an
+    # auditor needs to see the reversal, not a gap.
+    transactions = sorted(
+        rows_in_period(rows, start_date, end_date),
+        key=lambda r: (str(r["transaction_date"]), r.get("id") or 0),
+        reverse=True,
     )
-    total_expense = sum(
-        t["amount"] for t in transactions
-        if t["transaction_type"].lower() == "expense" and t["status"] != "Voided"
-    )
+    for t in transactions:
+        t["program_name"] = program_label(t)
 
     try:
         pdf_bytes = generate_pdf(
             "finance_summary.html",
             {
-                "report_title": "Finance Summary Report",
+                "report_title": "Finance Report",
                 "period": f"{start_date} to {end_date}",
+                "report": report,
                 "transactions": transactions,
-                "total_income": total_income,
-                "total_expense": total_expense,
-                "net_balance": total_income - total_expense,
             },
         )
     except PDFGenerationError as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-    filename = f"finance_summary_{start_date}_{end_date}.pdf"
+    filename = f"finance_report_{start_date}_{end_date}.pdf"
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
