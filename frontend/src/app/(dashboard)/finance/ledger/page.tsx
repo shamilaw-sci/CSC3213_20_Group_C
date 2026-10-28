@@ -17,6 +17,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
+import ProtectedRoute from '@/components/layout/protected-route';
 import { NewTransactionModal } from '@/components/finance/NewTransactionModal';
 import { EditTransactionModal } from '@/components/finance/EditTransactionModal';
 import { formatLKR } from '@/lib/formatters';
@@ -50,7 +51,17 @@ function StatusBadge({ row }: { row: LedgerRow }) {
   );
 }
 
+// The nav hides the Ledger from roles without finance:read, but a URL typed
+// by hand bypasses the nav, so the page checks for itself, as Reports does.
 export default function LedgerPage() {
+  return (
+    <ProtectedRoute requiredPermission="finance:read">
+      <Ledger />
+    </ProtectedRoute>
+  );
+}
+
+function Ledger() {
   const { user } = useAuthStore();
   const canWrite = hasPermission(user?.role as string, 'finance:write');
   const queryClient = useQueryClient();

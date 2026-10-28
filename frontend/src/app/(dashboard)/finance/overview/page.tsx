@@ -70,9 +70,8 @@ const RECENT_LIMIT = 10;
 export default function FinancePage() {
   const queryClient = useQueryClient();
   const { user } = useAuthStore();
-  // The Ledger's nav entry is gated on finance:write, so only link to it
-  // for roles that can actually open it.
-  const canOpenLedger = hasPermission(user?.role as string, 'finance:write');
+  // Same permission as the Ledger's nav entry and page guard.
+  const canOpenLedger = hasPermission(user?.role as string, 'finance:read');
   const [showNewModal, setShowNewModal] = useState(false);
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
   const [voidingTransaction, setVoidingTransaction] = useState<Transaction | null>(null);
