@@ -37,8 +37,16 @@ export const FinanceService = {
     return response.data;
   },
 
-  updateTransaction: async (id: number, transaction: Omit<Transaction, 'id' | 'programs'>) => {
-  const response = await api.put<Transaction>(`/finance/transactions/${id}`, transaction);
+  // Edits are checked against restricted funds the same way creates are, so
+  // the same override applies — see createTransaction.
+  updateTransaction: async (
+    id: number,
+    transaction: Omit<Transaction, 'id' | 'programs'>,
+    overrideRestricted = false,
+  ) => {
+  const response = await api.put<Transaction>(`/finance/transactions/${id}`, transaction, {
+    params: overrideRestricted ? { override_restricted: true } : undefined,
+  });
   return response.data;
 },
 

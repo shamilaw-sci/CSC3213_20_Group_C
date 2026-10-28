@@ -10,8 +10,10 @@ from app.core.security import require_permission
 from app.core.permissions import has_permission
 from app.core.audit import log_audit_action
 from app.services.restricted_funds import (
+    _to_decimal,
     compute_restricted_balance,
     is_program_restricted,
+    restricted_effect,
 )
 from app.schemas.finance import (
     FinancialTransaction,
@@ -45,6 +47,161 @@ async def get_transactions(
     return response.data or []
 
 
+async def _enforce_restricted_drawdown(
+    supabase: Client,
+    user: dict,
+    old_row: Optional[dict],
+    new_row: dict,
+    override_restricted: bool,
+    transaction_id: Optional[int] = None,
+) -> None:
+    """
+    Refuse a ledger change that would overspend a program's earmarked funds.
+
+    The change is modelled as "take old_row out, put new_row in" — old_row is
+    None on a create. Every program either row touches is checked, because an
+    edit that moves an expense between programs, or lowers / un-restricts /
+    un-settles a restricted donation, draws down earmarked money just as surely
+    as a new expense does. Checking only creates let an officer post a small
+    expense and then edit it upward past the limit.
+
+    A change that leaves a program's remaining balance where it was or higher
+    is never blocked, even if the program is already overdrawn: correcting an
+    overspend must not need an override.
+
+    Raises HTTPException (409 / 403 / 503) when the change is refused; returns
+    normally when it may proceed, having written the override audit row first
+    if one was required.
+    """
+    program_ids = sorted({
+        r["program_id"] for r in (old_row, new_row)
+        if r and r.get("program_id") is not None
+    })
+
+    for program_id in program_ids:
+        delta = restricted_effect(new_row, program_id) - restricted_effect(old_row, program_id)
+        if delta >= 0:
+            continue
+
+        # Only programs that actually hold earmarked money are gated — see
+        # is_program_restricted for why an unrestricted program must not be
+        # blocked on a balance of zero.
+        if not is_program_restricted(supabase, program_id):
+            continue
+
+        balance = compute_restricted_balance(supabase, program_id)
+        remaining = balance["remaining"]
+        # `remaining` already includes old_row, so applying the delta gives
+        # the balance as it would stand after this change.
+        after = remaining + delta
+        if after >= 0:
+            continue
+
+        shortfall = -after
+        attempted_amount = _to_decimal(new_row.get("amount"))
+        may_override = has_permission(
+            (user.get("roles") or {}).get("role_name") or "",
+            'finance:restricted:override',
+        )
+
+        if not override_restricted:
+            # Blocked rather than silently allowed. The message names the
+            # exact shortfall so the officer can either reduce the expense
+            # or seek authorization, and states whether this user is able
+            # to authorize it themselves.
+            remedy = (
+                "Resubmit with override_restricted=true to authorize this overspend."
+                if may_override
+                else "Authorization from a user holding finance:restricted:override is required."
+            )
+            change = (
+                f"Expense of {attempted_amount}"
+                if old_row is None
+                else f"This edit to transaction {transaction_id}"
+            )
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"{change} exceeds the restricted funds "
+                    f"remaining for program {program_id} by {shortfall}. "
+                    f"Raised: {balance['raised']}, already spent: {balance['spent']}, "
+                    f"remaining: {remaining}. {remedy}"
+                ),
+            )
+
+        if not may_override:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "Insufficient permissions. Overspending restricted program "
+                    "funds requires finance:restricted:override."
+                ),
+            )
+
+        # The audit row is written BEFORE the ledger change, and a failure to
+        # write it aborts the request.
+        #
+        # log_audit_action is fail-soft everywhere else, which is right when
+        # it records something that already happened. Here it IS the
+        # control: an override is authorized by being recorded. Writing
+        # first and logging after would mean a dropped audit row leaves an
+        # unrecorded overspend in the ledger. Ordered this way, the only
+        # failure mode is an override logged for a change that then
+        # failed to apply — over-recording, which is reviewable, rather
+        # than under-recording, which is not.
+        new_payload = {
+            "program_id": program_id,
+            "shortfall_amount": shortfall,
+            "attempted_amount": attempted_amount,
+            "restricted_raised": balance["raised"],
+            "restricted_spent": balance["spent"],
+            "restricted_remaining": remaining,
+            "authorized_by": str(user["id"]),
+        }
+        if transaction_id is not None:
+            new_payload["transaction_id"] = transaction_id
+
+        logged = await log_audit_action(
+            supabase,
+            user_id=user["id"],
+            action_type="FINANCE_RESTRICTED_OVERRIDE",
+            table_name="financial_transactions",
+            old_payload=None,
+            # Not a row diff: synthetic detail packed into new_payload, which
+            # compute_hash covers, so these figures are chain-protected.
+            #
+            # Money is recorded as a decimal STRING, never a float. A float
+            # here silently breaks verification forever: canonicalize()
+            # leaves 8000.0 as a float, but JSONB returns whole numbers as
+            # 8000, so the digest computed on insert can never be
+            # reproduced on read. Decimal serializes via compute_hash's
+            # default=str to "8000.00", which survives the round trip
+            # unchanged and keeps exact precision as a bonus.
+            new_payload=new_payload,
+        )
+
+        if not logged:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Override could not be recorded to the audit log and was "
+                    "therefore not applied. The ledger was not changed."
+                ),
+            )
+
+
+def _get_transaction_or_404(supabase: Client, transaction_id: int) -> dict:
+    # Not .single(): supabase-py raises on zero rows rather than returning
+    # empty data, which turned an unknown id into a 500 instead of a 404.
+    existing = supabase.table("financial_transactions") \
+        .select("*") \
+        .eq("id", transaction_id) \
+        .execute()
+    if not existing.data:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    return existing.data[0]
+
+
 @router.post("/transactions", response_model=FinancialTransaction)
 async def create_transaction(
     transaction: FinancialTransactionCreate,
@@ -55,104 +212,13 @@ async def create_transaction(
     if transaction.amount <= 0:
         raise HTTPException(status_code=400, detail="Transaction amount must be strictly positive.")
 
-    # Restricted-fund drawdown check.
-    #
-    # Only Expense rows charged to a program can overspend earmarked money, and
-    # only for programs that actually hold some — see is_program_restricted for
-    # why an unrestricted program must not be gated on a zero balance. A Voided
-    # row is not a real payment, so it is not checked.
-    if (
-        transaction.transaction_type == "Expense"
-        and transaction.program_id is not None
-        and transaction.status != "Voided"
-        and is_program_restricted(supabase, transaction.program_id)
-    ):
-        balance = compute_restricted_balance(supabase, transaction.program_id)
-        remaining = balance["remaining"]
-
-        if transaction.amount > remaining:
-            shortfall = transaction.amount - remaining
-            may_override = has_permission(
-                (user.get("roles") or {}).get("role_name") or "",
-                'finance:restricted:override',
-            )
-
-            if not override_restricted:
-                # Blocked rather than silently allowed. The message names the
-                # exact shortfall so the officer can either reduce the expense
-                # or seek authorization, and states whether this user is able
-                # to authorize it themselves.
-                remedy = (
-                    "Resubmit with override_restricted=true to authorize this overspend."
-                    if may_override
-                    else "Authorization from a user holding finance:restricted:override is required."
-                )
-                raise HTTPException(
-                    status_code=409,
-                    detail=(
-                        f"Expense of {transaction.amount} exceeds the restricted funds "
-                        f"remaining for program {transaction.program_id} by {shortfall}. "
-                        f"Raised: {balance['raised']}, already spent: {balance['spent']}, "
-                        f"remaining: {remaining}. {remedy}"
-                    ),
-                )
-
-            if not may_override:
-                raise HTTPException(
-                    status_code=403,
-                    detail=(
-                        "Insufficient permissions. Overspending restricted program "
-                        "funds requires finance:restricted:override."
-                    ),
-                )
-
-            # The audit row is written BEFORE the expense, and a failure to
-            # write it aborts the request.
-            #
-            # log_audit_action is fail-soft everywhere else, which is right when
-            # it records something that already happened. Here it IS the
-            # control: an override is authorized by being recorded. Inserting
-            # first and logging after would mean a dropped audit row leaves an
-            # unrecorded overspend in the ledger. Ordered this way, the only
-            # failure mode is an override logged for an expense that then
-            # failed to insert — over-recording, which is reviewable, rather
-            # than under-recording, which is not.
-            logged = await log_audit_action(
-                supabase,
-                user_id=user["id"],
-                action_type="FINANCE_RESTRICTED_OVERRIDE",
-                table_name="financial_transactions",
-                old_payload=None,
-                # Not a row diff. Follows PAYROLL_GENERATE_FINANCE below, which
-                # already packs synthetic detail into new_payload. compute_hash
-                # covers new_payload, so these figures are chain-protected.
-                #
-                # Money is recorded as a decimal STRING, never a float. A float
-                # here silently breaks verification forever: canonicalize()
-                # leaves 8000.0 as a float, but JSONB returns whole numbers as
-                # 8000, so the digest computed on insert can never be
-                # reproduced on read. Decimal serializes via compute_hash's
-                # default=str to "8000.00", which survives the round trip
-                # unchanged and keeps exact precision as a bonus.
-                new_payload={
-                    "program_id": transaction.program_id,
-                    "shortfall_amount": shortfall,
-                    "attempted_amount": transaction.amount,
-                    "restricted_raised": balance["raised"],
-                    "restricted_spent": balance["spent"],
-                    "restricted_remaining": remaining,
-                    "authorized_by": str(user["id"]),
-                },
-            )
-
-            if not logged:
-                raise HTTPException(
-                    status_code=503,
-                    detail=(
-                        "Override could not be recorded to the audit log and was "
-                        "therefore not applied. No transaction was created."
-                    ),
-                )
+    await _enforce_restricted_drawdown(
+        supabase,
+        user,
+        old_row=None,
+        new_row=transaction.model_dump(mode="json"),
+        override_restricted=override_restricted,
+    )
 
     data = transaction.model_dump()
     data["transaction_date"] = str(data["transaction_date"])  # 👈 ADD THIS
@@ -194,24 +260,46 @@ async def get_transactions_by_type(
 async def update_transaction(
     transaction_id: int,
     transaction: FinancialTransactionCreate,
+    override_restricted: bool = False,
     user = Depends(require_permission('finance:write')),
     supabase: Client = Depends(get_supabase)
 ):
     if transaction.amount <= 0:
         raise HTTPException(status_code=400, detail="Transaction amount must be strictly positive.")
 
-    data = transaction.model_dump()
-    data["transaction_date"] = str(data["transaction_date"])
-    data["amount"] = float(data["amount"])
+    # Voiding goes through PATCH /void, which records FINANCE_TRANSACTION_VOID.
+    # Allowing it here would produce a void the audit log calls an update.
+    if transaction.status == "Voided":
+        raise HTTPException(
+            status_code=400,
+            detail="Use the void action to void a transaction, not an edit.",
+        )
 
     # Read the row before overwriting it — an amount change is exactly the kind
     # of edit the audit trail exists to make provable.
-    existing = supabase.table("financial_transactions") \
-        .select("*") \
-        .eq("id", transaction_id) \
-        .execute()
-    if not existing.data:
-        raise HTTPException(status_code=404, detail="Transaction not found")
+    existing = _get_transaction_or_404(supabase, transaction_id)
+
+    # A voided row is a reversal on the record. Editing it would either change
+    # history silently or, by sending any other status, bring it back as live
+    # money without anyone having un-voided it.
+    if existing.get("status") == "Voided":
+        raise HTTPException(
+            status_code=409,
+            detail="Voided transactions cannot be edited. Record a new transaction instead.",
+        )
+
+    await _enforce_restricted_drawdown(
+        supabase,
+        user,
+        old_row=existing,
+        new_row=transaction.model_dump(mode="json"),
+        override_restricted=override_restricted,
+        transaction_id=transaction_id,
+    )
+
+    data = transaction.model_dump()
+    data["transaction_date"] = str(data["transaction_date"])
+    data["amount"] = float(data["amount"])
 
     response = supabase.table("financial_transactions") \
         .update(data) \
@@ -226,7 +314,7 @@ async def update_transaction(
         user_id=user["id"],
         action_type="FINANCE_TRANSACTION_UPDATE",
         table_name="financial_transactions",
-        old_payload=existing.data[0],
+        old_payload=existing,
         new_payload=response.data[0],
     )
 
@@ -239,17 +327,9 @@ async def void_transaction(
     user = Depends(require_permission('finance:write')),
     supabase: Client = Depends(get_supabase)
 ):
-    # Check it exists and isn't already voided
-    existing = supabase.table("financial_transactions") \
-        .select("*") \
-        .eq("id", transaction_id) \
-        .single() \
-        .execute()
+    existing = _get_transaction_or_404(supabase, transaction_id)
 
-    if not existing.data:
-        raise HTTPException(status_code=404, detail="Transaction not found")
-
-    if existing.data.get("status") == "Voided":
+    if existing.get("status") == "Voided":
         raise HTTPException(status_code=400, detail="Transaction is already voided")
 
     response = supabase.table("financial_transactions") \
@@ -262,7 +342,7 @@ async def void_transaction(
         user_id=user["id"],
         action_type="FINANCE_TRANSACTION_VOID",
         table_name="financial_transactions",
-        old_payload=existing.data,
+        old_payload=existing,
         new_payload=response.data[0],
     )
 
@@ -274,16 +354,15 @@ async def settle_transaction(
     user = Depends(require_permission('finance:write')),
     supabase: Client = Depends(get_supabase)
 ):
-    existing = supabase.table("financial_transactions") \
-        .select("*") \
-        .eq("id", transaction_id) \
-        .single() \
-        .execute()
+    existing = _get_transaction_or_404(supabase, transaction_id)
 
-    if not existing.data:
-        raise HTTPException(status_code=404, detail="Transaction not found")
+    # Only an open receivable/payable can be settled. Checking just for "Cash"
+    # let a Voided row through, and settling it set it to Cash — reinstating a
+    # reversed transaction as real money.
+    if existing.get("status") == "Voided":
+        raise HTTPException(status_code=409, detail="A voided transaction cannot be settled")
 
-    if existing.data.get("status") == "Cash":
+    if existing.get("status") == "Cash":
         raise HTTPException(status_code=400, detail="Transaction is already settled")
 
     response = supabase.table("financial_transactions") \
@@ -296,7 +375,7 @@ async def settle_transaction(
         user_id=user["id"],
         action_type="FINANCE_TRANSACTION_SETTLE",
         table_name="financial_transactions",
-        old_payload=existing.data,
+        old_payload=existing,
         new_payload=response.data[0],
     )
 
@@ -448,97 +527,3 @@ async def monthly_summary(
         "expense": total_expense,
         "balance": total_income - total_expense
     }
-
-
-# ==========================================
-# 4. CROSS-MODULE PAYROLL ENGINE
-# ==========================================
-
-@router.post("/calculate-payroll/{year}/{month}")
-async def calculate_monthly_payroll(
-    year: int,
-    month: int,
-    user = Depends(require_permission('payroll:generate')), # SECURED
-    supabase: Client = Depends(get_supabase)
-):
-    # 1. Date boundaries
-    _, last_day = monthrange(year, month)
-    start_date = date(year, month, 1)
-    end_date = date(year, month, last_day)
-
-    # 2. Fetch LOCKED HR attendance logs + base salary (Cross-Module DB Join)
-    attendance_response = supabase.table("attendance_logs") \
-        .select("employee_id, worked_hours, employee_profiles(base_salary)") \
-        .gte("target_date", str(start_date)) \
-        .lte("target_date", str(end_date)) \
-        .eq("is_locked", True) \
-        .execute()
-
-    if not attendance_response.data:
-        raise HTTPException(status_code=404, detail="No locked attendance records found for this month.")
-
-    # 3. Aggregate hours and calculate pay
-    payroll_data = {}
-    for log in attendance_response.data:
-        emp_id = log["employee_id"]
-        hours = float(log.get("worked_hours", 0))
-        base_rate = float(log["employee_profiles"]["base_salary"]) 
-
-        if emp_id not in payroll_data:
-            payroll_data[emp_id] = {"total_hours": 0, "rate": base_rate}
-        
-        payroll_data[emp_id]["total_hours"] += hours
-
-    processed_count = 0
-    total_payroll_expense = 0
-
-    # 4. Post to Payroll Ledger
-    for emp_id, data in payroll_data.items():
-        net_payable = data["total_hours"] * data["rate"]
-        if net_payable <= 0:
-            continue
-
-        supabase.table("payroll_ledgers").insert({
-            "employee_id": emp_id,
-            "payroll_month": month,
-            "payroll_year": year,
-            "net_payable": net_payable
-        }).execute()
-
-        total_payroll_expense += net_payable
-        processed_count += 1
-
-    # 5. Automatically deduct from main charity financial ledger
-    if total_payroll_expense > 0:
-        supabase.table("financial_transactions").insert({
-            "transaction_date": str(date.today()),
-            "amount": total_payroll_expense,
-            "transaction_type": "Expense",
-            "status": "Cash"
-        }).execute()
-
-    result = {
-        "message": f"Successfully processed payroll for {processed_count} employees.",
-        "month": month,
-        "year": year,
-        "total_payout": total_payroll_expense
-    }
-
-    # Distinct from PAYROLL_GENERATE_HR: this is the inline-loop implementation,
-    # and the two paths could diverge. Collapsing them into one action_type
-    # would hide which one actually ran.
-    await log_audit_action(
-        supabase,
-        user_id=user["id"],
-        action_type="PAYROLL_GENERATE_FINANCE",
-        table_name="payroll_ledgers",
-        old_payload=None,
-        new_payload={
-            "month": month,
-            "year": year,
-            "employees_processed": processed_count,
-            "total_payout": total_payroll_expense,
-        },
-    )
-
-    return result
