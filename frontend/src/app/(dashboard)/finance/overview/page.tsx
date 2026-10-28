@@ -201,8 +201,9 @@ export default function FinancePage() {
     const receivablePct = pctChange(thisReceivable, prevReceivable);
 
     return {
-      expenseTrend: expensePct === null ? undefined : { value: Math.abs(expensePct), isPositive: expensePct <= 0 },
-      receivablesTrend: receivablePct === null ? undefined : { value: Math.abs(receivablePct), isPositive: receivablePct <= 0 },
+      // Spending and money still owed to us are both better when they fall.
+      expenseTrend: expensePct === null ? undefined : { value: expensePct, upIsGood: false },
+      receivablesTrend: receivablePct === null ? undefined : { value: receivablePct, upIsGood: false },
     };
   }, [transactions]);
 
