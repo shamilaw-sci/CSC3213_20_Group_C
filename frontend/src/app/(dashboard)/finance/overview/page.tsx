@@ -17,7 +17,6 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
-  PlusCircle,
   TrendingDown,
   TrendingUp,
   Pencil,
@@ -28,7 +27,6 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { format } from 'date-fns';
-import { NewTransactionModal } from '@/components/finance/NewTransactionModal';
 import { EditTransactionModal } from '@/components/finance/EditTransactionModal';
 import {
   Dialog,
@@ -72,7 +70,6 @@ export default function FinancePage() {
   const { user } = useAuthStore();
   // Same permission as the Ledger's nav entry and page guard.
   const canOpenLedger = hasPermission(user?.role as string, 'finance:read');
-  const [showNewModal, setShowNewModal] = useState(false);
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
   const [voidingTransaction, setVoidingTransaction] = useState<Transaction | null>(null);
   const [range, setRange] = useState<'12m' | '30d' | '7d'>('30d');
@@ -250,15 +247,7 @@ export default function FinancePage() {
             Track income, expenses, and manage receivables across all programs.
           </p>
         </div>
-        <div className="flex items-center gap-3">
-        <Button 
-          onClick={() => setShowNewModal(true)} 
-          className="bg-[#EF9F27] hover:bg-[#D97706] text-white font-semibold flex items-center gap-2 rounded-lg py-2 px-4 shadow-sm transition-all"
-        >
-          <PlusCircle className="h-4 w-4" /> New Transaction
-        </Button>
       </div>
-    </div>
 
       {/* KPI Strip */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -666,7 +655,6 @@ export default function FinancePage() {
       </Card>
       
       {/* Transaction Modals */}
-      <NewTransactionModal open={showNewModal} onClose={() => setShowNewModal(false)} />
       
       <EditTransactionModal
         transaction={editingTransaction}
