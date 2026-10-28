@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowDownUp, Ban, CheckCircle2, ChevronLeft, ChevronRight, FileSpreadsheet,
@@ -31,6 +32,18 @@ const PAGE_SIZES = [25, 50, 100];
 const control =
   'h-9 rounded-md border border-border-brand bg-surface px-2 text-xs text-text-primary outline-none focus:border-accent';
 
+function filtersFromQuery(params: URLSearchParams): LedgerFilters {
+  const pick = <T extends string>(key: string, allowed: readonly T[]) => {
+    const value = params.get(key);
+    return allowed.includes(value as T) ? (value as T) : undefined;
+  };
+  return {
+    transaction_type: pick('type', ['Income', 'Expense'] as const),
+    status: pick('status', ['Cash', 'Receivable', 'Voided'] as const),
+    sort: pick('sort', ['newest', 'oldest'] as const) ?? 'newest',
+  };
+}
+
 function StatusBadge({ row }: { row: LedgerRow }) {
   const income = row.transaction_type === 'Income';
   const label =
@@ -56,7 +69,11 @@ function StatusBadge({ row }: { row: LedgerRow }) {
 export default function LedgerPage() {
   return (
     <ProtectedRoute requiredPermission="finance:read">
-      <Ledger />
+      {/* useSearchParams needs a Suspense boundary, or the production build
+          fails to prerender this route. */}
+      <Suspense>
+        <Ledger />
+      </Suspense>
     </ProtectedRoute>
   );
 }
@@ -66,7 +83,11 @@ function Ledger() {
   const canWrite = hasPermission(user?.role as string, 'finance:write');
   const queryClient = useQueryClient();
 
-  const [filters, setFilters] = useState<LedgerFilters>({ sort: 'newest' });
+  // Links can open the Ledger pre-filtered, e.g. the Finance Officer
+  // dashboard's ?status=Receivable&type=Income&sort=oldest, which replaced
+  // the separate Receivables page. Read once, as the starting state.
+  const searchParams = useSearchParams();
+  const [filters, setFilters] = useState<LedgerFilters>(() => filtersFromQuery(searchParams));
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);

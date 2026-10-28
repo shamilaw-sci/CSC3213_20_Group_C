@@ -7,7 +7,6 @@ import {
   Wallet,
   FileText,
   Boxes,
-  ArrowDownUp,
   RotateCcw,
   BookOpen,
   FolderOpen,
@@ -55,8 +54,6 @@ export const NAVIGATION_CONFIG: NavSection[] = [
       // reads it too. Adding, editing and voiding stay behind finance:write
       // inside the page.
       { label: 'Ledger', href: '/finance/ledger', icon: FileText, requiredPermission: 'finance:read' },
-      { label: 'Receivables', href: '/finance/receivables', icon: ArrowDownUp, requiredPermission: 'finance:read' },
-      { label: 'Payables', href: '/finance/payables', icon: ArrowDownUp, requiredPermission: 'finance:read' },
       { label: 'Reports', href: '/finance/reports', icon: FileText, requiredPermission: 'finance:read' },
     ]
   },
