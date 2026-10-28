@@ -51,7 +51,10 @@ export const NAVIGATION_CONFIG: NavSection[] = [
     title: 'FINANCE',
     items: [
       { label: 'Overview', href: '/finance/overview', icon: DollarSign, requiredPermission: 'finance:read' },
-      { label: 'Ledger', href: '/finance/ledger', icon: FileText, requiredPermission: 'finance:write' },
+      // finance:read, not write: the Ledger is the full record, so Director
+      // reads it too. Adding, editing and voiding stay behind finance:write
+      // inside the page.
+      { label: 'Ledger', href: '/finance/ledger', icon: FileText, requiredPermission: 'finance:read' },
       { label: 'Receivables', href: '/finance/receivables', icon: ArrowDownUp, requiredPermission: 'finance:read' },
       { label: 'Payables', href: '/finance/payables', icon: ArrowDownUp, requiredPermission: 'finance:read' },
       { label: 'Reports', href: '/finance/reports', icon: FileText, requiredPermission: 'finance:read' },

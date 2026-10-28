@@ -1,9 +1,17 @@
 import api from '@/lib/api-client';
-import { Transaction, Program, RestrictedBalance } from '@/types';
+import { Transaction, Program, RestrictedBalance, LedgerFilters, LedgerPage } from '@/types';
 
 export const FinanceService = {
   getTransactions: async (params?: { start_date?: string, end_date?: string }) => {
     const response = await api.get<Transaction[]>('/finance/transactions', { params });
+    return response.data;
+  },
+
+  // `all` returns every matching row unpaged, for CSV export.
+  getLedger: async (filters: LedgerFilters, page = 1, pageSize = 50, all = false) => {
+    const response = await api.get<LedgerPage>('/finance/ledger', {
+      params: { ...filters, page, page_size: pageSize, all: all || undefined },
+    });
     return response.data;
   },
   

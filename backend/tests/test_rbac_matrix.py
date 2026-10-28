@@ -220,6 +220,7 @@ PERMISSION_ROUTES = [
     ("POST", "/api/hr/payroll/generate", "payroll:generate"),
     ("GET", "/api/finance/summary", "finance:read"),
     ("GET", "/api/finance/transactions", "finance:read"),
+    ("GET", "/api/finance/ledger", "finance:read"),
     ("POST", "/api/finance/transactions", "finance:write"),
     ("GET", "/api/finance/programs", "programs:read"),
     ("POST", "/api/finance/programs", "programs:manage"),

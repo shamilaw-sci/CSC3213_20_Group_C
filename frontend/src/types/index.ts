@@ -237,6 +237,35 @@ export interface ProgramFinancials {
   profit: number;
 }
 
+// --- General ledger (GET /finance/ledger) ---
+
+export interface LedgerRow extends Transaction {
+  program_name: string;
+  // Ledger-wide running net after this entry; null on voided rows.
+  balance: number | null;
+}
+
+export interface LedgerFilters {
+  start_date?: string;
+  end_date?: string;
+  transaction_type?: 'Income' | 'Expense';
+  status?: 'Cash' | 'Receivable' | 'Voided';
+  program?: string; // a program id, or 'general'
+  restricted?: boolean;
+  q?: string;
+  sort?: 'newest' | 'oldest';
+}
+
+export interface LedgerPage {
+  rows: LedgerRow[];
+  total: number;
+  page: number;
+  pages: number;
+  page_size: number;
+  // Over every row the filters match, voided excluded.
+  totals: { income: number; expense: number; net: number };
+}
+
 // --- Finance report (GET /reports/finance) ---
 // Mirrors build_finance_report in backend/app/services/finance_reports.py.
 

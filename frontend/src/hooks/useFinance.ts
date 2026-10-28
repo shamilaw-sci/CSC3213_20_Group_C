@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { FinanceService } from '@/services/finance.service';
 import { ReportsService } from '@/services/reports.service';
+import { LedgerFilters } from '@/types';
 
 export function useTransactions(start_date?: string, end_date?: string) {
   return useQuery({
@@ -30,6 +31,16 @@ export function useFinanceReport(start: string, end: string) {
     enabled: !!start && !!end && start <= end,
     // Changing the period swaps the data in place rather than flashing the
     // page back to skeletons.
+    placeholderData: (previous) => previous,
+  });
+}
+
+// Keyed under 'transactions' so every create / edit / void / settle, which
+// already invalidates that key, refreshes the ledger too.
+export function useLedger(filters: LedgerFilters, page: number, pageSize: number) {
+  return useQuery({
+    queryKey: ['transactions', 'ledger', { filters, page, pageSize }],
+    queryFn: () => FinanceService.getLedger(filters, page, pageSize),
     placeholderData: (previous) => previous,
   });
 }

@@ -1,5 +1,7 @@
-import { NAVIGATION_CONFIG, NavItem } from '../lib/navigation';
-import { UserRole, hasPermission } from '../lib/permissions';
+import { NAVIGATION_CONFIG } from '../lib/navigation';
+// A `type` import: Node strips types natively and fails on a type imported
+// as if it were a value, which is what had stopped this file running at all.
+import { type UserRole, hasPermission } from '../lib/permissions';
 
 // Hand-written on purpose: deriving these from ROLE_PERMISSIONS would make the
 // test tautological. Because the map is keyed by the UserRole union, adding a
@@ -13,10 +15,11 @@ const expectedItemsPerRole: Record<UserRole, string[]> = {
     'Active Programs', 'Case Hotspots', 'Case Triage', 'Field Dispatch', 'My Attendance', 'System Admin',
     ...PERSONAL
   ],
-  // No Ledger: that needs finance:write, which oversight deliberately lacks.
+  // Ledger is read-only for Director: it needs finance:read, while adding,
+  // editing and voiding inside it need finance:write, which oversight lacks.
   // No My Attendance: Director has no hr:attendance:self.
   'Director': [
-    'Overview', 'Overview', 'Receivables', 'Payables', 'Reports', 'Stock',
+    'Overview', 'Overview', 'Ledger', 'Receivables', 'Payables', 'Reports', 'Stock',
     'Active Programs', 'Case Hotspots', 'Case Triage', 'Field Dispatch', ...PERSONAL
   ],
   'HR Officer': [
