@@ -86,6 +86,89 @@ export interface MySchedule {
   upcoming_holidays: Holiday[];
 }
 
+// --- Leave (app/api/leave.py) ---
+
+export interface LeaveTypeRow {
+  id: number;
+  code: string;
+  name: string;
+  is_paid: boolean;
+  uses_balance: boolean; // yearly allowance; false for event leave and no-pay
+  default_days: number | null;
+  max_days_per_request: number | null;
+  counts_calendar_days: boolean;
+  allow_half_day: boolean;
+  carry_forward_max: number;
+  first_year_rule: 'none' | 'soe_annual' | 'soe_casual';
+}
+
+export interface LeaveBalance {
+  leave_type_id: number;
+  code: string;
+  name: string;
+  set_up: boolean; // false: no entitlement generated for the year yet
+  entitlement_id?: number | null;
+  note?: string | null;
+  entitled?: number;
+  carried_forward?: number;
+  adjustment?: number;
+  total?: number;
+  approved?: number;
+  pending?: number;
+  available?: number;
+}
+
+export type LeaveStatus = 'Pending' | 'Approved' | 'Rejected' | 'Cancelled';
+
+export interface LeaveRequest {
+  id: number;
+  employee_id: number;
+  employee_name?: string;
+  leave_type_id: number;
+  leave_types?: { name: string; code: string } | null;
+  start_date: string;
+  end_date: string;
+  half_day: 'none' | 'am' | 'pm';
+  days: number;
+  reason: string | null;
+  status: LeaveStatus;
+  requested_by: string | null;
+  requested_at: string;
+  decided_by: string | null;
+  decided_at: string | null;
+  decision_note: string | null;
+}
+
+export interface LeaveInput {
+  leave_type_id: number;
+  start_date: string;
+  end_date: string;
+  half_day: 'none' | 'am' | 'pm';
+  reason?: string;
+  employee_id?: number; // HR filing on someone's behalf
+}
+
+export interface LeavePreview {
+  days: { date: string; fraction: number }[];
+  total: number;
+  balances: Record<string, { total: number; approved: number; pending: number; available: number; after: number } | null>;
+  errors: string[];
+}
+
+export interface MyLeave {
+  employee_id: number;
+  date_joined: string | null;
+  year: number;
+  balances: LeaveBalance[];
+  requests: LeaveRequest[];
+}
+
+export interface EntitlementsView {
+  year: number;
+  employees: { employee_id: number; employee_name: string; date_joined: string | null; balances: LeaveBalance[] }[];
+  needs_date_joined: { employee_id: number; employee_name: string }[];
+}
+
 // --- Payroll (GET /hr/payroll/run) ---
 // A month's payroll run: Draft when generated, Approved when signed off by a
 // second person, and only then posted to the finance ledger.

@@ -15,7 +15,8 @@ import {
   Navigation,
   HeartHandshake,
   CalendarClock,
-  CalendarDays
+  CalendarDays,
+  Plane
 } from 'lucide-react';
 
 import { hasAnyPermission, type Permission } from './permissions';
@@ -53,6 +54,7 @@ export const NAVIGATION_CONFIG: NavSection[] = [
       { label: 'Attendance', href: '/hr/attendance', icon: Calendar, requiredPermission: 'hr:attendance:manage' },
       // Attendance managers read it; editing inside needs hr:manage.
       { label: 'Schedules & Holidays', href: '/hr/schedules', icon: CalendarDays, requiredPermission: ['hr:manage', 'hr:attendance:manage'] },
+      { label: 'Leave', href: '/hr/leave', icon: Plane, requiredPermission: 'leave:approve' },
       // Generate or approve: Director signs payroll off from this page.
       { label: 'Payroll', href: '/hr/payroll', icon: Wallet, requiredPermission: ['payroll:generate', 'payroll:approve'] },
     ]
@@ -105,6 +107,7 @@ export const NAVIGATION_CONFIG: NavSection[] = [
     title: 'SELF SERVICE',
     items: [
       { label: 'My Attendance', href: '/me/attendance', icon: BookOpen, requiredPermission: 'hr:attendance:self' },
+      { label: 'My Leave', href: '/me/leave', icon: Plane, requiredPermission: 'hr:attendance:self' },
     ]
   },
   {

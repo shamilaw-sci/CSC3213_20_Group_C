@@ -15,6 +15,8 @@ export type Permission =
   | 'hr:manage'
   | 'hr:attendance:self'
   | 'hr:attendance:manage'
+  // Approve leave and manage entitlements, never for the approver themselves
+  | 'leave:approve'
   | 'payroll:generate'
   | 'payroll:approve'
   | 'finance:read'
@@ -46,7 +48,7 @@ export type Permission =
 // NOTE: Must stay in sync with backend/app/core/permissions.py
 export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
   Admin: [
-    'hr:manage', 'hr:attendance:self', 'hr:attendance:manage',
+    'hr:manage', 'hr:attendance:self', 'hr:attendance:manage', 'leave:approve',
     'payroll:generate', 'payroll:approve', 'finance:read',
     'finance:write', 'finance:restricted:override',
     'inventory:read', 'inventory:issue',
@@ -66,7 +68,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
   // Vetting and onboarding a person is squarely HR, so this role approves
   // volunteer applications. It does not staff shifts — that is operations.
   'HR Officer': [
-    'hr:manage', 'hr:attendance:manage', 'hr:attendance:self',
+    'hr:manage', 'hr:attendance:manage', 'hr:attendance:self', 'leave:approve',
     'payroll:generate' , 'rescue:read', 'rescue:assign',
     'volunteers:read', 'volunteers:approve'
   ],
