@@ -18,6 +18,10 @@ class Permission(str, Enum):
     HR_MANAGE = 'hr:manage'
     HR_ATTENDANCE_SELF = 'hr:attendance:self'
     HR_ATTENDANCE_MANAGE = 'hr:attendance:manage'
+    # Approve or reject leave requests and manage entitlements. HR Officer and
+    # Admin (confirmed 2026-10-29). Holding it never lets anyone approve their
+    # own request: app/api/leave.py refuses that regardless of role.
+    LEAVE_APPROVE = 'leave:approve'
     PAYROLL_GENERATE = 'payroll:generate'
     PAYROLL_APPROVE = 'payroll:approve'
     FINANCE_READ = 'finance:read'
@@ -62,6 +66,7 @@ class Permission(str, Enum):
 ROLE_PERMISSIONS = {
     UserRole.ADMIN.value: [
         Permission.HR_MANAGE.value, Permission.HR_ATTENDANCE_SELF.value, Permission.HR_ATTENDANCE_MANAGE.value,
+        Permission.LEAVE_APPROVE.value,
         Permission.PAYROLL_GENERATE.value, Permission.PAYROLL_APPROVE.value, Permission.FINANCE_READ.value,
         Permission.FINANCE_WRITE.value, Permission.FINANCE_RESTRICTED_OVERRIDE.value,
         Permission.INVENTORY_READ.value, Permission.INVENTORY_ISSUE.value,
@@ -83,6 +88,7 @@ ROLE_PERMISSIONS = {
     # applications. It does not staff shifts — that is operations.
     UserRole.HR_OFFICER.value: [
         Permission.HR_MANAGE.value, Permission.HR_ATTENDANCE_MANAGE.value, Permission.HR_ATTENDANCE_SELF.value,
+        Permission.LEAVE_APPROVE.value,
         Permission.PAYROLL_GENERATE.value,
         Permission.RESCUE_READ.value, Permission.RESCUE_ASSIGN.value,
         Permission.VOLUNTEERS_READ.value, Permission.VOLUNTEERS_APPROVE.value

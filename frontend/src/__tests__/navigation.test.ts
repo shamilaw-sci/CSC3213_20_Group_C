@@ -10,9 +10,9 @@ const PERSONAL = ['Go to Website Home', 'Edit Profile', 'Account Settings', 'Sup
 
 const expectedItemsPerRole: Record<UserRole, string[]> = {
   'Admin': [
-    'Overview', 'Employees', 'Attendance', 'Schedules & Holidays', 'Payroll', 'Overview', 'Ledger',
+    'Overview', 'Employees', 'Attendance', 'Schedules & Holidays', 'Leave', 'Payroll', 'Overview', 'Ledger',
     'Reports', 'Stock', 'Issue', 'Returns',
-    'Active Programs', 'Case Hotspots', 'Case Triage', 'Field Dispatch', 'My Attendance', 'System Admin',
+    'Active Programs', 'Case Hotspots', 'Case Triage', 'Field Dispatch', 'My Attendance', 'My Leave', 'System Admin',
     ...PERSONAL
   ],
   // Ledger is read-only for Director: it needs finance:read, while adding,
@@ -24,8 +24,8 @@ const expectedItemsPerRole: Record<UserRole, string[]> = {
     'Active Programs', 'Case Hotspots', 'Case Triage', 'Field Dispatch', ...PERSONAL
   ],
   'HR Officer': [
-    'Overview', 'Employees', 'Attendance', 'Schedules & Holidays', 'Payroll',
-    'Case Hotspots', 'Case Triage', 'Field Dispatch', 'My Attendance', ...PERSONAL
+    'Overview', 'Employees', 'Attendance', 'Schedules & Holidays', 'Leave', 'Payroll',
+    'Case Hotspots', 'Case Triage', 'Field Dispatch', 'My Attendance', 'My Leave', ...PERSONAL
   ],
   // Active Programs is expected: programs:read was granted so the program
   // picker on the transaction form renders names rather than numeric ids.
@@ -36,12 +36,12 @@ const expectedItemsPerRole: Record<UserRole, string[]> = {
   // Clinic and field operations: inventory, programs and rescue, no HR/finance.
   'Operations Lead': [
     'Overview', 'Stock', 'Issue', 'Returns', 'Active Programs',
-    'Case Hotspots', 'Case Triage', 'Field Dispatch', 'My Attendance', ...PERSONAL
+    'Case Hotspots', 'Case Triage', 'Field Dispatch', 'My Attendance', 'My Leave', ...PERSONAL
   ],
   // No Stock: General Staff can issue inventory but not browse the catalogue.
   'General Staff': [
     'Overview', 'Issue', 'Returns', 'Active Programs',
-    'Case Hotspots', 'Case Triage', 'Field Dispatch', 'My Attendance', ...PERSONAL
+    'Case Hotspots', 'Case Triage', 'Field Dispatch', 'My Attendance', 'My Leave', ...PERSONAL
   ],
   // Technical administration only. The short list is the point: no payroll,
   // no ledger, no case data.

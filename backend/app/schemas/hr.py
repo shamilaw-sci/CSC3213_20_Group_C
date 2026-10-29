@@ -22,6 +22,10 @@ class EmployeeProfileCreate(EmployeeProfileBase):
 
 class EmployeeProfile(EmployeeProfileBase):
     id: int
+    # Read-only here: set through PATCH /leave/employees/{id}/date-joined.
+    # Kept off EmployeeProfileBase on purpose, so the existing employee
+    # create/update forms, which do not send it, cannot wipe it.
+    date_joined: Optional[date] = None
     model_config = ConfigDict(from_attributes=True)
 
 class AttendanceLogBase(BaseModel):

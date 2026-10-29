@@ -216,6 +216,8 @@ PERMISSION_ROUTES = [
     ("GET", "/api/hr/employees", "hr:manage"),
     ("POST", "/api/hr/schedules", "hr:manage"),
     ("POST", "/api/hr/holidays", "hr:manage"),
+    ("GET", "/api/leave/requests", "leave:approve"),
+    ("GET", "/api/leave/me", "hr:attendance:self"),
     ("POST", "/api/hr/employees", "hr:manage"),
     ("POST", "/api/hr/attendance/clock-in", "hr:attendance:self"),
     ("GET", "/api/hr/attendance", "hr:attendance:manage"),
