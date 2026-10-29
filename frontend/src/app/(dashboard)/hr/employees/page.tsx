@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useEmployees, useAttendance, useLockAttendance, useRunPayroll, useCreateEmployee, useLogAttendance, useUpdateAttendance } from '@/hooks/useHR';
+import { useEmployees, useAttendance, useLockAttendance, useCreateEmployee, useLogAttendance, useUpdateAttendance } from '@/hooks/useHR';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -28,7 +28,6 @@ export default function HRPage() {
   const { data: attendance, isLoading: loadingAttendance } = useAttendance(selectedDate);
   
   const lockAttendance = useLockAttendance();
-  const runPayroll = useRunPayroll();
   const createEmployee = useCreateEmployee();
   const logAttendance = useLogAttendance();
   const updateAttendance = useUpdateAttendance();
@@ -301,9 +300,6 @@ export default function HRPage() {
             <TabsTrigger value="attendance" className="data-[state=active]:bg-surface data-[state=active]:text-accent text-xs font-semibold rounded-md transition-all">
               Daily Attendance
             </TabsTrigger>
-            <TabsTrigger value="payroll" className="data-[state=active]:bg-surface data-[state=active]:text-accent text-xs font-semibold rounded-md transition-all">
-              Payroll Prep
-            </TabsTrigger>
             <TabsTrigger value="system_roles" className="data-[state=active]:bg-surface data-[state=active]:text-accent text-xs font-semibold rounded-md transition-all">
               System Roles
             </TabsTrigger>
@@ -451,29 +447,6 @@ export default function HRPage() {
             </Card>
           </TabsContent>
           
-          {/* Payroll Tab */}
-          <TabsContent value="payroll" className="mt-6">
-            <div className="bg-surface border border-border-brand rounded-card shadow-card p-12 text-center">
-              <div className="max-w-md mx-auto">
-                <div className="bg-amber-500/10 p-4 rounded-full w-16 h-16 flex items-center justify-center mx-auto mb-6">
-                  <Filter className="text-accent" size={32} />
-                </div>
-                <h3 className="text-xl font-bold font-heading mb-2 text-text-primary">Automated Payroll Generation</h3>
-                <p className="text-text-secondary text-xs mb-6">Aggregate attendance logs to calculate monthly disbursements. Requires all days to be locked.</p>
-                <Button
-                  className="bg-accent hover:bg-accent/80 text-white font-semibold text-xs py-2 px-4 rounded-lg"
-                  disabled={runPayroll.isPending}
-                  onClick={() => {
-                    const now = new Date();
-                    runPayroll.mutate({ month: now.getMonth() + 1, year: now.getFullYear() });
-                  }}
-                >
-                  {runPayroll.isPending ? 'Generating...' : 'Run Calculation'}
-                </Button>
-              </div>
-            </div>
-          </TabsContent>
-
           {/* System Roles Tab */}
           <TabsContent value="system_roles" className="mt-6">
             <Card className="bg-surface border border-border-brand rounded-card shadow-card p-5">
