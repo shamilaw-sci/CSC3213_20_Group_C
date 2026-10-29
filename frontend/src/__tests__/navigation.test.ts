@@ -10,7 +10,7 @@ const PERSONAL = ['Go to Website Home', 'Edit Profile', 'Account Settings', 'Sup
 
 const expectedItemsPerRole: Record<UserRole, string[]> = {
   'Admin': [
-    'Overview', 'Employees', 'Attendance', 'Payroll', 'Overview', 'Ledger',
+    'Overview', 'Employees', 'Attendance', 'Schedules & Holidays', 'Payroll', 'Overview', 'Ledger',
     'Reports', 'Stock', 'Issue', 'Returns',
     'Active Programs', 'Case Hotspots', 'Case Triage', 'Field Dispatch', 'My Attendance', 'System Admin',
     ...PERSONAL
@@ -24,7 +24,7 @@ const expectedItemsPerRole: Record<UserRole, string[]> = {
     'Active Programs', 'Case Hotspots', 'Case Triage', 'Field Dispatch', ...PERSONAL
   ],
   'HR Officer': [
-    'Overview', 'Employees', 'Attendance', 'Payroll',
+    'Overview', 'Employees', 'Attendance', 'Schedules & Holidays', 'Payroll',
     'Case Hotspots', 'Case Triage', 'Field Dispatch', 'My Attendance', ...PERSONAL
   ],
   // Active Programs is expected: programs:read was granted so the program

@@ -22,6 +22,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api import (
     hr,
+    hr_calendar,
     finance,
     inventory,
     auth,
@@ -82,6 +83,7 @@ async def root():
 # Include Routers
 app.include_router(auth.router, prefix="/api/auth", tags=["Auth"])
 app.include_router(hr.router, prefix="/api/hr", tags=["HR"])
+app.include_router(hr_calendar.router, prefix="/api/hr", tags=["HR: schedules & holidays"])
 app.include_router(finance.router, prefix="/api/finance", tags=["Finance"])
 app.include_router(reports.router, prefix="/api/reports", tags=["Reports"])
 app.include_router(inventory.router, prefix="/api/inventory", tags=["Inventory"])

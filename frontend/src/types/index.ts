@@ -19,6 +19,73 @@ export interface Employee {
   user_id?: string;
 }
 
+// --- Work schedules and holidays (app/api/hr_calendar.py) ---
+
+export interface ScheduleDay {
+  weekday: number; // ISO: 1 = Monday ... 7 = Sunday
+  start_time: string; // HH:MM[:SS], Sri Lanka time
+  end_time: string; // earlier than start_time = overnight shift
+  break_minutes: number;
+}
+
+export interface WorkSchedule {
+  id: number;
+  name: string;
+  is_default: boolean;
+  grace_minutes: number;
+  observes_holidays: boolean;
+  days: ScheduleDay[];
+}
+
+export type WorkScheduleInput = Pick<WorkSchedule, 'name' | 'grace_minutes' | 'observes_holidays' | 'days'>;
+
+export interface ScheduleAssignment {
+  id: number;
+  employee_id: number;
+  schedule_id: number;
+  schedule_name: string | null;
+  effective_from: string;
+}
+
+export interface ScheduleAssignmentRow {
+  employee_id: number;
+  employee_name: string;
+  status: string | null;
+  current_schedule_id: number | null;
+  current_schedule_name: string | null;
+  follows_default: boolean;
+  history: ScheduleAssignment[];
+}
+
+export interface Holiday {
+  id: number;
+  holiday_date: string;
+  name: string;
+  is_public: boolean;
+  is_bank: boolean;
+  is_mercantile: boolean;
+  is_poya: boolean;
+  // VFF policy: mercantile holidays and every Poya day are days off.
+  is_day_off: boolean;
+  source: string | null;
+}
+
+export type HolidayInput = Omit<Holiday, 'id' | 'is_poya'>;
+
+export interface HolidayImportPreview {
+  year: number;
+  rows: Omit<Holiday, 'id'>[];
+  new_count: number;
+  existing_count: number;
+  warnings: string[];
+}
+
+export interface MySchedule {
+  schedule: WorkSchedule | null;
+  today: { working: boolean; reason: 'scheduled' | 'rest_day' | 'holiday'; start: string | null; end: string | null; holidays: string[] };
+  upcoming_holidays: Holiday[];
+}
+
 // --- Payroll (GET /hr/payroll/run) ---
 // A month's payroll run: Draft when generated, Approved when signed off by a
 // second person, and only then posted to the finance ledger.

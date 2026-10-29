@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { format } from 'date-fns';
 import { Clock, Lock, AlertCircle } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
+import { MyScheduleCard } from '@/components/hr/calendar/MyScheduleCard';
 
 export default function MyAttendancePage() {
   const currentMonth = new Date().getMonth() + 1;
@@ -150,6 +151,8 @@ export default function MyAttendancePage() {
           </CardContent>
         </Card>
       </div>
+
+      <MyScheduleCard />
     </div>
   );
 }
