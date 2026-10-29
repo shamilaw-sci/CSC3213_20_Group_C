@@ -116,3 +116,12 @@ export function hasPermission(role: string, permission: Permission): boolean {
   if (!role || !(role in ROLE_PERMISSIONS)) return false;
   return ROLE_PERMISSIONS[role as UserRole].includes(permission);
 }
+
+// One permission, or a list meaning "any of these". Mirrors the backend's
+// require_any_permission, for pages two different roles reach for different
+// reasons, e.g. Payroll: HR generates (payroll:generate), Director approves
+// (payroll:approve).
+export function hasAnyPermission(role: string, required: Permission | Permission[]): boolean {
+  const list = Array.isArray(required) ? required : [required];
+  return list.some((p) => hasPermission(role, p));
+}

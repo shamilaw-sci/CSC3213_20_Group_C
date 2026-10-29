@@ -1,12 +1,12 @@
 'use client';
 
 import { useState } from 'react';
-import { useAttendance, useLockAttendance, useExportAttendance } from '@/hooks/useHR';
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+import { useAttendance, useLockAttendance, useExportAttendance, useUnlockAttendance } from '@/hooks/useHR';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { format, parseISO } from 'date-fns';
-import { Lock, AlertCircle, Clock, Search, Download } from 'lucide-react';
+import { format } from 'date-fns';
+import { Lock, LockOpen, AlertCircle, Clock, Search, Download } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import {Dialog,DialogContent,DialogDescription,DialogHeader,DialogTitle,DialogTrigger,DialogFooter,DialogClose,} from "@/components/ui/dialog";
 
@@ -17,6 +17,7 @@ export default function HRAttendancePage() {
   const { data: attendanceLogs, isLoading } = useAttendance(targetDate);
   const { mutate: lockDay, isPending: isLocking } = useLockAttendance();
   const { mutateAsync: exportAttendance, isPending: isExporting } = useExportAttendance();
+  const { mutate: unlock, isPending: isUnlocking, variables: unlockingId } = useUnlockAttendance();
 
   const handleLockDay = () => {
     lockDay(targetDate);
@@ -36,15 +37,17 @@ export default function HRAttendancePage() {
     }
   };
 
-  const filteredLogs = attendanceLogs?.filter(log => {
-    if (filterIncomplete) {
-      return log.is_locked && !log.clock_out;
-    }
-    return true;
-  });
+  // Incomplete = no clock-out yet. Those are never locked by Lock Day (the
+  // server skips them), so they stay correctable. Records locked blank under
+  // the old rules can be unlocked and fixed.
+  const isComplete = (log: { clock_in: string | null; clock_out: string | null }) => !!log.clock_in && !!log.clock_out;
 
-  const allLocked = attendanceLogs?.length && attendanceLogs.every(log => log.is_locked);
-  const totalIncomplete = attendanceLogs?.filter(log => log.is_locked && !log.clock_out).length || 0;
+  const filteredLogs = attendanceLogs?.filter(log => (filterIncomplete ? !isComplete(log) : true));
+
+  const logs = attendanceLogs ?? [];
+  const totalIncomplete = logs.filter(log => !isComplete(log)).length;
+  const readyToLock = logs.filter(log => isComplete(log) && !log.is_locked).length;
+  const totalLocked = logs.filter(log => log.is_locked).length;
 
   return (
     <div className="space-y-6">
@@ -53,7 +56,7 @@ export default function HRAttendancePage() {
           <h1 className="text-3xl font-bold font-heading text-text-primary">Attendance Logs</h1>
           <p className="text-text-secondary mt-1">Review and manage daily attendance records.</p>
         </div>
-        
+
         <div className="flex items-center gap-3">
           <Input
             type="date"
@@ -62,7 +65,7 @@ export default function HRAttendancePage() {
             className="w-40 bg-surface border-border-brand"
             max={format(new Date(), 'yyyy-MM-dd')}
           />
-          <Button 
+          <Button
             variant="outline"
             onClick={() => setFilterIncomplete(!filterIncomplete)}
             className={filterIncomplete ? 'bg-amber-500/10 text-amber-500 border-amber-500/30' : ''}
@@ -81,20 +84,21 @@ export default function HRAttendancePage() {
 
           <Dialog>
             <DialogTrigger render={
-              <Button 
-                disabled={!attendanceLogs?.length || allLocked || isLocking}
+              <Button
+                disabled={readyToLock === 0 || isLocking}
                 className="bg-accent text-bg-brand hover:bg-accent/90"
               />
             }>
               <Lock className="w-4 h-4 mr-2" />
-              {allLocked ? 'Day Locked' : 'Lock Day'}
+              {readyToLock === 0 && totalLocked > 0 && totalIncomplete === 0 ? 'Day Locked' : 'Lock Day'}
             </DialogTrigger>
             <DialogContent className="sm:max-w-[425px] bg-bg-brand text-text-primary border-border-brand">
               <DialogHeader>
                 <DialogTitle>Lock Attendance for {targetDate}</DialogTitle>
                 <DialogDescription className="text-text-secondary">
-                  Are you sure? Locking the day will make all current records immutable. 
-                  Any active clock-ins will be marked as 'Incomplete'.
+                  Locks the {readyToLock} complete record{readyToLock === 1 ? '' : 's'} so they can&apos;t be edited.
+                  {totalIncomplete > 0 && ` ${totalIncomplete} without a clock-out will stay open until completed.`}
+                  {' '}A locked record can be unlocked for correction until that month&apos;s payroll is approved.
                 </DialogDescription>
               </DialogHeader>
               <DialogFooter className="mt-4">
@@ -102,8 +106,8 @@ export default function HRAttendancePage() {
                   Cancel
                 </DialogClose>
                 <DialogClose render={
-                  <Button 
-                    onClick={handleLockDay} 
+                  <Button
+                    onClick={handleLockDay}
                     className="bg-accent text-bg-brand hover:bg-accent/90"
                   />
                 }>
@@ -119,28 +123,24 @@ export default function HRAttendancePage() {
         <Card className="bg-surface border-border-brand">
           <CardContent className="p-4 flex flex-col items-center justify-center text-center space-y-1">
             <p className="text-sm font-medium text-text-secondary">Total Clocked In</p>
-            <p className="text-2xl font-bold font-heading">{attendanceLogs?.length || 0}</p>
+            <p className="text-2xl font-bold font-heading">{logs.length}</p>
           </CardContent>
         </Card>
         <Card className="bg-surface border-border-brand">
           <CardContent className="p-4 flex flex-col items-center justify-center text-center space-y-1">
-            <p className="text-sm font-medium text-text-secondary">Active Sessions</p>
-            <p className="text-2xl font-bold font-heading text-amber-500">
-              {attendanceLogs?.filter(l => !l.is_locked).length || 0}
-            </p>
+            <p className="text-sm font-medium text-text-secondary">Ready to Lock</p>
+            <p className="text-2xl font-bold font-heading text-amber-500">{readyToLock}</p>
           </CardContent>
         </Card>
         <Card className="bg-surface border-border-brand">
           <CardContent className="p-4 flex flex-col items-center justify-center text-center space-y-1">
-            <p className="text-sm font-medium text-text-secondary">Completed</p>
-            <p className="text-2xl font-bold font-heading text-emerald-500">
-              {attendanceLogs?.filter(l => l.is_locked && l.clock_out).length || 0}
-            </p>
+            <p className="text-sm font-medium text-text-secondary">Locked</p>
+            <p className="text-2xl font-bold font-heading text-emerald-500">{totalLocked}</p>
           </CardContent>
         </Card>
         <Card className="bg-surface border-border-brand">
           <CardContent className="p-4 flex flex-col items-center justify-center text-center space-y-1">
-            <p className="text-sm font-medium text-text-secondary">Incomplete</p>
+            <p className="text-sm font-medium text-text-secondary">No Clock-out</p>
             <p className="text-2xl font-bold font-heading text-rose-500">
               {totalIncomplete}
             </p>
@@ -164,6 +164,7 @@ export default function HRAttendancePage() {
                     <th className="px-6 py-4">Clock Out</th>
                     <th className="px-6 py-4">Hours</th>
                     <th className="px-6 py-4 text-right">Status</th>
+                    <th className="px-6 py-4"><span className="sr-only">Actions</span></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border-brand">
@@ -182,20 +183,33 @@ export default function HRAttendancePage() {
                         {log.worked_hours ? `${log.worked_hours}h` : '-'}
                       </td>
                       <td className="px-6 py-4 flex justify-end">
-                        {log.is_locked ? (
-                          log.clock_out ? (
-                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-500">
-                              <Lock className="w-3.5 h-3.5" /> Locked
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-rose-500/10 text-rose-500">
-                              <AlertCircle className="w-3.5 h-3.5" /> Incomplete
-                            </span>
-                          )
+                        {!isComplete(log) ? (
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-rose-500/10 text-rose-500">
+                            <AlertCircle className="w-3.5 h-3.5" /> {log.is_locked ? 'Locked, no clock-out' : 'No clock-out'}
+                          </span>
+                        ) : log.is_locked ? (
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-500">
+                            <Lock className="w-3.5 h-3.5" /> Locked
+                          </span>
                         ) : (
                           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-500/10 text-amber-500">
-                            <Clock className="w-3.5 h-3.5" /> Active
+                            <Clock className="w-3.5 h-3.5" /> Ready to lock
                           </span>
+                        )}
+                      </td>
+                      <td className="px-6 py-4 text-right">
+                        {log.is_locked && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            disabled={isUnlocking}
+                            onClick={() => unlock(log.id)}
+                            title="Reopen this record for correction"
+                            className="h-7 gap-1 px-2 text-xs text-text-secondary hover:text-text-primary"
+                          >
+                            <LockOpen className="h-3.5 w-3.5" />
+                            {isUnlocking && unlockingId === log.id ? 'Unlocking…' : 'Unlock'}
+                          </Button>
                         )}
                       </td>
                     </tr>
@@ -210,7 +224,7 @@ export default function HRAttendancePage() {
               </div>
               <p className="text-text-primary font-medium">No records found</p>
               <p className="text-text-secondary text-sm mt-1">
-                {filterIncomplete ? 'No incomplete records for this date.' : 'No attendance logs for this date.'}
+                {filterIncomplete ? 'Every record for this date has a clock-out.' : 'No attendance logs for this date.'}
               </p>
             </div>
           )}
