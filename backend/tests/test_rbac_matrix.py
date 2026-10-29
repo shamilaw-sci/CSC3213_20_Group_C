@@ -218,6 +218,7 @@ PERMISSION_ROUTES = [
     ("POST", "/api/hr/attendance/clock-in", "hr:attendance:self"),
     ("GET", "/api/hr/attendance", "hr:attendance:manage"),
     ("POST", "/api/hr/payroll/generate", "payroll:generate"),
+    ("POST", "/api/hr/payroll/runs/1/approve", "payroll:approve"),
     ("GET", "/api/finance/summary", "finance:read"),
     ("GET", "/api/finance/transactions", "finance:read"),
     ("GET", "/api/finance/ledger", "finance:read"),
@@ -287,7 +288,6 @@ def test_permission_routes_cover_every_granted_permission():
         # Depends can express it. Covered by the restricted-fund tests below.
         "finance:restricted:override",
         # No route enforces these yet.
-        "payroll:approve",
         "inventory:read",
         "inventory:issue",
     }

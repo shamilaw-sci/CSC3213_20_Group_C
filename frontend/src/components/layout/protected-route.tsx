@@ -3,12 +3,13 @@
 import { useAuthStore } from '@/store/useAuthStore';
 import { useRouter, usePathname } from 'next/navigation';
 import { useEffect } from 'react';
-import { hasPermission, Permission } from '@/lib/permissions';
+import { hasAnyPermission, Permission } from '@/lib/permissions';
 import ChatWidget from '@/components/shared/ChatWidget';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
-  requiredPermission?: Permission;
+  // A list means any of them.
+  requiredPermission?: Permission | Permission[];
 }
 
 export default function ProtectedRoute({ children, requiredPermission }: ProtectedRouteProps) {
@@ -21,7 +22,7 @@ export default function ProtectedRoute({ children, requiredPermission }: Protect
       router.push('/login');
     } else if (isAuthenticated && pathname === '/login') {
       router.push('/dashboard');
-    } else if (isAuthenticated && user && requiredPermission && !hasPermission(user.role, requiredPermission)) {
+    } else if (isAuthenticated && user && requiredPermission && !hasAnyPermission(user.role, requiredPermission)) {
       router.push('/unauthorized'); // Redirect to unauthorized page
     }
   }, [isAuthenticated, user, router, pathname, requiredPermission]);

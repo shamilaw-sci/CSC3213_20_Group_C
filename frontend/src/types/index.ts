@@ -19,6 +19,39 @@ export interface Employee {
   user_id?: string;
 }
 
+// --- Payroll (GET /hr/payroll/run) ---
+// A month's payroll run: Draft when generated, Approved when signed off by a
+// second person, and only then posted to the finance ledger.
+
+export interface PayrollRun {
+  id: number;
+  payroll_month: number;
+  payroll_year: number;
+  status: 'Draft' | 'Approved';
+  total: number;
+  generated_by: string | null;
+  generated_at: string;
+  approved_by: string | null;
+  approved_at: string | null;
+  finance_transaction_id: number | null;
+  generator?: { email: string } | null;
+  approver?: { email: string } | null;
+}
+
+export interface PayrollLine {
+  id: number;
+  employee_id: number;
+  employee_name: string;
+  nic: string | null;
+  net_payable: number;
+}
+
+export interface PayrollRunView {
+  run: PayrollRun | null;
+  lines: PayrollLine[];
+  incomplete_attendance: number;
+}
+
 export interface AttendanceRecord {
   id: number;
   employee_id: number;

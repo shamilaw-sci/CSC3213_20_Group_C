@@ -10,8 +10,7 @@ import {
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { useAuthStore } from '@/store/useAuthStore';
-import { hasPermission } from '@/lib/permissions';
-import { NAVIGATION_CONFIG } from '@/lib/navigation';
+import { NAVIGATION_CONFIG, canSeeNavItem } from '@/lib/navigation';
 
 interface SidebarProps {
   isCollapsed: boolean;
@@ -56,9 +55,7 @@ export function Sidebar({ isCollapsed, onToggle, isMobileOpen }: SidebarProps) {
       {/* Nav Items */}
       <nav className="flex-1 py-6 px-3 space-y-6 overflow-y-auto">
         {NAVIGATION_CONFIG.map((section) => {
-          const filteredItems = section.items.filter(item => 
-            user && (!item.requiredPermission || hasPermission(user.role, item.requiredPermission))
-          );
+          const filteredItems = section.items.filter(item => user && canSeeNavItem(user.role, item));
 
           if (filteredItems.length === 0) return null;
 
