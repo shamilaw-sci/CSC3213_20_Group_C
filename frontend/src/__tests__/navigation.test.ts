@@ -17,11 +17,12 @@ const expectedItemsPerRole: Record<UserRole, string[]> = {
   ],
   // Ledger is read-only for Director: it needs finance:read, while adding,
   // editing and voiding inside it need finance:write, which oversight lacks.
-  // No My Attendance: Director has no hr:attendance:self.
+  // My Attendance / My Leave: Director is an employee too (hr:attendance:self,
+  // granted 2026-10-29); it reaches only their own records.
   // Payroll: Director approves it (payroll:approve) without generating it.
   'Director': [
     'Overview', 'Payroll', 'Overview', 'Ledger', 'Reports', 'Stock',
-    'Active Programs', 'Case Hotspots', 'Case Triage', 'Field Dispatch', ...PERSONAL
+    'Active Programs', 'Case Hotspots', 'Case Triage', 'Field Dispatch', 'My Attendance', 'My Leave', ...PERSONAL
   ],
   'HR Officer': [
     'Overview', 'Employees', 'Attendance', 'Schedules & Holidays', 'Leave', 'Payroll',
@@ -31,7 +32,7 @@ const expectedItemsPerRole: Record<UserRole, string[]> = {
   // picker on the transaction form renders names rather than numeric ids.
   'Finance Officer': [
     'Overview', 'Payroll', 'Overview', 'Ledger', 'Reports',
-    'Stock', 'Active Programs', ...PERSONAL
+    'Stock', 'Active Programs', 'My Attendance', 'My Leave', ...PERSONAL
   ],
   // Clinic and field operations: inventory, programs and rescue, no HR/finance.
   'Operations Lead': [

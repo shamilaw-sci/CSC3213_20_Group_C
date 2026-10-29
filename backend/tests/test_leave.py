@@ -409,3 +409,24 @@ def test_join_date_needs_hr_manage():
     assert _send("HR Officer", supabase, "PATCH", "/api/leave/employees/9/date-joined",
                  json={"date_joined": "2026-03-15"}).status_code == 200
     assert {"date_joined": "2026-03-15"} in [d for t, d in supabase.updates if t == "employee_profile"]
+
+
+def test_self_service_reaches_every_employee_role_but_not_system_administrator():
+    # Director and Finance Officer granted 2026-10-29 so they can clock in and
+    # request their own leave. System Administrator is a technical role with
+    # no business-data access, and stays without it.
+    holders = sorted(r for r, perms in ROLE_PERMISSIONS.items() if "hr:attendance:self" in perms)
+    assert holders == ["Admin", "Director", "Finance Officer", "General Staff", "HR Officer", "Operations Lead"]
+
+
+@pytest.mark.parametrize("role", ["Director", "Finance Officer"])
+def test_director_and_finance_officer_can_request_their_own_leave(role):
+    supabase = _db()
+    response = _send(role, supabase, "POST", "/api/leave/requests", json=ANNUAL_WEEK, user_id=OTHER_USER_ID)
+    assert response.status_code == 200, response.text
+    assert _inserted(supabase, "leave_requests")[0]["employee_id"] == 8
+
+
+def test_system_administrator_cannot_use_self_service():
+    response = _send("System Administrator", _db(), "POST", "/api/leave/requests", json=ANNUAL_WEEK, user_id=OTHER_USER_ID)
+    assert response.status_code == 403
