@@ -124,7 +124,7 @@ export default function ProgramDetailsPage() {
             </div>
 
             {/* Stats */}
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-5">
               <StatBox label="Animals Treated" value={program.total_animals_treated} />
               <StatBox label="Total Cost" value={`Rs. ${(program.total_cost ?? 0).toLocaleString()}`} />
               <StatBox
@@ -268,9 +268,9 @@ function StatBox({
   valueClassName?: string;
 }) {
   return (
-    <div className="bg-surface border border-border-brand p-4 rounded-card">
-      <p className="text-[10px] text-text-secondary font-bold uppercase tracking-wider">{label}</p>
-      <p className={`text-lg font-bold font-heading mt-0.5 ${valueClassName ?? 'text-text-primary'}`}>{value}</p>
+    <div className="bg-surface border border-border-brand p-6 min-h-[120px] flex flex-col justify-center rounded-card">
+      <p className="text-xs text-text-secondary font-bold uppercase tracking-wider">{label}</p>
+      <p className={`text-2xl font-bold font-heading mt-1.5 ${valueClassName ?? 'text-text-primary'}`}>{value}</p>
     </div>
   );
 }
