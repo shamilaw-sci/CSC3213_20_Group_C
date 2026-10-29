@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useMemo } from 'react';
+import Link from 'next/link';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { FinanceService } from '@/services/finance.service';
 import { Transaction } from '@/types';
@@ -16,18 +17,16 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
-  PlusCircle,
   TrendingDown,
   TrendingUp,
   Pencil,
   Ban,
   MoreHorizontal,
-  Layers
+  Layers,
+  ArrowRight
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { format } from 'date-fns';
-import { NewTransactionModal } from '@/components/finance/NewTransactionModal';
-import { FinanceReportButton } from '@/components/finance/FinanceReportButton';
 import { EditTransactionModal } from '@/components/finance/EditTransactionModal';
 import {
   Dialog,
@@ -46,15 +45,13 @@ import {
   CartesianGrid, 
   Tooltip, 
   ResponsiveContainer,
-  BarChart,
-  Bar,
   PieChart,
   Pie,
   Cell
 } from 'recharts';
 import { KPICard } from '@/components/shared/kpi-card';
-import { ReportsService } from '@/services/reports.service';
-import { toast } from 'sonner';
+import { useAuthStore } from '@/store/useAuthStore';
+import { hasPermission } from '@/lib/permissions';
 
 const formatLKR = (amount: number) => {
   return new Intl.NumberFormat('en-LK', {
@@ -64,9 +61,15 @@ const formatLKR = (amount: number) => {
   }).format(amount);
 };
 
+// The Overview is the dashboard; the Ledger is the full record. This table
+// only shows the latest entries and links there for the rest.
+const RECENT_LIMIT = 10;
+
 export default function FinancePage() {
   const queryClient = useQueryClient();
-  const [showNewModal, setShowNewModal] = useState(false);
+  const { user } = useAuthStore();
+  // Same permission as the Ledger's nav entry and page guard.
+  const canOpenLedger = hasPermission(user?.role as string, 'finance:read');
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
   const [voidingTransaction, setVoidingTransaction] = useState<Transaction | null>(null);
   const [range, setRange] = useState<'12m' | '30d' | '7d'>('30d');
@@ -80,11 +83,6 @@ export default function FinancePage() {
   const { data: summary } = useQuery({
     queryKey: ['financeSummary'],
     queryFn: FinanceService.getSummary
-  });
-
-  const { data: programs } = useQuery({
-    queryKey: ['programs'],
-    queryFn: FinanceService.getPrograms
   });
 
   const { data: aging } = useQuery({
@@ -142,14 +140,35 @@ export default function FinancePage() {
     return daily;
   }, [transactions, range]);
 
-  // Program allocation split, by real accumulated cost rather than the
-  // nonexistent `budget` field (see types/index.ts — legacy, not in the DB).
+  // Non-voided expense totals per program, largest first. Expenses with no
+  // program are overhead and show as "General Operations". Both the donut
+  // and the Top Expense Programs list read from this, so they cannot
+  // disagree.
+  //
+  // This used to read programs[].total_cost, but /finance/programs responds
+  // with a schema that has no such field, so FastAPI stripped it and the
+  // donut was permanently empty.
+  const expenseByProgram = useMemo(() => {
+    if (!transactions) return [];
+    const byProgram = new Map<string, number>();
+    transactions.forEach((tx) => {
+      if (tx.transaction_type !== 'Expense' || tx.status === 'Voided') return;
+      const name = tx.programs?.program_name || 'General Operations';
+      byProgram.set(name, (byProgram.get(name) || 0) + Number(tx.amount));
+    });
+    return Array.from(byProgram.entries()).sort((a, b) => b[1] - a[1]);
+  }, [transactions]);
+
+  // Top four programs plus "Other", so every slice gets its own colour from
+  // the five in COLORS.
   const programData = useMemo(() => {
-    if (!programs) return [];
-    return programs
-      .filter((p) => (p.total_cost || 0) > 0)
-      .map((p) => ({ name: p.program_name, value: p.total_cost || 0 }));
-  }, [programs]);
+    const total = expenseByProgram.reduce((sum, [, value]) => sum + value, 0);
+    if (total === 0) return [];
+    const top = expenseByProgram.slice(0, 4).map(([name, value]) => ({ name, value }));
+    const rest = expenseByProgram.slice(4).reduce((sum, [, value]) => sum + value, 0);
+    if (rest > 0) top.push({ name: 'Other', value: rest });
+    return top.map((slice) => ({ ...slice, share: Math.round((slice.value / total) * 100) }));
+  }, [expenseByProgram]);
 
   // Month-over-month deltas for the KPI trend pills, computed from the same
   // transaction log rather than hardcoded percentages.
@@ -179,8 +198,9 @@ export default function FinancePage() {
     const receivablePct = pctChange(thisReceivable, prevReceivable);
 
     return {
-      expenseTrend: expensePct === null ? undefined : { value: Math.abs(expensePct), isPositive: expensePct <= 0 },
-      receivablesTrend: receivablePct === null ? undefined : { value: Math.abs(receivablePct), isPositive: receivablePct <= 0 },
+      // Spending and money still owed to us are both better when they fall.
+      expenseTrend: expensePct === null ? undefined : { value: expensePct, upIsGood: false },
+      receivablesTrend: receivablePct === null ? undefined : { value: receivablePct, upIsGood: false },
     };
   }, [transactions]);
 
@@ -188,17 +208,10 @@ export default function FinancePage() {
   // and "Revenue by Region" lists — Transaction has no category/region field,
   // so those cards were rendering data with no backing source at all.
   const topExpensePrograms = useMemo(() => {
-    if (!transactions) return [];
-    const byProgram = new Map<string, number>();
-    transactions.forEach((tx) => {
-      if (tx.transaction_type !== 'Expense' || tx.status === 'Voided') return;
-      const name = tx.programs?.program_name || 'General Operations';
-      byProgram.set(name, (byProgram.get(name) || 0) + tx.amount);
-    });
-    const sorted = Array.from(byProgram.entries()).sort((a, b) => b[1] - a[1]).slice(0, 4);
+    const sorted = expenseByProgram.slice(0, 4);
     const max = sorted[0]?.[1] || 1;
     return sorted.map(([category, value]) => ({ category, value, percentage: Math.round((value / max) * 100) }));
-  }, [transactions]);
+  }, [expenseByProgram]);
 
   const incomeByProgram = useMemo(() => {
     if (!transactions) return [];
@@ -215,8 +228,10 @@ export default function FinancePage() {
 
   const filteredTransactions = useMemo(() => {
     if (!transactions) return [];
-    if (statusFilter === 'All') return transactions;
-    return transactions.filter((tx) => tx.transaction_type === statusFilter);
+    const matching = statusFilter === 'All'
+      ? transactions
+      : transactions.filter((tx) => tx.transaction_type === statusFilter);
+    return matching.slice(0, RECENT_LIMIT);
   }, [transactions, statusFilter]);
 
   const COLORS = ['#EF9F27', '#16A34A', '#2563EB', '#D97706', '#DC2626'];
@@ -233,16 +248,7 @@ export default function FinancePage() {
             Track income, expenses, and manage receivables across all programs.
           </p>
         </div>
-        <div className="flex items-center gap-3">
-          <FinanceReportButton />
-        <Button 
-          onClick={() => setShowNewModal(true)} 
-          className="bg-[#EF9F27] hover:bg-[#D97706] text-white font-semibold flex items-center gap-2 rounded-lg py-2 px-4 shadow-sm transition-all"
-        >
-          <PlusCircle className="h-4 w-4" /> New Transaction
-        </Button>
       </div>
-    </div>
 
       {/* KPI Strip */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -395,15 +401,19 @@ export default function FinancePage() {
         </Card>
       </div>
 
-      {/* Secondary Chart Row: Donut + Bar */}
-      <div className="grid gap-6 md:grid-cols-2">
+      {/* Program split and ranked lists. The donut spans the full row at
+          md, where only two columns fit, so neither list is left alone. */}
+      <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
         {/* Allocations Donut Chart */}
-        <Card className="bg-surface border border-border-brand rounded-card shadow-card p-5">
+        <Card className="bg-surface border border-border-brand rounded-card shadow-card p-5 md:col-span-2 xl:col-span-1">
           <CardHeader className="flex flex-row items-center justify-between p-0 pb-4">
             <div>
               <CardTitle className="text-base font-semibold font-heading text-text-primary">
                 Program Allocations Split
               </CardTitle>
+              <CardDescription className="text-text-secondary text-xs mt-0.5">
+                Share of total spending by program
+              </CardDescription>
             </div>
             <button className="text-text-secondary hover:text-text-primary">
               <MoreHorizontal className="w-5 h-5" />
@@ -434,9 +444,10 @@ export default function FinancePage() {
                 </ResponsiveContainer>
                 <div className="flex flex-col gap-1.5 ml-4 shrink-0 text-left max-w-[150px] overflow-hidden">
                   {programData.map((entry, index) => (
-                    <div key={entry.name} className="flex items-center gap-2 text-[10px] text-text-secondary truncate">
+                    <div key={entry.name} className="flex items-center gap-2 text-[10px] text-text-secondary">
                       <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: COLORS[index % COLORS.length] }} />
                       <span className="truncate">{entry.name}</span>
+                      <span className="ml-auto pl-1 font-mono text-text-primary">{entry.share}%</span>
                     </div>
                   ))}
                 </div>
@@ -445,34 +456,6 @@ export default function FinancePage() {
           </CardContent>
         </Card>
 
-        {/* Transactions Category Bar Chart */}
-        <Card className="bg-surface border border-border-brand rounded-card shadow-card p-5">
-          <CardHeader className="flex flex-row items-center justify-between p-0 pb-4">
-            <div>
-              <CardTitle className="text-base font-semibold font-heading text-text-primary">
-                Transaction Category Split
-              </CardTitle>
-            </div>
-            <button className="text-text-secondary hover:text-text-primary">
-              <MoreHorizontal className="w-5 h-5" />
-            </button>
-          </CardHeader>
-          <CardContent className="h-[200px] p-0">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={programData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" opacity={0.3} vertical={false} />
-                <XAxis dataKey="name" fontSize={9} stroke="var(--color-text-secondary)" tickLine={false} />
-                <YAxis fontSize={9} stroke="var(--color-text-secondary)" tickLine={false} tickFormatter={(value) => `Rs.${value / 1000}k`} />
-                <Tooltip formatter={(value) => formatLKR(Number(value))} />
-                <Bar dataKey="value" fill="#EF9F27" radius={[4, 4, 0, 0]} barSize={24} />
-              </BarChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Two Column Ranked Lists */}
-      <div className="grid gap-6 md:grid-cols-2">
         {/* Top Expense Programs */}
         <Card className="bg-surface border border-border-brand rounded-card shadow-card p-5">
           <CardHeader className="flex flex-row items-center justify-between p-0 pb-4">
@@ -550,9 +533,19 @@ export default function FinancePage() {
               Recent Transactions
             </CardTitle>
             <CardDescription className="text-text-secondary text-xs mt-0.5">
-              Comprehensive log of all financial movements.
+              The latest {RECENT_LIMIT} entries.
+              {canOpenLedger && ' The full record, with filters and a running balance, is in the Ledger.'}
             </CardDescription>
           </div>
+          <div className="flex items-center gap-3">
+          {canOpenLedger && (
+            <Link
+              href="/finance/ledger"
+              className="flex items-center gap-1 text-xs font-semibold text-accent hover:underline"
+            >
+              View all in Ledger <ArrowRight className="h-3.5 w-3.5" />
+            </Link>
+          )}
           <div className="flex bg-bg-subtle p-1 rounded-lg border border-border-brand">
             {(['All', 'Income', 'Expense'] as const).map((opt) => (
               <button
@@ -567,6 +560,7 @@ export default function FinancePage() {
                 {opt}
               </button>
             ))}
+          </div>
           </div>
         </CardHeader>
         <CardContent className="p-0 pt-4">
@@ -662,7 +656,6 @@ export default function FinancePage() {
       </Card>
       
       {/* Transaction Modals */}
-      <NewTransactionModal open={showNewModal} onClose={() => setShowNewModal(false)} />
       
       <EditTransactionModal
         transaction={editingTransaction}

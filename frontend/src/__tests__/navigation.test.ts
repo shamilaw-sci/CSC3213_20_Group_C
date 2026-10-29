@@ -1,5 +1,7 @@
-import { NAVIGATION_CONFIG, NavItem } from '../lib/navigation';
-import { UserRole, hasPermission } from '../lib/permissions';
+import { NAVIGATION_CONFIG, canSeeNavItem } from '../lib/navigation';
+// A `type` import: Node strips types natively and fails on a type imported
+// as if it were a value, which is what had stopped this file running at all.
+import { type UserRole } from '../lib/permissions';
 
 // Hand-written on purpose: deriving these from ROLE_PERMISSIONS would make the
 // test tautological. Because the map is keyed by the UserRole union, adding a
@@ -8,25 +10,27 @@ const PERSONAL = ['Go to Website Home', 'Edit Profile', 'Account Settings', 'Sup
 
 const expectedItemsPerRole: Record<UserRole, string[]> = {
   'Admin': [
-    'Overview', 'Employees', 'Attendance', 'Payroll', 'Overview', 'Ledger',
-    'Receivables', 'Payables', 'Reports', 'Stock', 'Issue', 'Returns',
+    'Overview', 'Employees', 'Attendance', 'Schedules & Holidays', 'Payroll', 'Overview', 'Ledger',
+    'Reports', 'Stock', 'Issue', 'Returns',
     'Active Programs', 'Case Hotspots', 'Case Triage', 'Field Dispatch', 'My Attendance', 'System Admin',
     ...PERSONAL
   ],
-  // No Ledger: that needs finance:write, which oversight deliberately lacks.
+  // Ledger is read-only for Director: it needs finance:read, while adding,
+  // editing and voiding inside it need finance:write, which oversight lacks.
   // No My Attendance: Director has no hr:attendance:self.
+  // Payroll: Director approves it (payroll:approve) without generating it.
   'Director': [
-    'Overview', 'Overview', 'Receivables', 'Payables', 'Reports', 'Stock',
+    'Overview', 'Payroll', 'Overview', 'Ledger', 'Reports', 'Stock',
     'Active Programs', 'Case Hotspots', 'Case Triage', 'Field Dispatch', ...PERSONAL
   ],
   'HR Officer': [
-    'Overview', 'Employees', 'Attendance', 'Payroll',
+    'Overview', 'Employees', 'Attendance', 'Schedules & Holidays', 'Payroll',
     'Case Hotspots', 'Case Triage', 'Field Dispatch', 'My Attendance', ...PERSONAL
   ],
   // Active Programs is expected: programs:read was granted so the program
   // picker on the transaction form renders names rather than numeric ids.
   'Finance Officer': [
-    'Overview', 'Payroll', 'Overview', 'Ledger', 'Receivables', 'Payables', 'Reports',
+    'Overview', 'Payroll', 'Overview', 'Ledger', 'Reports',
     'Stock', 'Active Programs', ...PERSONAL
   ],
   // Clinic and field operations: inventory, programs and rescue, no HR/finance.
@@ -59,7 +63,7 @@ function runTest() {
     const allowedLabels: string[] = [];
     for (const section of NAVIGATION_CONFIG) {
       for (const item of section.items) {
-        if (!item.requiredPermission || hasPermission(role, item.requiredPermission)) {
+        if (canSeeNavItem(role, item)) {
           allowedLabels.push(item.label);
         }
       }

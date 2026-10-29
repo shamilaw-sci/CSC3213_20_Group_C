@@ -58,15 +58,64 @@ export function useLockAttendance() {
   
   return useMutation({
     mutationFn: HRService.lockAttendance,
-    onSuccess: () => {
+    onSuccess: ({ updated_count, skipped_incomplete }) => {
       queryClient.invalidateQueries({ queryKey: ['attendance'] });
-      toast.success('Attendance records locked for this date');
+      // Records without a clock-out are left open rather than frozen blank.
+      if (skipped_incomplete > 0) {
+        toast.warning(
+          `Locked ${updated_count} record(s). ${skipped_incomplete} without a clock-out were left open; complete them, then lock again.`,
+        );
+      } else {
+        toast.success(`Locked ${updated_count} record(s) for this date`);
+      }
     },
     onError: () => {
       toast.error('Failed to lock attendance');
     }
   });
 }
+export function useUnlockAttendance() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: HRService.unlockAttendance,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['attendance'] });
+      toast.success('Record unlocked for correction');
+    },
+    onError: (error: { response?: { data?: { detail?: unknown } } }) => {
+      const detail = error?.response?.data?.detail;
+      toast.error(typeof detail === 'string' ? detail : 'Failed to unlock the record');
+    },
+  });
+}
+
+export function usePayrollRun(month: number, year: number) {
+  return useQuery({
+    queryKey: ['payroll', 'run', { month, year }],
+    queryFn: () => HRService.getPayrollRun(month, year),
+  });
+}
+
+export function useApprovePayroll() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (runId: number) => HRService.approvePayroll(runId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['payroll'] });
+      // Approval posts an expense, so the finance views change too.
+      queryClient.invalidateQueries({ queryKey: ['transactions'] });
+      queryClient.invalidateQueries({ queryKey: ['financeSummary'] });
+      toast.success('Payroll approved and posted to the ledger as a payable');
+    },
+    onError: (error: { response?: { data?: { detail?: unknown } } }) => {
+      const detail = error?.response?.data?.detail;
+      toast.error(typeof detail === 'string' ? detail : 'Failed to approve payroll');
+    },
+  });
+}
+
 export function useRunPayroll() {
   const queryClient = useQueryClient();
 
@@ -75,7 +124,7 @@ export function useRunPayroll() {
       HRService.generatePayroll(month, year),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['payroll'] });
-      toast.success('Payroll generated successfully');
+      toast.success('Draft payroll generated. It still needs approval.');
     },
     onError: (error: any) => {
       const detail = error?.response?.data?.detail;

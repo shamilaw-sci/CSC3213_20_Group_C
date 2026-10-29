@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { FinanceService } from '@/services/finance.service';
-import { Transaction, Program } from '@/types';
+import { ReportsService } from '@/services/reports.service';
+import { LedgerFilters } from '@/types';
 
 export function useTransactions(start_date?: string, end_date?: string) {
   return useQuery({
@@ -23,10 +24,24 @@ export function useFinanceAging() {
   });
 }
 
-export function useMonthlySummary(year: number, month: number) {
+export function useFinanceReport(start: string, end: string) {
   return useQuery({
-    queryKey: ['finance-monthly-summary', { year, month }],
-    queryFn: () => FinanceService.getMonthlySummary(year, month)
+    queryKey: ['finance-report', { start, end }],
+    queryFn: () => ReportsService.getFinanceReport(start, end),
+    enabled: !!start && !!end && start <= end,
+    // Changing the period swaps the data in place rather than flashing the
+    // page back to skeletons.
+    placeholderData: (previous) => previous,
+  });
+}
+
+// Keyed under 'transactions' so every create / edit / void / settle, which
+// already invalidates that key, refreshes the ledger too.
+export function useLedger(filters: LedgerFilters, page: number, pageSize: number) {
+  return useQuery({
+    queryKey: ['transactions', 'ledger', { filters, page, pageSize }],
+    queryFn: () => FinanceService.getLedger(filters, page, pageSize),
+    placeholderData: (previous) => previous,
   });
 }
 
@@ -34,25 +49,6 @@ export function usePrograms() {
   return useQuery({
     queryKey: ['programs'],
     queryFn: FinanceService.getPrograms
-  });
-}
-
-export function useCreateTransaction() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    // Wrapped rather than passed by reference: createTransaction now takes an
-    // optional second argument (overrideRestricted), and a two-parameter
-    // function is not assignable to React Query's single-argument
-    // MutationFunction. This hook has no override affordance, so it always
-    // uses the default — an overspend from here is refused with 409, which is
-    // the correct outcome for a caller that cannot authorize one.
-    mutationFn: (transaction: Parameters<typeof FinanceService.createTransaction>[0]) =>
-      FinanceService.createTransaction(transaction),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['transactions'] });
-      queryClient.invalidateQueries({ queryKey: ['finance-summary'] });
-      queryClient.invalidateQueries({ queryKey: ['finance-aging'] });
-    }
   });
 }
 

@@ -4,8 +4,9 @@ import { useMyAttendance, useClockIn, useClockOut } from '@/hooks/useHR';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { format } from 'date-fns';
-import { Clock, Lock, AlertCircle } from 'lucide-react';
+import { Clock, Lock, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
+import { MyScheduleCard } from '@/components/hr/calendar/MyScheduleCard';
 
 export default function MyAttendancePage() {
   const currentMonth = new Date().getMonth() + 1;
@@ -52,10 +53,12 @@ export default function MyAttendancePage() {
                   {isClockingIn ? 'Clocking In...' : 'Clock In Now'}
                 </Button>
               </>
-            ) : todayRecord.is_locked ? (
+            ) : todayRecord.clock_out ? (
               <>
                 <div className="text-center space-y-2">
-                  <Lock className="w-12 h-12 text-emerald-500 mx-auto" />
+                  {todayRecord.is_locked
+                    ? <Lock className="w-12 h-12 text-emerald-500 mx-auto" />
+                    : <CheckCircle2 className="w-12 h-12 text-emerald-500 mx-auto" />}
                   <p className="font-medium text-emerald-500">Attendance Completed</p>
                   <p className="text-sm text-text-secondary">
                     In: {format(new Date(todayRecord.clock_in!), 'HH:mm')} | Out: {todayRecord.clock_out ? format(new Date(todayRecord.clock_out), 'HH:mm') : '-'}
@@ -121,19 +124,23 @@ export default function MyAttendancePage() {
                           {log.worked_hours ? `${log.worked_hours}h` : '-'}
                         </td>
                         <td className="px-4 py-3">
-                          {log.is_locked ? (
-                            log.clock_out ? (
+                          {log.clock_out ? (
+                            log.is_locked ? (
                               <span className="flex items-center gap-1.5 text-emerald-500">
                                 <Lock className="w-3.5 h-3.5" /> Locked
                               </span>
                             ) : (
-                              <span className="flex items-center gap-1.5 text-rose-500">
-                                <AlertCircle className="w-3.5 h-3.5" /> Incomplete
+                              <span className="flex items-center gap-1.5 text-emerald-500">
+                                <CheckCircle2 className="w-3.5 h-3.5" /> Completed
                               </span>
                             )
-                          ) : (
+                          ) : log.target_date === todayStr ? (
                             <span className="flex items-center gap-1.5 text-amber-500">
                               <Clock className="w-3.5 h-3.5" /> Active
+                            </span>
+                          ) : (
+                            <span className="flex items-center gap-1.5 text-rose-500">
+                              <AlertCircle className="w-3.5 h-3.5" /> No clock-out
                             </span>
                           )}
                         </td>
@@ -150,6 +157,8 @@ export default function MyAttendancePage() {
           </CardContent>
         </Card>
       </div>
+
+      <MyScheduleCard />
     </div>
   );
 }

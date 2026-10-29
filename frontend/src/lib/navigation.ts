@@ -7,7 +7,6 @@ import {
   Wallet,
   FileText,
   Boxes,
-  ArrowDownUp,
   RotateCcw,
   BookOpen,
   FolderOpen,
@@ -15,21 +14,29 @@ import {
   ClipboardList,
   Navigation,
   HeartHandshake,
-  CalendarClock
+  CalendarClock,
+  CalendarDays
 } from 'lucide-react';
 
-import type { Permission } from './permissions';
+import { hasAnyPermission, type Permission } from './permissions';
 
 export interface NavItem {
   label: string;
   href: string;
   icon?: any;
-  requiredPermission?: Permission;
+  // A list means any of them.
+  requiredPermission?: Permission | Permission[];
 }
 
 export interface NavSection {
   title: string;
   items: NavItem[];
+}
+
+// The one visibility rule for the sidebar, shared with navigation.test.ts so
+// the test checks the real logic rather than a copy of it.
+export function canSeeNavItem(role: string, item: NavItem): boolean {
+  return !item.requiredPermission || hasAnyPermission(role, item.requiredPermission);
 }
 
 export const NAVIGATION_CONFIG: NavSection[] = [
@@ -44,16 +51,20 @@ export const NAVIGATION_CONFIG: NavSection[] = [
     items: [
       { label: 'Employees', href: '/hr/employees', icon: Users, requiredPermission: 'hr:manage' },
       { label: 'Attendance', href: '/hr/attendance', icon: Calendar, requiredPermission: 'hr:attendance:manage' },
-      { label: 'Payroll', href: '/hr/payroll', icon: Wallet, requiredPermission: 'payroll:generate' },
+      // Attendance managers read it; editing inside needs hr:manage.
+      { label: 'Schedules & Holidays', href: '/hr/schedules', icon: CalendarDays, requiredPermission: ['hr:manage', 'hr:attendance:manage'] },
+      // Generate or approve: Director signs payroll off from this page.
+      { label: 'Payroll', href: '/hr/payroll', icon: Wallet, requiredPermission: ['payroll:generate', 'payroll:approve'] },
     ]
   },
   {
     title: 'FINANCE',
     items: [
       { label: 'Overview', href: '/finance/overview', icon: DollarSign, requiredPermission: 'finance:read' },
-      { label: 'Ledger', href: '/finance/ledger', icon: FileText, requiredPermission: 'finance:write' },
-      { label: 'Receivables', href: '/finance/receivables', icon: ArrowDownUp, requiredPermission: 'finance:read' },
-      { label: 'Payables', href: '/finance/payables', icon: ArrowDownUp, requiredPermission: 'finance:read' },
+      // finance:read, not write: the Ledger is the full record, so Director
+      // reads it too. Adding, editing and voiding stay behind finance:write
+      // inside the page.
+      { label: 'Ledger', href: '/finance/ledger', icon: FileText, requiredPermission: 'finance:read' },
       { label: 'Reports', href: '/finance/reports', icon: FileText, requiredPermission: 'finance:read' },
     ]
   },

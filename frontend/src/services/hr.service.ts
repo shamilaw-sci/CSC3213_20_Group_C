@@ -1,5 +1,5 @@
 import api from '@/lib/api-client';
-import { Employee, AttendanceRecord } from '@/types';
+import { Employee, AttendanceRecord, PayrollRun, PayrollRunView } from '@/types';
 
 export const HRService = {
   getEmployees: async () => {
@@ -50,12 +50,32 @@ export const HRService = {
   },
 
   lockAttendance: async (date: string) => {
-    const response = await api.post(`/hr/attendance/lock-day`, null, { params: { target_date: date } });
+    const response = await api.post<{ updated_count: number; skipped_incomplete: number }>(
+      `/hr/attendance/lock-day`, null, { params: { target_date: date } },
+    );
     return response.data;
   },
 
+  unlockAttendance: async (id: number) => {
+    const response = await api.post<AttendanceRecord>(`/hr/attendance/${id}/unlock`);
+    return response.data;
+  },
+
+  getPayrollRun: async (month: number, year: number) => {
+    const response = await api.get<PayrollRunView>('/hr/payroll/run', { params: { month, year } });
+    return response.data;
+  },
+
+  // Creates or refreshes the month's Draft. Nothing reaches the ledger yet.
   generatePayroll: async (month: number, year: number) => {
-    const response = await api.post(`/hr/payroll/generate`, null, { params: { month, year } });
+    const response = await api.post<PayrollRun>(`/hr/payroll/generate`, null, { params: { month, year } });
+    return response.data;
+  },
+
+  // Posts the run's total to the ledger as a payable. Refused for whoever
+  // generated it.
+  approvePayroll: async (runId: number) => {
+    const response = await api.post<PayrollRun>(`/hr/payroll/runs/${runId}/approve`);
     return response.data;
   },
 

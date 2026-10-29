@@ -77,6 +77,28 @@ def compute_restricted_balance(supabase: Client, program_id: int) -> dict:
     }
 
 
+def restricted_effect(row: dict | None, program_id: int) -> Decimal:
+    """
+    How much one ledger row adds to (or, negative, takes from) a program's
+    restricted `remaining`, by exactly the rules compute_restricted_balance
+    applies. None — no row, as on a create — contributes nothing.
+
+    Exists so an edit can be checked as "remove the old row, add the new one"
+    without a second copy of those rules that could drift from the first.
+    """
+    if not row or row.get("program_id") != program_id or row.get("status") == "Voided":
+        return Decimal("0.00")
+
+    amount = _to_decimal(row.get("amount"))
+    tx_type = (row.get("transaction_type") or "").lower()
+
+    if tx_type == "expense":
+        return -amount
+    if tx_type == "income" and row.get("is_restricted") and row.get("status") == "Cash":
+        return amount
+    return Decimal("0.00")
+
+
 def is_program_restricted(supabase: Client, program_id: int) -> bool:
     """
     True if this program has ever received restricted income.

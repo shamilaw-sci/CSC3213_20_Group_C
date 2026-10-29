@@ -3,13 +3,14 @@ from datetime import date
 from decimal import Decimal
 from supabase import Client
 
+from app.services.finance_reports import fetch_ledger, finance_snapshot
 from app.services.restricted_funds import compute_restricted_balance
 
 # ---------- implementations ----------
 
 def get_finance_summary(supabase: Client) -> dict:
-    """Current cash position — same RPC the finance dashboard uses."""
-    return supabase.rpc("get_finance_summary", {}).execute().data
+    """Current cash position: the same figures as the finance Overview."""
+    return finance_snapshot(fetch_ledger(supabase, date.max), date.today())
 
 
 def get_monthly_summary(supabase: Client, year: int, month: int) -> dict:

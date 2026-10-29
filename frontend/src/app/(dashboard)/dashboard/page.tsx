@@ -356,7 +356,11 @@ function FinanceOfficerDashboard() {
           </CardHeader>
           <CardContent>
             <div className="text-center py-8 text-text-secondary">
-              Review <Link href="/finance/receivables" className="text-accent underline">receivables</Link> for items needing attention.
+              Review{' '}
+              <Link href="/finance/ledger?status=Receivable&type=Income&sort=oldest" className="text-accent underline">
+                open receivables in the Ledger
+              </Link>
+              , oldest first, for items needing attention.
             </div>
           </CardContent>
         </Card>

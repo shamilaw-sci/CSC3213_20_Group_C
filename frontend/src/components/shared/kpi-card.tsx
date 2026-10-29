@@ -1,16 +1,19 @@
 'use client';
 
-import { Card, CardContent } from '@/components/ui/card';
+import { Card } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
-import { ArrowUpRight, ArrowDownRight } from 'lucide-react';
+import { ArrowUpRight, ArrowDownRight, Minus } from 'lucide-react';
 
 interface KPICardProps {
   title: string;
   value: string | number;
   description?: string;
+  // `value` is the signed % change. The arrow follows its sign; the colour
+  // follows whether that direction is good for this figure. They used to be
+  // one flag, so a fall in spending was drawn as a green up-arrow.
   trend?: {
     value: number;
-    isPositive: boolean;
+    upIsGood: boolean;
   };
   className?: string;
 }
@@ -43,16 +46,20 @@ export function KPICard({
           <div className="flex items-center gap-2 mt-1">
             <span className={cn(
               "inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold",
-              trend.isPositive 
-                ? "bg-green-500/10 text-positive" 
-                : "bg-red-500/10 text-negative"
+              trend.value === 0
+                ? "bg-bg-subtle text-text-secondary"
+                : (trend.value > 0) === trend.upIsGood
+                  ? "bg-green-500/10 text-positive"
+                  : "bg-red-500/10 text-negative"
             )}>
-              {trend.isPositive ? (
+              {trend.value > 0 ? (
                 <ArrowUpRight className="w-3.5 h-3.5" />
-              ) : (
+              ) : trend.value < 0 ? (
                 <ArrowDownRight className="w-3.5 h-3.5" />
+              ) : (
+                <Minus className="w-3.5 h-3.5" />
               )}
-              {trend.value}%
+              {trend.value > 0 ? '+' : ''}{trend.value}%
             </span>
             <span className="text-xs text-text-secondary">
               {description}

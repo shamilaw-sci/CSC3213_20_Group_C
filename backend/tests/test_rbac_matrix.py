@@ -214,15 +214,24 @@ def test_public_rescue_routes_allow_anonymous(method, path):
 # (method, path, permission enforced by the route's require_permission dependency)
 PERMISSION_ROUTES = [
     ("GET", "/api/hr/employees", "hr:manage"),
+    ("POST", "/api/hr/schedules", "hr:manage"),
+    ("POST", "/api/hr/holidays", "hr:manage"),
     ("POST", "/api/hr/employees", "hr:manage"),
     ("POST", "/api/hr/attendance/clock-in", "hr:attendance:self"),
     ("GET", "/api/hr/attendance", "hr:attendance:manage"),
     ("POST", "/api/hr/payroll/generate", "payroll:generate"),
+    ("POST", "/api/hr/payroll/runs/1/approve", "payroll:approve"),
     ("GET", "/api/finance/summary", "finance:read"),
     ("GET", "/api/finance/transactions", "finance:read"),
+    ("GET", "/api/finance/ledger", "finance:read"),
     ("POST", "/api/finance/transactions", "finance:write"),
     ("GET", "/api/finance/programs", "programs:read"),
     ("POST", "/api/finance/programs", "programs:manage"),
+    # Was check_user_role(["admin", "director", "finance"]), which compares
+    # role names: "finance officer" != "finance", so the Finance Officer was
+    # refused their own report.
+    ("GET", "/api/reports/finance/summary?start_date=2026-01-01&end_date=2026-01-31", "finance:read"),
+    ("GET", "/api/reports/finance?start_date=2026-01-01&end_date=2026-01-31", "finance:read"),
     ("GET", "/api/admin/audit-logs", "audit:read"),
     ("GET", "/api/admin/audit-logs/verify", "audit:read"),
     ("GET", "/api/admin/stats", "admin:users"),
@@ -281,7 +290,6 @@ def test_permission_routes_cover_every_granted_permission():
         # Depends can express it. Covered by the restricted-fund tests below.
         "finance:restricted:override",
         # No route enforces these yet.
-        "payroll:approve",
         "inventory:read",
         "inventory:issue",
     }

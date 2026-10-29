@@ -1,9 +1,17 @@
 import api from '@/lib/api-client';
-import { Transaction, Program, MonthlySummary, RestrictedBalance } from '@/types';
+import { Transaction, Program, RestrictedBalance, LedgerFilters, LedgerPage } from '@/types';
 
 export const FinanceService = {
   getTransactions: async (params?: { start_date?: string, end_date?: string }) => {
     const response = await api.get<Transaction[]>('/finance/transactions', { params });
+    return response.data;
+  },
+
+  // `all` returns every matching row unpaged, for CSV export.
+  getLedger: async (filters: LedgerFilters, page = 1, pageSize = 50, all = false) => {
+    const response = await api.get<LedgerPage>('/finance/ledger', {
+      params: { ...filters, page, page_size: pageSize, all: all || undefined },
+    });
     return response.data;
   },
   
@@ -37,8 +45,16 @@ export const FinanceService = {
     return response.data;
   },
 
-  updateTransaction: async (id: number, transaction: Omit<Transaction, 'id' | 'programs'>) => {
-  const response = await api.put<Transaction>(`/finance/transactions/${id}`, transaction);
+  // Edits are checked against restricted funds the same way creates are, so
+  // the same override applies — see createTransaction.
+  updateTransaction: async (
+    id: number,
+    transaction: Omit<Transaction, 'id' | 'programs'>,
+    overrideRestricted = false,
+  ) => {
+  const response = await api.put<Transaction>(`/finance/transactions/${id}`, transaction, {
+    params: overrideRestricted ? { override_restricted: true } : undefined,
+  });
   return response.data;
 },
 
@@ -63,13 +79,6 @@ settleTransaction: async (id: number) => {
 
   getAging: async () => {
     const response = await api.get<Record<string, number>>('/finance/aging');
-    return response.data;
-  },
-
-  getMonthlySummary: async (year: number, month: number) => {
-    const response = await api.get<MonthlySummary>('/finance/summary/monthly', {
-      params: { year, month },
-    });
     return response.data;
   }
 };

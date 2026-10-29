@@ -4,7 +4,7 @@ from app.schemas.hr import (EmployeeProfile, EmployeeProfileCreate,AttendanceLog
 from typing import List, Optional, Dict, Any
 from datetime import date, datetime, timezone
 from supabase import Client
-from app.core.security import require_permission
+from app.core.security import require_any_permission, require_permission
 from app.core.audit import log_audit_action
 from fastapi.responses import StreamingResponse
 from datetime import date as date_cls
@@ -115,16 +115,16 @@ async def clock_out(user = Depends(require_permission('hr:attendance:self')), su
     diff = clock_out_time - clock_in_time
     worked_hours = round(diff.total_seconds() / 3600.0, 2)
     
+    # Clocking out does not lock. It used to, which left HR unable to correct
+    # a wrong clock-out: update_attendance refuses locked rows and nothing
+    # could unlock them. Locking is HR's step, per day, once reviewed.
     update_data = {
         "clock_out": clock_out_time.isoformat(),
         "worked_hours": worked_hours,
-        "is_locked": True
     }
     
     resp = supabase.table("attendance_log").update(update_data).eq("id", record['id']).execute()
 
-    # Clocking out also locks the record, which is what payroll later depends
-    # on — worth an entry showing the hours that got frozen in.
     await log_audit_action(
         supabase,
         user_id=user["id"],
@@ -280,8 +280,18 @@ async def update_attendance(attendance_id: int, attendance: AttendanceLogUpdate,
 
 @router.post("/attendance/lock-day")
 async def lock_day_attendance(target_date: date, user = Depends(require_permission('hr:attendance:manage')), supabase: Client = Depends(get_supabase)):
-    response = supabase.table("attendance_log").update({"is_locked": True}).eq("target_date", str(target_date)).execute()
-    updated_count = len(response.data) if response.data else 0
+    # Only complete records are locked. Locking a record with no clock-out
+    # froze it with blank hours, and with nothing able to unlock it the
+    # mistake was permanent. Incomplete ones are reported back instead.
+    day = supabase.table("attendance_log").select("id, clock_in, clock_out, is_locked") \
+        .eq("target_date", str(target_date)).execute().data or []
+    lockable = [r["id"] for r in day if r.get("clock_in") and r.get("clock_out") and not r.get("is_locked")]
+    incomplete = [r["id"] for r in day if not (r.get("clock_in") and r.get("clock_out"))]
+
+    updated_count = 0
+    if lockable:
+        response = supabase.table("attendance_log").update({"is_locked": True}).in_("id", lockable).execute()
+        updated_count = len(response.data) if response.data else 0
 
     # Locking a day is what makes those hours eligible for payroll, so it is a
     # financially meaningful action even though it edits no money directly.
@@ -291,17 +301,121 @@ async def lock_day_attendance(target_date: date, user = Depends(require_permissi
         action_type="ATTENDANCE_LOCK_DAY",
         table_name="attendance_log",
         old_payload=None,
-        new_payload={"target_date": str(target_date), "updated_count": updated_count},
+        new_payload={
+            "target_date": str(target_date),
+            "updated_count": updated_count,
+            "skipped_incomplete": len(incomplete),
+        },
     )
 
-    return {"message": f"Attendance locked for {target_date}", "updated_count": updated_count}
+    return {
+        "message": f"Attendance locked for {target_date}",
+        "updated_count": updated_count,
+        "skipped_incomplete": len(incomplete),
+    }
 
 @router.post("/attendance/lock")
 async def lock_attendance(target_date: date, user = Depends(require_permission('hr:attendance:manage')), supabase: Client = Depends(get_supabase)):
     # Kept for backward compatibility with older UI if any
     return await lock_day_attendance(target_date, user, supabase)
 
+@router.post("/attendance/{attendance_id}/unlock", response_model=AttendanceLog)
+async def unlock_attendance(attendance_id: int, user = Depends(require_permission('hr:attendance:manage')), supabase: Client = Depends(get_supabase)):
+    """
+    Reopen a locked record for correction.
+
+    Refused once that month's payroll is approved: approved pay was worked
+    out from the month as it stood, so its attendance is history from then.
+    """
+    existing = supabase.table("attendance_log").select("*").eq("id", attendance_id).execute()
+    if not existing.data:
+        raise HTTPException(status_code=404, detail="Attendance record not found")
+    record = existing.data[0]
+    if not record.get("is_locked"):
+        raise HTTPException(status_code=400, detail="This record is not locked.")
+
+    record_date = date_cls.fromisoformat(str(record["target_date"])[:10])
+    if _approved_run(supabase, record_date.month, record_date.year):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Payroll for {record_date.month}/{record_date.year} is approved; its attendance can no longer be changed.",
+        )
+
+    response = supabase.table("attendance_log").update({"is_locked": False}).eq("id", attendance_id).execute()
+    if not response.data:
+        raise HTTPException(status_code=400, detail="Failed to unlock attendance")
+
+    await log_audit_action(
+        supabase,
+        user_id=user["id"],
+        action_type="ATTENDANCE_UNLOCK",
+        table_name="attendance_log",
+        old_payload=record,
+        new_payload=response.data[0],
+    )
+
+    return response.data[0]
+
+
 # --- PAYROLL PIPELINE ---
+#
+# A month's payroll is a payroll_runs row: Draft when generated, Approved when
+# a second person signs it off, and only then posted to the finance ledger.
+# The transactional work lives in two SQL functions; see
+# db/migrations/007_payroll_runs.sql for why.
+
+# Sentences the SQL functions RAISE, mapped to HTTP statuses. PostgREST wraps
+# the message in JSON, so the endpoint matches on these and returns the
+# sentence alone rather than the wrapper.
+_RPC_ERRORS = (
+    ("is already approved", 409),
+    ("must be approved by someone other than", 403),
+    ("not found", 404),
+    ("No active employees found", 404),
+    ("has nothing to pay", 400),
+)
+
+
+def _month_bounds(month: int, year: int) -> tuple[str, str]:
+    start = f"{year}-{month:02d}-01"
+    end = f"{year+1}-01-01" if month == 12 else f"{year}-{month+1:02d}-01"
+    return start, end
+
+
+def _approved_run(supabase: Client, month: int, year: int) -> bool:
+    runs = supabase.table("payroll_runs").select("id, status") \
+        .eq("payroll_month", month).eq("payroll_year", year).execute().data or []
+    return any(r.get("status") == "Approved" for r in runs)
+
+
+def _validate_month(month: int, year: int) -> None:
+    if not 1 <= month <= 12 or not 2000 <= year <= 2100:
+        raise HTTPException(status_code=400, detail="Choose a valid month and year.")
+
+
+def _audit_run(run: dict) -> dict:
+    # total as a decimal string: a whole-number float like 155000.0 comes
+    # back from JSONB as 155000 and would make the audit hash unverifiable
+    # (see the note in create_transaction in app/api/finance.py).
+    return {**run, "total": f"{float(run.get('total') or 0):.2f}"}
+
+
+def _rpc_error(e: Exception) -> HTTPException:
+    """Turn a SQL function's RAISE EXCEPTION into an HTTP error."""
+    # postgrest's APIError carries the raised text in .message; fall back to
+    # str() for anything else.
+    msg = getattr(e, "message", None) or str(e)
+    for needle, status in _RPC_ERRORS:
+        if needle in msg:
+            return HTTPException(status_code=status, detail=msg)
+    return HTTPException(status_code=500, detail=f"Payroll operation failed: {msg}")
+
+
+def _single(data):
+    """An RPC returning one composite row may come back as a dict or a list."""
+    if isinstance(data, list):
+        return data[0] if data else None
+    return data
 
 
 @router.get("/payroll", response_model=List[PayrollLedger])
@@ -309,53 +423,122 @@ async def get_payroll(month: int, year: int, user = Depends(require_permission('
     response = supabase.table("payroll_ledger").select("*").eq("payroll_month", month).eq("payroll_year", year).execute()
     return response.data
 
-@router.post("/payroll/generate", response_model=List[PayrollLedger])
+
+@router.get("/payroll/run")
+async def get_payroll_run(
+    month: int,
+    year: int,
+    user = Depends(require_any_permission('payroll:generate', 'payroll:approve')),
+    supabase: Client = Depends(get_supabase),
+):
+    """
+    The month's run, its lines with employee names, and how many attendance
+    records in the month are still incomplete (a warning, not a gate: pay is a
+    fixed monthly salary).
+    """
+    _validate_month(month, year)
+
+    runs = supabase.table("payroll_runs") \
+        .select(
+            "*, generator:users!payroll_runs_generated_by_fkey(email), "
+            "approver:users!payroll_runs_approved_by_fkey(email)"
+        ) \
+        .eq("payroll_month", month).eq("payroll_year", year).execute().data or []
+    run = runs[0] if runs else None
+
+    lines = []
+    if run:
+        rows = supabase.table("payroll_ledger") \
+            .select("*, employee_profile(first_name, last_name, nic)") \
+            .eq("run_id", run["id"]).execute().data or []
+        for r in rows:
+            profile = r.get("employee_profile") or {}
+            name = f"{profile.get('first_name', '')} {profile.get('last_name', '')}".strip()
+            lines.append({
+                "id": r.get("id"),
+                "employee_id": r.get("employee_id"),
+                "employee_name": name or f"Employee {r.get('employee_id')}",
+                "nic": profile.get("nic"),
+                "net_payable": float(r.get("net_payable") or 0),
+            })
+        lines.sort(key=lambda line: line["employee_name"].lower())
+
+    start, end = _month_bounds(month, year)
+    logs = supabase.table("attendance_log").select("id, clock_in, clock_out") \
+        .gte("target_date", start).lt("target_date", end).execute().data or []
+    incomplete = sum(1 for log in logs if not (log.get("clock_in") and log.get("clock_out")))
+
+    return {"run": run, "lines": lines, "incomplete_attendance": incomplete}
+
+
+@router.post("/payroll/generate")
 async def generate_monthly_payroll(
     month: int,
     year: int,
     user = Depends(require_permission('payroll:generate')),
     supabase: Client = Depends(get_supabase)
 ):
-    start_date = f"{year}-{month:02d}-01"
-    end_date = f"{year+1}-01-01" if month == 12 else f"{year}-{month+1:02d}-01"
-    
-    unlocked = supabase.table("attendance_log").select("id, employee_id, target_date").gte("target_date", start_date).lt("target_date", end_date).eq("is_locked", False).execute()
-    if unlocked.data:
-        raise HTTPException(status_code=422, detail=f"Cannot generate payroll: {len(unlocked.data)} attendance records are unlocked/incomplete in this period. Lock them first.")
-        
+    """
+    Create or refresh the month's Draft. Nothing reaches the finance ledger
+    until approve_payroll.
+
+    Attendance no longer blocks this. Pay is a fixed monthly salary, so an
+    unlocked or incomplete record does not change it; it used to stop the
+    whole organisation's payroll over one forgotten clock-out.
+    """
+    _validate_month(month, year)
     try:
         result = supabase.rpc(
-            "generate_monthly_payroll",
-            {"p_month": month, "p_year": year}
+            "generate_payroll_draft",
+            {"p_month": month, "p_year": year, "p_user": str(user["id"])},
         ).execute()
-
-        rows = result.data or []
-
-        # Distinct from PAYROLL_GENERATE_FINANCE: this path runs the database
-        # RPC rather than the inline loop in finance.py.
-        await log_audit_action(
-            supabase,
-            user_id=user["id"],
-            action_type="PAYROLL_GENERATE_HR",
-            table_name="payroll_ledger",
-            old_payload=None,
-            new_payload={
-                "month": month,
-                "year": year,
-                "rows_created": len(rows),
-                "total_payout": sum(float(r.get("net_payable") or 0) for r in rows),
-            },
-        )
-
-        return result.data
-
-    except HTTPException:
-        raise
     except Exception as e:
-        msg = str(e)
-        if "already been processed" in msg:
-            raise HTTPException(status_code=400, detail=msg)
-        if "No active employees found" in msg:
-            raise HTTPException(status_code=404, detail=msg)
-        raise HTTPException(status_code=500, detail=f"Payroll generation failed: {msg}")
+        raise _rpc_error(e)
 
+    run = _single(result.data)
+    if not run:
+        raise HTTPException(status_code=500, detail="Payroll generation returned no run.")
+
+    await log_audit_action(
+        supabase,
+        user_id=user["id"],
+        action_type="PAYROLL_DRAFT_GENERATE",
+        table_name="payroll_runs",
+        old_payload=None,
+        new_payload=_audit_run(run),
+    )
+    return run
+
+
+@router.post("/payroll/runs/{run_id}/approve")
+async def approve_payroll(
+    run_id: int,
+    user = Depends(require_permission('payroll:approve')),
+    supabase: Client = Depends(get_supabase),
+):
+    """
+    Approve a Draft: freezes it and posts its total to the ledger as a payable
+    dated the last day of the month. The SQL function refuses an approval by
+    whoever generated the run.
+    """
+    try:
+        result = supabase.rpc(
+            "approve_payroll_run",
+            {"p_run_id": run_id, "p_user": str(user["id"])},
+        ).execute()
+    except Exception as e:
+        raise _rpc_error(e)
+
+    run = _single(result.data)
+    if not run:
+        raise HTTPException(status_code=500, detail="Payroll approval returned no run.")
+
+    await log_audit_action(
+        supabase,
+        user_id=user["id"],
+        action_type="PAYROLL_APPROVE",
+        table_name="payroll_runs",
+        old_payload=None,
+        new_payload=_audit_run(run),
+    )
+    return run

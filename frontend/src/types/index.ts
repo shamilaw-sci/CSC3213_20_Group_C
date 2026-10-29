@@ -19,6 +19,106 @@ export interface Employee {
   user_id?: string;
 }
 
+// --- Work schedules and holidays (app/api/hr_calendar.py) ---
+
+export interface ScheduleDay {
+  weekday: number; // ISO: 1 = Monday ... 7 = Sunday
+  start_time: string; // HH:MM[:SS], Sri Lanka time
+  end_time: string; // earlier than start_time = overnight shift
+  break_minutes: number;
+}
+
+export interface WorkSchedule {
+  id: number;
+  name: string;
+  is_default: boolean;
+  grace_minutes: number;
+  observes_holidays: boolean;
+  days: ScheduleDay[];
+}
+
+export type WorkScheduleInput = Pick<WorkSchedule, 'name' | 'grace_minutes' | 'observes_holidays' | 'days'>;
+
+export interface ScheduleAssignment {
+  id: number;
+  employee_id: number;
+  schedule_id: number;
+  schedule_name: string | null;
+  effective_from: string;
+}
+
+export interface ScheduleAssignmentRow {
+  employee_id: number;
+  employee_name: string;
+  status: string | null;
+  current_schedule_id: number | null;
+  current_schedule_name: string | null;
+  follows_default: boolean;
+  history: ScheduleAssignment[];
+}
+
+export interface Holiday {
+  id: number;
+  holiday_date: string;
+  name: string;
+  is_public: boolean;
+  is_bank: boolean;
+  is_mercantile: boolean;
+  is_poya: boolean;
+  // VFF policy: mercantile holidays and every Poya day are days off.
+  is_day_off: boolean;
+  source: string | null;
+}
+
+export type HolidayInput = Omit<Holiday, 'id' | 'is_poya'>;
+
+export interface HolidayImportPreview {
+  year: number;
+  rows: Omit<Holiday, 'id'>[];
+  new_count: number;
+  existing_count: number;
+  warnings: string[];
+}
+
+export interface MySchedule {
+  schedule: WorkSchedule | null;
+  today: { working: boolean; reason: 'scheduled' | 'rest_day' | 'holiday'; start: string | null; end: string | null; holidays: string[] };
+  upcoming_holidays: Holiday[];
+}
+
+// --- Payroll (GET /hr/payroll/run) ---
+// A month's payroll run: Draft when generated, Approved when signed off by a
+// second person, and only then posted to the finance ledger.
+
+export interface PayrollRun {
+  id: number;
+  payroll_month: number;
+  payroll_year: number;
+  status: 'Draft' | 'Approved';
+  total: number;
+  generated_by: string | null;
+  generated_at: string;
+  approved_by: string | null;
+  approved_at: string | null;
+  finance_transaction_id: number | null;
+  generator?: { email: string } | null;
+  approver?: { email: string } | null;
+}
+
+export interface PayrollLine {
+  id: number;
+  employee_id: number;
+  employee_name: string;
+  nic: string | null;
+  net_payable: number;
+}
+
+export interface PayrollRunView {
+  run: PayrollRun | null;
+  lines: PayrollLine[];
+  incomplete_attendance: number;
+}
+
 export interface AttendanceRecord {
   id: number;
   employee_id: number;
@@ -53,14 +153,6 @@ export interface RestrictedBalance {
   raised: number;
   spent: number;
   remaining: number;
-}
-
-export interface MonthlySummary {
-  month: number;
-  year: number;
-  income: number;
-  expense: number;
-  balance: number;
 }
 
 export interface Program {
@@ -243,4 +335,89 @@ export interface ProgramFinancials {
   revenue: number;
   total_cost: number;
   profit: number;
+}
+
+// --- General ledger (GET /finance/ledger) ---
+
+export interface LedgerRow extends Transaction {
+  program_name: string;
+  // Ledger-wide running net after this entry; null on voided rows.
+  balance: number | null;
+}
+
+export interface LedgerFilters {
+  start_date?: string;
+  end_date?: string;
+  transaction_type?: 'Income' | 'Expense';
+  status?: 'Cash' | 'Receivable' | 'Voided';
+  program?: string; // a program id, or 'general'
+  restricted?: boolean;
+  q?: string;
+  sort?: 'newest' | 'oldest';
+}
+
+export interface LedgerPage {
+  rows: LedgerRow[];
+  total: number;
+  page: number;
+  pages: number;
+  page_size: number;
+  // Over every row the filters match, voided excluded.
+  totals: { income: number; expense: number; net: number };
+}
+
+// --- Finance report (GET /reports/finance) ---
+// Mirrors build_finance_report in backend/app/services/finance_reports.py.
+
+export interface PeriodTotals {
+  income: number;
+  income_received: number;
+  income_pending: number;
+  expense: number;
+  expense_paid: number;
+  expense_unpaid: number;
+  net: number;
+}
+
+export interface OutstandingItem {
+  id: number;
+  transaction_date: string;
+  program_name: string;
+  amount: number;
+  days: number;
+}
+
+export interface OutstandingSide {
+  total: number;
+  count: number;
+  buckets: Record<'0-30' | '31-60' | '61-90' | '90+', number>;
+  items: OutstandingItem[];
+}
+
+export interface FinanceReport {
+  period: { start: string; end: string; previous_start: string; previous_end: string };
+  summary: {
+    current: PeriodTotals;
+    previous: PeriodTotals;
+    // null when the previous period had nothing to compare against.
+    change: { income_pct: number | null; expense_pct: number | null; net_difference: number };
+  };
+  monthly: { month: string; income: number; expense: number; net: number }[];
+  programs: {
+    rows: { program_id: number | null; program_name: string; income: number; expense: number; net: number }[];
+    totals: { income: number; expense: number; net: number };
+  };
+  restricted: {
+    rows: {
+      program_id: number;
+      program_name: string;
+      opening: number;
+      received: number;
+      spent: number;
+      closing: number;
+      pledged: number;
+    }[];
+    totals: { opening: number; received: number; spent: number; closing: number; pledged: number };
+  };
+  outstanding: { as_of: string; receivables: OutstandingSide; payables: OutstandingSide };
 }
