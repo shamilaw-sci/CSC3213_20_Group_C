@@ -214,6 +214,8 @@ def test_public_rescue_routes_allow_anonymous(method, path):
 # (method, path, permission enforced by the route's require_permission dependency)
 PERMISSION_ROUTES = [
     ("GET", "/api/hr/employees", "hr:manage"),
+    ("POST", "/api/hr/schedules", "hr:manage"),
+    ("POST", "/api/hr/holidays", "hr:manage"),
     ("POST", "/api/hr/employees", "hr:manage"),
     ("POST", "/api/hr/attendance/clock-in", "hr:attendance:self"),
     ("GET", "/api/hr/attendance", "hr:attendance:manage"),
