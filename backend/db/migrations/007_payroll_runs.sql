@@ -197,3 +197,13 @@ BEGIN
     RETURN v_run;
 END;
 $$;
+
+-- ---------------------------------------------------------------------------
+-- 6. Make the API see the new table and functions now
+-- ---------------------------------------------------------------------------
+--
+-- PostgREST caches the schema. Without this, the backend keeps getting
+-- PGRST205 "Could not find the table 'public.payroll_runs'" until the cache
+-- happens to refresh.
+
+NOTIFY pgrst, 'reload schema';
