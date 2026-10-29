@@ -79,6 +79,10 @@ ROLE_PERMISSIONS = {
     # role's grants, which are read-heavy plus payroll:approve: Director signs
     # off on people and money, it does not do the scheduling.
     UserRole.DIRECTOR.value: [
+        # Self-service (clock in/out, own schedule, request own leave): staff
+        # in this role are employees too (confirmed 2026-10-29). It reaches
+        # only the holder's own records, so it adds no business-data access.
+        Permission.HR_ATTENDANCE_SELF.value,
         Permission.FINANCE_READ.value, Permission.PAYROLL_APPROVE.value, Permission.PROGRAMS_READ.value,
         Permission.INVENTORY_READ.value, Permission.AUDIT_READ.value,
         Permission.RESCUE_READ.value, Permission.RESCUE_ASSIGN.value,
@@ -94,6 +98,10 @@ ROLE_PERMISSIONS = {
         Permission.VOLUNTEERS_READ.value, Permission.VOLUNTEERS_APPROVE.value
     ],
     UserRole.FINANCE_OFFICER.value: [
+        # Self-service (clock in/out, own schedule, request own leave): staff
+        # in this role are employees too (confirmed 2026-10-29). It reaches
+        # only the holder's own records, so it adds no business-data access.
+        Permission.HR_ATTENDANCE_SELF.value,
         Permission.FINANCE_READ.value, Permission.FINANCE_WRITE.value, Permission.PAYROLL_GENERATE.value,
         Permission.INVENTORY_READ.value,
         # Not a widening of what this role can see: GET /finance/transactions

@@ -61,6 +61,8 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
   // read-heavy grants plus payroll:approve: it signs off on people and money,
   // it does not do the scheduling.
   Director: [
+    // Self-service: own attendance, schedule and leave only (confirmed 2026-10-29).
+    'hr:attendance:self',
     'finance:read', 'payroll:approve', 'programs:read',
     'inventory:read', 'audit:read', 'rescue:read' , 'rescue:assign',
     'volunteers:read', 'volunteers:approve'
@@ -73,6 +75,8 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'volunteers:read', 'volunteers:approve'
   ],
   'Finance Officer': [
+    // Self-service: own attendance, schedule and leave only (confirmed 2026-10-29).
+    'hr:attendance:self',
     'finance:read', 'finance:write', 'payroll:generate',
     'inventory:read', 'programs:read'
   ],
