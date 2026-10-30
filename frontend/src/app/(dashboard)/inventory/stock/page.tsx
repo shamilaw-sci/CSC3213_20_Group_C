@@ -228,6 +228,18 @@ export default function InventoryPage() {
     [items]
   );
 
+  // Name lookups built from the item and program lists this page already loads,
+  // so the Recent Movements table can show names even when the API response
+  // doesn't include the joined names.
+  const itemNameById = useMemo(
+    () => new Map((items ?? []).map((i) => [i.id, i.item_name] as const)),
+    [items]
+  );
+  const programNameById = useMemo(
+    () => new Map((programs ?? []).map((p) => [p.id, p.program_name] as const)),
+    [programs]
+  );
+
   // Newest first; the id breaks ties between movements on the same day.
   const movements = useMemo(
     () =>
@@ -247,6 +259,20 @@ export default function InventoryPage() {
     const saved = Number(tx.total_cost) || 0;
     if (saved > 0) return { value: saved, estimated: false };
     return { value: tx.quantity * (unitCostById.get(tx.item_id) ?? 0), estimated: true };
+  };
+
+  // Prefer the names the API sends with the movement, then fall back to the
+  // lists loaded above, and only show an id as a last resort.
+  const getItemName = (tx: InventoryTransaction) =>
+    tx.inventory_items?.item_name ?? itemNameById.get(tx.item_id) ?? `Item #${tx.item_id}`;
+
+  // The label depends on program_id, not on whether a name arrived: a Stock Out
+  // is only a "Stock adjustment" when it really has no program.
+  const getProgramLabel = (tx: InventoryTransaction) => {
+    if (tx.program_id == null) return tx.transaction_type === 'Issue' ? 'Stock adjustment' : '—';
+    return (
+      tx.programs?.program_name ?? programNameById.get(tx.program_id) ?? `Program #${tx.program_id}`
+    );
   };
 
   const hasEstimates = movements.some((tx) => {
@@ -930,7 +956,7 @@ export default function InventoryPage() {
                                     <MovementIcon size={12} /> {style.label}
                                   </span>
                                   <span className="max-w-[130px] truncate text-[10px] text-text-muted">
-                                    {tx.inventory_items?.item_name ?? `Item #${tx.item_id}`}
+                                    {getItemName(tx)}
                                   </span>
                                 </div>
                               </TableCell>
@@ -948,8 +974,7 @@ export default function InventoryPage() {
                                 <p className="font-mono text-[10px] text-text-muted">{tx.quantity} units</p>
                               </TableCell>
                               <TableCell className="text-xs text-text-secondary">
-                                {tx.programs?.program_name ??
-                                  (tx.transaction_type === 'Issue' ? 'Stock adjustment' : '—')}
+                                {getProgramLabel(tx)}
                               </TableCell>
                             </TableRow>
                           );
