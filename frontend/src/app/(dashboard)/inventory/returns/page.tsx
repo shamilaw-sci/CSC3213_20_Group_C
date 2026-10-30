@@ -20,6 +20,7 @@ export default function ReturnInventoryPage() {
   const [itemId, setItemId] = useState<string>('');
   const [programId, setProgramId] = useState<string>('');
   const [quantity, setQuantity] = useState<string>('');
+  const [transactionDate, setTransactionDate] = useState<string>(format(new Date(), 'yyyy-MM-dd'));
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
@@ -28,8 +29,8 @@ export default function ReturnInventoryPage() {
     setError('');
     setSuccess('');
     
-    if (!itemId || !quantity) {
-      setError('Please fill in item and quantity.');
+    if (!itemId || !quantity || !transactionDate) {
+      setError('Please fill in item, quantity, and transaction date.');
       return;
     }
     
@@ -44,13 +45,14 @@ export default function ReturnInventoryPage() {
       program_id: programId ? Number(programId) : null,
       quantity: qty,
       transaction_type: 'Return',
-      transaction_date: format(new Date(), 'yyyy-MM-dd')
+      transaction_date: transactionDate
     }, {
       onSuccess: () => {
         setSuccess('Items returned to stock successfully.');
         setItemId('');
         setProgramId('');
         setQuantity('');
+        setTransactionDate(format(new Date(), 'yyyy-MM-dd'));
       },
       onError: (e: any) => {
         setError(e.message || 'Failed to return items.');
@@ -114,6 +116,16 @@ export default function ReturnInventoryPage() {
                   onChange={e => setQuantity(e.target.value)}
                   placeholder="0"
                   className="w-full bg-bg-subtle border border-border-brand rounded p-2 text-text-primary outline-none focus:border-accent transition-colors"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-text-secondary mb-1">Transaction Date</label>
+                <input 
+                  type="date" 
+                  value={transactionDate}
+                  onChange={e => setTransactionDate(e.target.value)}
+                  className="w-full bg-bg-subtle border border-border-brand rounded p-2 text-text-primary outline-none focus:border-accent transition-colors [color-scheme:dark]"
                 />
               </div>
 

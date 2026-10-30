@@ -20,6 +20,7 @@ export default function IssueInventoryPage() {
   const [itemId, setItemId] = useState<string>('');
   const [programId, setProgramId] = useState<string>('');
   const [quantity, setQuantity] = useState<string>('');
+  const [transactionDate, setTransactionDate] = useState<string>(format(new Date(), 'yyyy-MM-dd'));
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
@@ -30,8 +31,8 @@ export default function IssueInventoryPage() {
     setError('');
     setSuccess('');
     
-    if (!itemId || !programId || !quantity) {
-      setError('Please fill in all fields.');
+    if (!itemId || !programId || !quantity || !transactionDate) {
+      setError('Please fill in all fields including the transaction date.');
       return;
     }
     
@@ -51,13 +52,14 @@ export default function IssueInventoryPage() {
       program_id: Number(programId),
       quantity: qty,
       transaction_type: 'Issue',
-      transaction_date: format(new Date(), 'yyyy-MM-dd')
+      transaction_date: transactionDate
     }, {
       onSuccess: () => {
         setSuccess('Items issued successfully.');
         setItemId('');
         setProgramId('');
         setQuantity('');
+        setTransactionDate(format(new Date(), 'yyyy-MM-dd'));
       },
       onError: (e: any) => {
         setError(e.message || 'Failed to issue items.');
@@ -121,6 +123,16 @@ export default function IssueInventoryPage() {
                   onChange={e => setQuantity(e.target.value)}
                   placeholder="0"
                   className="w-full bg-bg-subtle border border-border-brand rounded p-2 text-text-primary outline-none focus:border-accent transition-colors"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-text-secondary mb-1">Transaction Date</label>
+                <input 
+                  type="date" 
+                  value={transactionDate}
+                  onChange={e => setTransactionDate(e.target.value)}
+                  className="w-full bg-bg-subtle border border-border-brand rounded p-2 text-text-primary outline-none focus:border-accent transition-colors [color-scheme:dark]"
                 />
               </div>
 
