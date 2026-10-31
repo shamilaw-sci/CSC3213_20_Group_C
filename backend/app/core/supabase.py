@@ -26,8 +26,15 @@ def get_supabase(request: Request) -> Client:
     client.postgrest.auth(token).  Supabase RLS then sees the authenticated
     user instead of 'anon', fixing the 401 on INSERT/UPDATE/DELETE.
 
-    If there is no token (health-check routes, login, register) we fall
-    back to the shared anon client so those routes keep working.
+    If there is no token (health-check routes, login, register) we return a
+    FRESH client, never the shared one. Login and register call
+    auth.sign_in_with_password / auth.sign_up on whatever client they get, and
+    supabase-py (2.28+; 2.3 does not) then switches that client's Authorization header to the
+    signed-in user's JWT. On the shared client that silently turned every
+    public route (volunteer applications, rescue reports) into requests made
+    as the last person who logged in, and once that JWT expired an hour later
+    they all failed — the volunteer form returned "Could not submit your
+    application" and nothing reached the Pending list.
     """
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Bearer "):
@@ -36,7 +43,7 @@ def get_supabase(request: Request) -> Client:
         client.postgrest.auth(token)
         return client
 
-    return _supabase
+    return create_client(url, key)
 
 def get_public_supabase() -> Client:
     """Client for routes that must work regardless of caller auth state.

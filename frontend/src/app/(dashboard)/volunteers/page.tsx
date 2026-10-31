@@ -89,9 +89,9 @@ export default function VolunteersRosterPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold font-heading text-text-primary">Volunteers</h1>
+        <h1 className="text-2xl font-bold font-heading text-text-primary">Volunteer Applications</h1>
         <p className="text-sm text-text-secondary mt-1">
-          Review applications and manage the approved roster.
+          Review applications and manage approved volunteers.
         </p>
       </div>
 

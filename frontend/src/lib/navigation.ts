@@ -99,7 +99,7 @@ export const NAVIGATION_CONFIG: NavSection[] = [
     // button, and an Operations Lead sees no Approve button.
     title: 'VOLUNTEERS',
     items: [
-      { label: 'Roster', href: '/volunteers', icon: HeartHandshake, requiredPermission: 'volunteers:read' },
+      { label: 'Applications', href: '/volunteers', icon: HeartHandshake, requiredPermission: 'volunteers:read' },
       { label: 'Shifts', href: '/volunteers/shifts', icon: CalendarClock, requiredPermission: 'volunteers:read' },
     ]
   },
