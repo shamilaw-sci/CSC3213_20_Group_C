@@ -110,6 +110,9 @@ export interface LeaveBalance {
   entitlement_id?: number | null;
   note?: string | null;
   entitled?: number;
+  // First-year casual only: how much of `entitled` is earned so far (it
+  // accrues one day per two complete months). Absent/null: all of it.
+  earned_to_date?: number | null;
   carried_forward?: number;
   adjustment?: number;
   total?: number;
