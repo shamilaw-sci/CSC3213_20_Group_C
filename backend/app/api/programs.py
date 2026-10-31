@@ -5,7 +5,13 @@ from supabase import Client
 from app.core.supabase import get_supabase
 from app.core.security import require_permission
 from app.core.audit import log_audit_action
-from app.schemas.programs import ProgramAssignment, ProgramAssignmentCreate, ProgramDetail, ProgramFinancials
+from app.schemas.programs import (
+    ProgramAssignment, ProgramAssignmentCreate, ProgramDetail, ProgramFinancials,
+    ProgramVolunteer,
+)
+from app.services.program_volunteers import (
+    build_program_volunteers, shift_belongs_to_program,
+)
 
 router = APIRouter()
 
@@ -76,6 +82,52 @@ async def get_program_financials(
         "total_cost": total_cost,
         "profit": revenue - total_cost,
     }
+
+
+# ==========================================
+# PROGRAM VOLUNTEERS (accepted shifts / assignments)
+# ==========================================
+
+@router.get("/{program_id}/volunteers", response_model=List[ProgramVolunteer])
+async def get_program_volunteers(
+    program_id: int,
+    user=Depends(require_permission("programs:read")),
+    supabase: Client = Depends(get_supabase),
+):
+    """
+    Volunteers who ACCEPTED a non-cancelled shift for this program, or a
+    direct assignment to the program. Which shifts count as this program's,
+    and every other rule, is decided in app/services/program_volunteers.py.
+    """
+    program = (
+        supabase.table("programs").select("id, program_name")
+        .eq("id", program_id).execute()
+    )
+    if not program.data:
+        raise HTTPException(status_code=404, detail="Program not found")
+    program = program.data[0]
+
+    shifts = (
+        supabase.table("volunteer_shifts").select("*")
+        .eq("is_cancelled", False).execute()
+    ).data or []
+
+    # Only the volunteer columns the response needs: never the email, phone or
+    # access_token.
+    columns = "*, volunteers(full_name, skills, skills_other)"
+    assignments = (
+        supabase.table("volunteer_assignments").select(columns)
+        .eq("program_id", program_id).eq("response", "accepted").execute()
+    ).data or []
+
+    shift_ids = [s["id"] for s in shifts if shift_belongs_to_program(s, program)]
+    if shift_ids:
+        assignments += (
+            supabase.table("volunteer_assignments").select(columns)
+            .in_("shift_id", shift_ids).eq("response", "accepted").execute()
+        ).data or []
+
+    return build_program_volunteers(program, shifts, assignments)
 
 
 # ==========================================

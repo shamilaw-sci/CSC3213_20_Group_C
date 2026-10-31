@@ -11,7 +11,9 @@ import type { Program } from '@/types';
 import { useAuthStore } from '@/store/useAuthStore';
 import { hasPermission } from '@/lib/permissions';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Skeleton } from '@/components/ui/skeleton';
+import { KPICard } from '@/components/shared/kpi-card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 // No DialogTrigger: this is Base UI, not Radix, so there is no `asChild`, and
@@ -476,17 +478,30 @@ export default function VolunteerShiftsPage() {
     onError: (err) => toast.error(getErrorMessage(err) || "Couldn't cancel the shift."),
   });
 
+  const active = shifts.filter((s) => !s.is_cancelled);
+  const upcoming = active.filter((s) => daysUntil(s.shift_date) >= 0);
+  const understaffed = upcoming.filter((s) => s.confirmation.accepted < s.confirmation.needed).length;
+  const accepted = upcoming.reduce((n, s) => n + s.confirmation.accepted, 0);
+  const needed = upcoming.reduce((n, s) => n + s.confirmation.needed, 0);
+  const awaiting = upcoming.reduce((n, s) => n + s.confirmation.awaiting, 0);
+  const kpi = (v: number | string) => (isLoading ? '—' : v);
+
   return (
-    <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4">
+    <div className="space-y-8 pb-12">
+      {/* Header, in the finance pages' shape */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold font-heading text-text-primary">Shifts</h1>
-          <p className="text-sm text-text-secondary mt-1">
-            Who is coming, who has answered, and who still needs chasing.
+          <h1 className="text-3xl font-bold font-heading tracking-tight mb-2 text-text-primary">Shifts</h1>
+          <p className="text-text-secondary text-sm">
+            Create and manage volunteer shifts, assign volunteers, and track shift schedules across all programs.
           </p>
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={() => setIncludePast(!includePast)}>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="outline"
+            className="border-border-brand text-text-primary"
+            onClick={() => setIncludePast(!includePast)}
+          >
             {includePast ? 'Upcoming only' : 'Include past'}
           </Button>
           {canAssign && (
@@ -498,69 +513,125 @@ export default function VolunteerShiftsPage() {
         </div>
       </div>
 
-      {isLoading ? (
-        <div className="py-12 flex justify-center">
-          <Loader2 className="w-5 h-5 animate-spin text-text-muted" />
-        </div>
-      ) : shifts.length === 0 ? (
-        <Card><CardContent className="py-12 text-center text-sm text-text-secondary">
-          No {includePast ? '' : 'upcoming '}shifts.
-        </CardContent></Card>
-      ) : (
-        <div className="space-y-3">
-          {shifts.map((shift) => (
-            <Card key={shift.id} className={cn(shift.is_cancelled && 'opacity-60')}>
-              <CardContent className="pt-5 space-y-3">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <h2 className="font-semibold text-text-primary">{shift.title}</h2>
-                      {shift.is_cancelled && <Badge variant="outline">Cancelled</Badge>}
-                    </div>
-                    <p className="text-sm text-text-secondary mt-0.5">
-                      {formatDate(shift.shift_date)} · {shift.start_time.slice(0, 5)}–{shift.end_time.slice(0, 5)}
-                    </p>
-                    {shift.location && (
-                      <p className="text-sm text-text-muted flex items-center gap-1 mt-0.5">
-                        <MapPin className="w-3.5 h-3.5" /> {shift.location}
-                      </p>
+      {/* KPI strip. Counts cover upcoming, non-cancelled shifts only, so
+          "Include past" changes the list below but not these numbers. */}
+      <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
+        <KPICard title="Upcoming Shifts" value={kpi(upcoming.length)} />
+        <KPICard
+          title="Understaffed"
+          value={kpi(understaffed)}
+          className={understaffed > 0 ? 'border-red-500/40 dark:border-red-500/40' : undefined}
+        />
+        <KPICard title="Volunteers Confirmed" value={kpi(`${accepted}/${needed}`)} />
+        <KPICard title="Awaiting Response" value={kpi(awaiting)} />
+      </div>
+
+      <Card className="bg-surface border border-border-brand rounded-card shadow-card p-5">
+        <CardHeader className="p-0 pb-4">
+          <CardTitle className="text-base font-semibold font-heading text-text-primary">
+            {includePast ? 'All Shifts' : 'Upcoming Shifts'}
+          </CardTitle>
+          <CardDescription className="text-text-secondary text-xs mt-1">
+            Who is coming, who has answered, and who still needs chasing.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="p-0">
+          {isLoading ? (
+            <div className="space-y-3">
+              {[1, 2, 3].map((i) => <Skeleton key={i} className="h-20 w-full bg-bg-subtle" />)}
+            </div>
+          ) : shifts.length === 0 ? (
+            <p className="py-12 text-center text-sm text-text-muted">
+              No {includePast ? '' : 'upcoming '}shifts.
+            </p>
+          ) : (
+            <div className="space-y-3">
+              {shifts.map((shift) => {
+                const c = shift.confirmation;
+                const pct = c.needed ? Math.min(100, Math.round((c.accepted / c.needed) * 100)) : 0;
+                const [, m, d] = shift.shift_date.split('-').map(Number);
+                const month = new Date(2000, m - 1, 1).toLocaleDateString('en-GB', { month: 'short' });
+                return (
+                  <div
+                    key={shift.id}
+                    className={cn(
+                      'rounded-lg border border-border-brand bg-bg-subtle/40 p-4 space-y-3 transition-colors hover:border-accent/40',
+                      shift.is_cancelled && 'opacity-60'
                     )}
-                    <div className="mt-2"><ConfirmationLine shift={shift} /></div>
-                  </div>
+                  >
+                    <div className="flex flex-col sm:flex-row sm:items-start gap-4">
+                      {/* Date block */}
+                      <div className="flex sm:flex-col items-center justify-center gap-1.5 sm:gap-0 sm:w-14 shrink-0 self-start rounded-lg border border-border-brand bg-surface px-3 py-1.5 sm:py-2">
+                        <span className="text-[10px] font-semibold uppercase tracking-wider text-accent">{month}</span>
+                        <span className="text-xl font-bold font-mono text-text-primary leading-none sm:mt-0.5">{d}</span>
+                      </div>
 
-                  <div className="flex flex-col items-end gap-2 shrink-0">
-                    <div className="flex items-center gap-1 text-sm text-text-secondary">
-                      <Users className="w-4 h-4" />
-                      {shift.confirmation.accepted}/{shift.confirmation.needed}
-                    </div>
-                    <div className="flex gap-2">
-                      <Button
-                        size="sm" variant="outline"
-                        onClick={() => setExpanded(expanded === shift.id ? null : shift.id)}
-                      >
-                        {expanded === shift.id ? 'Hide' : 'Manage'}
-                      </Button>
-                      {canAssign && !shift.is_cancelled && (
-                        <Button
-                          size="sm" variant="ghost"
-                          disabled={cancel.isPending}
-                          onClick={() => cancel.mutate(shift.id)}
-                        >
-                          Cancel
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                </div>
+                      <div className="min-w-0 flex-1 space-y-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h2 className="font-semibold font-heading text-text-primary">{shift.title}</h2>
+                          {shift.is_cancelled && <Badge variant="outline">Cancelled</Badge>}
+                        </div>
+                        <div className="flex flex-wrap items-center gap-x-4 gap-y-0.5 text-xs text-text-secondary">
+                          <span className="flex items-center gap-1">
+                            <Clock className="w-3.5 h-3.5" />
+                            {formatDate(shift.shift_date)} · {shift.start_time.slice(0, 5)}–{shift.end_time.slice(0, 5)}
+                          </span>
+                          {shift.location && (
+                            <span className="flex items-center gap-1">
+                              <MapPin className="w-3.5 h-3.5" /> {shift.location}
+                            </span>
+                          )}
+                        </div>
+                        <div className="pt-1"><ConfirmationLine shift={shift} /></div>
+                      </div>
 
-                {expanded === shift.id && (
-                  <AssignPanel shift={shift} volunteers={volunteers} canAssign={canAssign} />
-                )}
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      )}
+                      <div className="flex sm:flex-col items-center sm:items-end justify-between gap-3 shrink-0 sm:w-44">
+                        <div className="w-28 sm:w-full space-y-1">
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="flex items-center gap-1 text-text-secondary">
+                              <Users className="w-3.5 h-3.5" /> Confirmed
+                            </span>
+                            <span className="font-mono font-semibold text-text-primary">{c.accepted}/{c.needed}</span>
+                          </div>
+                          <div className="h-1.5 w-full rounded-full bg-border-brand/60 overflow-hidden">
+                            <div
+                              className={cn('h-full rounded-full', pct >= 100 ? 'bg-emerald-500' : 'bg-accent')}
+                              style={{ width: `${pct}%` }}
+                            />
+                          </div>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button
+                            size="sm" variant="outline"
+                            className="border-border-brand"
+                            onClick={() => setExpanded(expanded === shift.id ? null : shift.id)}
+                          >
+                            {expanded === shift.id ? 'Hide' : 'Manage'}
+                          </Button>
+                          {canAssign && !shift.is_cancelled && (
+                            <Button
+                              size="sm" variant="ghost"
+                              className="text-text-secondary hover:text-red-500"
+                              disabled={cancel.isPending}
+                              onClick={() => cancel.mutate(shift.id)}
+                            >
+                              Cancel
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {expanded === shift.id && (
+                      <AssignPanel shift={shift} volunteers={volunteers} canAssign={canAssign} />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

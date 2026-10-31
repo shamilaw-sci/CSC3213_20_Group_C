@@ -10,7 +10,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ArrowLeft, Users, TrendingUp, X, UserPlus, Lock } from 'lucide-react';
+import { ArrowLeft, Users, TrendingUp, X, UserPlus, Lock, HeartHandshake, CalendarClock } from 'lucide-react';
+import { SKILLS } from '@/services/volunteers.service';
 import { FinanceService } from '@/services/finance.service';
 import { useAuthStore } from '@/store/useAuthStore';
 import { hasPermission } from '@/lib/permissions';
@@ -45,6 +46,12 @@ export default function ProgramDetailsPage() {
   const { data: financials } = useQuery({
     queryKey: ['program-financials', programId],
     queryFn: () => ProgramService.getFinancials(programId),
+  });
+
+  const { data: volunteers, isLoading: volunteersLoading } = useQuery({
+    queryKey: ['program-volunteers', programId],
+    queryFn: () => ProgramService.getVolunteers(programId),
+    enabled: !Number.isNaN(programId),
   });
 
   const { data: employees } = useQuery({
@@ -251,11 +258,80 @@ export default function ProgramDetailsPage() {
                 )}
               </CardContent>
             </Card>
+
+            {/* Volunteers — only those who accepted, through their personal
+                link, a shift whose title is this program's name (or a direct
+                assignment to the program). Pending and declined answers and
+                cancelled shifts are filtered out by the API. */}
+            <Card className="bg-surface border border-border-brand rounded-card">
+              <CardHeader>
+                <CardTitle className="text-base flex items-center gap-2">
+                  <HeartHandshake size={18} className="text-accent" /> Volunteers
+                  {volunteers && volunteers.length > 0 && (
+                    <Badge variant="outline" className="text-[10px] ml-1">{volunteers.length}</Badge>
+                  )}
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {volunteersLoading ? (
+                  <Skeleton className="h-16 w-full rounded-lg" />
+                ) : !volunteers || volunteers.length === 0 ? (
+                  <p className="text-text-secondary text-xs py-4 text-center">
+                    No volunteers have accepted shifts for this programme yet.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {volunteers.map((v) => (
+                      <div
+                        key={v.volunteer_id}
+                        className="bg-bg-subtle border border-border-brand rounded-lg px-4 py-2.5 space-y-2"
+                      >
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                          <p className="text-sm text-text-primary font-medium">{v.full_name}</p>
+                          <div className="flex flex-wrap gap-1">
+                            {v.skills.map((s) => (
+                              <Badge key={s} variant="outline" className="text-[10px]">
+                                {SKILL_LABEL[s] ?? s}
+                              </Badge>
+                            ))}
+                            {v.skills_other && (
+                              <span className="text-[10px] text-text-secondary">{v.skills_other}</span>
+                            )}
+                          </div>
+                        </div>
+                        <ul className="space-y-1">
+                          {v.shifts.map((s) => (
+                            <li key={s.shift_id} className="flex items-center gap-1.5 text-[11px] text-text-secondary">
+                              <CalendarClock size={12} className="text-accent shrink-0" />
+                              {formatShiftDate(s.shift_date)} · {s.start_time.slice(0, 5)}–{s.end_time.slice(0, 5)}
+                              {s.location ? ` · ${s.location}` : ''}
+                            </li>
+                          ))}
+                          {v.program_assignment && (
+                            <li className="text-[11px] text-text-secondary">Assigned to the programme directly</li>
+                          )}
+                        </ul>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           </>
         )}
       </div>
     </ProtectedRoute>
   );
+}
+
+const SKILL_LABEL = Object.fromEntries(SKILLS.map((s) => [s.value, s.label])) as Record<string, string>;
+
+/** "Sat 7 Nov" from a wall-clock YYYY-MM-DD, without a timezone shift. */
+function formatShiftDate(shiftDate: string): string {
+  const [y, m, d] = shiftDate.split('-').map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString('en-GB', {
+    weekday: 'short', day: 'numeric', month: 'short', year: 'numeric',
+  });
 }
 
 function StatBox({

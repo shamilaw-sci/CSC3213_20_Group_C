@@ -1,6 +1,6 @@
 from pydantic import BaseModel, ConfigDict
-from datetime import datetime, date
-from typing import Optional
+from datetime import datetime, date, time
+from typing import List, Optional
 
 
 # --- Full program record, including the fields added in the Step 1 migration
@@ -52,3 +52,27 @@ class ProgramAssignment(BaseModel):
     employee_profile: Optional[EmployeeBasic] = None  # populated via Supabase join
 
     model_config = ConfigDict(from_attributes=True)
+
+
+# --- Volunteers who accepted work on a program (GET /{id}/volunteers). ---
+# No email, phone or access_token: programs:read reaches Finance Officer,
+# which has no volunteers:read, so contact details stay behind that gate.
+class ProgramVolunteerShift(BaseModel):
+    shift_id: str
+    title: str
+    shift_date: date
+    start_time: time
+    end_time: time
+    location: Optional[str] = None
+    responded_at: Optional[datetime] = None
+
+
+class ProgramVolunteer(BaseModel):
+    volunteer_id: str
+    full_name: str
+    skills: List[str] = []
+    skills_other: Optional[str] = None
+    # True when the volunteer accepted a direct assignment to the program
+    # itself, rather than (or as well as) one of its shifts.
+    program_assignment: bool = False
+    shifts: List[ProgramVolunteerShift] = []
