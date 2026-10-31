@@ -9,8 +9,53 @@ import { format } from 'date-fns';
 import { Lock, LockOpen, AlertCircle, Clock, Search, Download } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import {Dialog,DialogContent,DialogDescription,DialogHeader,DialogTitle,DialogTrigger,DialogFooter,DialogClose,} from "@/components/ui/dialog";
+import ProtectedRoute from '@/components/layout/protected-route';
+import { MonthGrid } from '@/components/hr/attendance/MonthGrid';
+import { useAuthStore } from '@/store/useAuthStore';
+import { hasPermission } from '@/lib/permissions';
+import { cn } from '@/lib/utils';
 
 export default function HRAttendancePage() {
+  return (
+    // HR manages; Director reads the month without editing.
+    <ProtectedRoute requiredPermission={['hr:attendance:manage', 'hr:attendance:read']}>
+      <Attendance />
+    </ProtectedRoute>
+  );
+}
+
+function Attendance() {
+  const { user } = useAuthStore();
+  const canManage = hasPermission(user?.role as string, 'hr:attendance:manage');
+  const [tab, setTab] = useState<'month' | 'day'>('month');
+
+  return (
+    <div className="space-y-6 pb-12">
+      <div>
+        <h1 className="text-3xl font-bold font-heading tracking-tight mb-2 text-text-primary">Attendance</h1>
+        <p className="text-text-secondary text-sm">
+          Each day judged against the person&apos;s schedule, holidays and leave.
+          {!canManage && ' Read-only.'}
+        </p>
+      </div>
+      {canManage && (
+        <div className="flex w-fit gap-1 rounded-lg border border-border-brand bg-bg-subtle p-1" role="tablist">
+          {([['month', 'Month'], ['day', 'Day']] as const).map(([value, label]) => (
+            <button key={value} role="tab" aria-selected={tab === value} onClick={() => setTab(value)}
+              className={cn('rounded-md px-3 py-1.5 text-xs font-semibold transition-colors',
+                tab === value ? 'bg-surface text-accent shadow-xs' : 'text-text-secondary hover:text-text-primary')}>
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+      {tab === 'month' || !canManage ? <MonthGrid canEdit={canManage} /> : <DayView />}
+    </div>
+  );
+}
+
+// One day at a time: lock the day, unlock a record, export. HR only.
+function DayView() {
   const [targetDate, setTargetDate] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [filterIncomplete, setFilterIncomplete] = useState(false);
 
@@ -52,10 +97,7 @@ export default function HRAttendancePage() {
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-bold font-heading text-text-primary">Attendance Logs</h1>
-          <p className="text-text-secondary mt-1">Review and manage daily attendance records.</p>
-        </div>
+        <p className="text-sm text-text-secondary">Lock a day once its records are complete; unlock one to correct it.</p>
 
         <div className="flex items-center gap-3">
           <Input

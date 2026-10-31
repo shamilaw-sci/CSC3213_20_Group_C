@@ -172,6 +172,74 @@ export interface EntitlementsView {
   needs_date_joined: { employee_id: number; employee_name: string }[];
 }
 
+// --- Monthly attendance grid (GET /hr/attendance/month) ---
+// Mirrors build_month in backend/app/services/attendance_month.py.
+
+export type DayStatus =
+  | 'not_employed' | 'upcoming' | 'leave' | 'holiday' | 'rest' | 'worked_off_day'
+  | 'absent' | 'missing_clock_out' | 'in_progress' | 'present';
+
+export interface DayLeave {
+  status: 'Approved' | 'Pending';
+  type_name: string;
+  type_code: string;
+  fraction: number;
+  half_day: 'none' | 'am' | 'pm';
+  paid: boolean;
+}
+
+export interface DayCell {
+  date: string;
+  status: DayStatus;
+  late_minutes: number;
+  left_early_minutes: number;
+  worked_minutes: number;
+  expected_minutes: number;
+  clock_in: string | null; // Sri Lanka time, ISO with offset
+  clock_out: string | null;
+  record_id: number | null;
+  locked: boolean;
+  expected_start: string | null;
+  expected_end: string | null;
+  schedule_name: string | null;
+  holidays: string[];
+  leave: DayLeave | null;
+  leave_pending: DayLeave | null;
+  reason: string;
+}
+
+export interface MonthRow {
+  employee_id: number;
+  employee_name: string;
+  status: string | null;
+  date_joined: string | null;
+  cells: DayCell[];
+  totals: {
+    present: number; absent: number; late: number; left_early: number; missing_clock_out: number;
+    leave_days: number; worked_off_days: number; worked_minutes: number; expected_minutes: number;
+  };
+}
+
+export interface AttentionItem {
+  employee_id: number;
+  employee_name: string;
+  date: string;
+  kinds: ('absent' | 'missing_clock_out' | 'late' | 'left_early' | 'worked_off_day')[];
+  reason: string;
+  leave_pending: boolean;
+  info?: boolean;
+}
+
+export interface AttendanceMonth {
+  year: number;
+  month: number;
+  days: { date: string; weekday: number; holidays: string[] }[];
+  employees: MonthRow[];
+  attention: AttentionItem[];
+  today: string;
+  employee?: MonthRow | null; // /me/month only
+}
+
 // --- Payroll (GET /hr/payroll/run) ---
 // A month's payroll run: Draft when generated, Approved when signed off by a
 // second person, and only then posted to the finance ledger.

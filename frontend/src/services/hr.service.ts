@@ -1,5 +1,5 @@
 import api from '@/lib/api-client';
-import { Employee, AttendanceRecord, PayrollRun, PayrollRunView } from '@/types';
+import { Employee, AttendanceRecord, AttendanceMonth, PayrollRun, PayrollRunView } from '@/types';
 
 export const HRService = {
   getEmployees: async () => {
@@ -60,6 +60,13 @@ export const HRService = {
     const response = await api.post<AttendanceRecord>(`/hr/attendance/${id}/unlock`);
     return response.data;
   },
+
+  // The monthly grid: everyone (HR, Director) or just oneself.
+  getAttendanceMonth: async (year: number, month: number) =>
+    (await api.get<AttendanceMonth>('/hr/attendance/month', { params: { year, month } })).data,
+
+  getMyAttendanceMonth: async (year: number, month: number) =>
+    (await api.get<AttendanceMonth>('/hr/attendance/me/month', { params: { year, month } })).data,
 
   getPayrollRun: async (month: number, year: number) => {
     const response = await api.get<PayrollRunView>('/hr/payroll/run', { params: { month, year } });

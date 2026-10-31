@@ -1,15 +1,14 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useEmployees, useAttendance, useLockAttendance, useCreateEmployee, useLogAttendance, useUpdateAttendance } from '@/hooks/useHR';
+import { useEmployees, useCreateEmployee } from '@/hooks/useHR';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Lock, Unlock, UserPlus, Filter, Download, UserCheck } from 'lucide-react';
-import { format } from 'date-fns';
+import { UserPlus, Filter, Download } from 'lucide-react';
 import { formatLKR } from '@/lib/formatters';
 import ProtectedRoute from '@/components/layout/protected-route';
 import { AuthService } from '@/services/auth.service';
@@ -20,17 +19,12 @@ import { useThemeStore } from '@/store/useThemeStore';
 
 export default function HRPage() {
   const [activeTab, setActiveTab] = useState('employees');
-  const [selectedDate, setSelectedDate] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [users, setUsers] = useState<any[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
   
   const { data: employees, isLoading: loadingEmployees } = useEmployees();
-  const { data: attendance, isLoading: loadingAttendance } = useAttendance(selectedDate);
   
-  const lockAttendance = useLockAttendance();
   const createEmployee = useCreateEmployee();
-  const logAttendance = useLogAttendance();
-  const updateAttendance = useUpdateAttendance();
 
   const fetchUsers = async () => {
     setLoadingUsers(true);
@@ -110,162 +104,6 @@ export default function HRPage() {
     });
   };
 
-  const timeSelectHtml = (idPrefix: string, labelStyle: string, inputStyle: string, defaultHour = '', defaultMinute = '00', defaultPeriod = 'AM') => {
-    const hourOptions = Array.from({ length: 12 }, (_, i) => i + 1)
-      .map((h) => `<option value="${h}" ${String(h) === defaultHour ? 'selected' : ''}>${h}</option>`)
-      .join('');
-    const minuteOptions = ['00', '15', '30', '45']
-      .map((m) => `<option value="${m}" ${m === defaultMinute ? 'selected' : ''}>${m}</option>`)
-      .join('');
-    const selectStyle = inputStyle.replace('width: 100%;', 'width: 32%;');
-    return `
-      <div style="display: flex; gap: 6px;">
-        <select id="${idPrefix}-hour" style="${selectStyle}">
-          <option value="" disabled ${!defaultHour ? 'selected' : ''}>HH</option>
-          ${hourOptions}
-        </select>
-        <select id="${idPrefix}-min" style="${selectStyle}">${minuteOptions}</select>
-        <select id="${idPrefix}-period" style="${selectStyle}">
-          <option value="AM" ${defaultPeriod === 'AM' ? 'selected' : ''}>AM</option>
-          <option value="PM" ${defaultPeriod === 'PM' ? 'selected' : ''}>PM</option>
-        </select>
-      </div>
-    `;
-  };
-
-  const readTimeSelect = (idPrefix: string): string | null => {
-    const hourEl = document.getElementById(`${idPrefix}-hour`) as HTMLSelectElement;
-    const minEl = document.getElementById(`${idPrefix}-min`) as HTMLSelectElement;
-    const periodEl = document.getElementById(`${idPrefix}-period`) as HTMLSelectElement;
-    if (!hourEl.value) return null;
-    let hour = parseInt(hourEl.value);
-    if (periodEl.value === 'PM' && hour !== 12) hour += 12;
-    if (periodEl.value === 'AM' && hour === 12) hour = 0;
-    return `${String(hour).padStart(2, '0')}:${minEl.value}`;
-  };
-
-  const extractHHmm = (isoString?: string | null): string | null => {
-    if (!isoString) return null;
-    const match = isoString.match(/T(\d{2}):(\d{2})/);
-    return match ? `${match[1]}:${match[2]}` : null;
-  };
-
-  const to12Hour = (isoString?: string | null) => {
-    const hhmm = extractHHmm(isoString);
-    if (!hhmm) return { hour: '', minute: '00', period: 'AM' };
-    const [hStr, mStr] = hhmm.split(':');
-    let h = parseInt(hStr);
-    const period = h >= 12 ? 'PM' : 'AM';
-    h = h % 12 || 12;
-    return { hour: String(h), minute: mStr, period };
-  };
-
-  const handleAddAttendance = () => {
-    const isDark = useThemeStore.getState().theme === 'dark';
-    const inputStyle = `width: 100%; margin-top: 4px; box-sizing: border-box; font-size: 12px; height: 38px; background: ${isDark ? '#14161C' : '#FFFFFF'}; color: ${isDark ? '#F9FAFB' : '#111318'}; border: 1px solid ${isDark ? '#232730' : '#E5E7EB'}; border-radius: 8px; padding: 0 10px;`;
-    const labelStyle = `font-size: 10px; font-weight: bold; color: ${isDark ? '#9CA3AF' : '#6B7280'};`;
-    const employeeOptions = (employees || [])
-      .map((emp) => `<option value="${emp.id}">${emp.first_name} ${emp.last_name}</option>`)
-      .join('');
-
-    Swal.fire({
-      title: 'Log Attendance',
-      html: `
-        <div style="display: flex; flex-direction: column; gap: 12px; text-align: left; font-family: sans-serif;">
-          <div>
-            <label style="${labelStyle}">EMPLOYEE</label>
-            <select id="swal-emp" style="${inputStyle}">
-              <option value="" disabled selected>Select employee</option>
-              ${employeeOptions}
-            </select>
-          </div>
-          <div>
-            <label style="${labelStyle}">CHECK IN</label>
-            ${timeSelectHtml('swal-in', labelStyle, inputStyle)}
-          </div>
-          <div>
-            <label style="${labelStyle}">CHECK OUT</label>
-            ${timeSelectHtml('swal-out', labelStyle, inputStyle)}
-          </div>
-        </div>
-      `,
-      background: isDark ? '#0F1520' : '#FFFFFF',
-      color: isDark ? '#F9FAFB' : '#111318',
-      showCancelButton: true,
-      confirmButtonText: 'Save Log',
-      confirmButtonColor: '#EF9F27',
-      cancelButtonText: 'Cancel',
-      cancelButtonColor: isDark ? '#232730' : '#E5E7EB',
-      preConfirm: () => {
-        const empId = (document.getElementById('swal-emp') as HTMLSelectElement).value;
-        const inTime = readTimeSelect('swal-in');
-        const outTime = readTimeSelect('swal-out');
-
-        if (!empId || !inTime) {
-          Swal.showValidationMessage('Employee and check-in time are required');
-          return false;
-        }
-
-        return {
-          employee_id: parseInt(empId),
-          target_date: selectedDate,
-          // +05:30: these are Sri Lanka times. Without it they were stored as UTC.
-          clock_in: `${selectedDate}T${inTime}:00+05:30`,
-          clock_out: outTime ? `${selectedDate}T${outTime}:00+05:30` : null,
-        };
-      }
-    }).then((result) => {
-      if (result.isConfirmed && result.value) {
-        logAttendance.mutate(result.value);
-      }
-    });
-  };
-
-  const handleEditAttendance = (row: any) => {
-    const isDark = useThemeStore.getState().theme === 'dark';
-    const inputStyle = `width: 100%; margin-top: 4px; box-sizing: border-box; font-size: 12px; height: 38px; background: ${isDark ? '#14161C' : '#FFFFFF'}; color: ${isDark ? '#F9FAFB' : '#111318'}; border: 1px solid ${isDark ? '#232730' : '#E5E7EB'}; border-radius: 8px; padding: 0 10px;`;
-    const labelStyle = `font-size: 10px; font-weight: bold; color: ${isDark ? '#9CA3AF' : '#6B7280'};`;
-    const inDefaults = to12Hour(row.clock_in);
-    const outDefaults = to12Hour(row.clock_out);
-
-    Swal.fire({
-      title: `Edit Log #${row.employee_id}`,
-      html: `
-        <div style="display: flex; flex-direction: column; gap: 12px; text-align: left; font-family: sans-serif;">
-          <div>
-            <label style="${labelStyle}">CHECK IN</label>
-            ${timeSelectHtml('swal-in', labelStyle, inputStyle, inDefaults.hour, inDefaults.minute, inDefaults.period)}
-          </div>
-          <div>
-            <label style="${labelStyle}">CHECK OUT</label>
-            ${timeSelectHtml('swal-out', labelStyle, inputStyle, outDefaults.hour, outDefaults.minute, outDefaults.period)}
-          </div>
-        </div>
-      `,
-      background: isDark ? '#0F1520' : '#FFFFFF',
-      color: isDark ? '#F9FAFB' : '#111318',
-      showCancelButton: true,
-      confirmButtonText: 'Save Changes',
-      confirmButtonColor: '#EF9F27',
-      cancelButtonText: 'Cancel',
-      cancelButtonColor: isDark ? '#232730' : '#E5E7EB',
-      preConfirm: () => {
-        const inTime = readTimeSelect('swal-in');
-        const outTime = readTimeSelect('swal-out');
-
-        return {
-          id: row.id,
-          clock_in: inTime ? `${row.target_date}T${inTime}:00+05:30` : undefined,
-          clock_out: outTime ? `${row.target_date}T${outTime}:00+05:30` : undefined,
-        };
-      }
-    }).then((result) => {
-      if (result.isConfirmed && result.value) {
-        updateAttendance.mutate(result.value);
-      }
-    });
-  };
-
   return (
     <ProtectedRoute requiredPermission="hr:manage">
       <div className="space-y-8">
@@ -276,7 +114,7 @@ export default function HRPage() {
               Human Resources
             </h1>
             <p className="text-text-secondary text-sm">
-              Manage employees, track attendance, and lock records for payroll.
+              Manage employees and system roles. Attendance is on the Attendance page.
             </p>
           </div>
           <div className="flex items-center gap-3">
@@ -297,9 +135,6 @@ export default function HRPage() {
           <TabsList className="bg-bg-subtle border border-border-brand p-1 rounded-lg">
             <TabsTrigger value="employees" className="data-[state=active]:bg-surface data-[state=active]:text-accent text-xs font-semibold rounded-md transition-all">
               Employee List
-            </TabsTrigger>
-            <TabsTrigger value="attendance" className="data-[state=active]:bg-surface data-[state=active]:text-accent text-xs font-semibold rounded-md transition-all">
-              Daily Attendance
             </TabsTrigger>
             <TabsTrigger value="system_roles" className="data-[state=active]:bg-surface data-[state=active]:text-accent text-xs font-semibold rounded-md transition-all">
               System Roles
@@ -361,93 +196,6 @@ export default function HRPage() {
           </TabsContent>
 
           {/* Attendance Tab */}
-          <TabsContent value="attendance" className="mt-6">
-            <Card className="bg-surface border border-border-brand rounded-card shadow-card p-5">
-              <CardHeader className="flex flex-row items-center justify-between p-0 pb-4">
-                <div>
-                  <CardTitle className="text-base font-semibold font-heading text-text-primary">Attendance Logs - {selectedDate}</CardTitle>
-                  <CardDescription className="text-text-secondary text-xs mt-1">Manual check-ins and lock status indicator.</CardDescription>
-                </div>
-                <div className="flex gap-2">
-                  <input 
-                    type="date" 
-                    value={selectedDate} 
-                    onChange={(e) => setSelectedDate(e.target.value)}
-                    className="bg-bg-subtle border border-border-brand rounded-lg px-2 text-xs text-text-primary focus:outline-none focus:border-accent"
-                  />
-                  <Button 
-                    onClick={handleAddAttendance}
-                    className="bg-accent hover:bg-accent/80 text-white font-semibold text-xs"
-                  >
-                    <UserCheck className="mr-2 h-4 w-4" /> Add Log
-                  </Button>
-                  <Button 
-                    onClick={() => lockAttendance.mutate(selectedDate)}
-                    disabled={lockAttendance.isPending}
-                    variant="outline"
-                    className="border-accent/30 text-accent hover:bg-accent/10 text-xs"
-                  >
-                    <Lock className="mr-2 h-4 w-4" /> Lock Day
-                  </Button>
-                </div>
-              </CardHeader>
-              <CardContent className="p-0 pt-4">
-                {loadingAttendance ? (
-                  <div className="space-y-4">
-                    <Skeleton className="h-10 w-full bg-bg-subtle" />
-                    <Skeleton className="h-10 w-full bg-bg-subtle" />
-                  </div>
-                ) : (
-                  <div className="rounded-xl border border-border-brand overflow-hidden">
-                    <Table>
-                      <TableHeader className="bg-bg-subtle">
-                        <TableRow className="hover:bg-transparent border-border-brand">
-                          <TableHead className="text-text-secondary font-heading text-xs">Employee</TableHead>
-                          <TableHead className="text-text-secondary font-heading text-xs">Check In</TableHead>
-                          <TableHead className="text-text-secondary font-heading text-xs">Check Out</TableHead>
-                          <TableHead className="text-text-secondary font-heading text-xs">Worked Hours</TableHead>
-                          <TableHead className="text-text-secondary font-heading text-xs text-right">Action</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {attendance?.length === 0 ? (
-                          <TableRow>
-                            <TableCell colSpan={5} className="text-center py-8 text-text-muted text-xs">No logs for this date</TableCell>
-                          </TableRow>
-                        ) : (
-                          attendance?.map((row) => {
-                            const emp = employees?.find((e) => e.id === row.employee_id);
-                            return (
-                              <TableRow key={row.id} className="border-border-brand hover:bg-[#14161C]/40 transition-colors">
-                                <TableCell className="font-mono text-xs text-text-primary">
-                                  {emp ? `${emp.first_name} ${emp.last_name}` : `#${row.employee_id}`}
-                                </TableCell>
-                                <TableCell className="text-text-secondary text-xs">{extractHHmm(row.clock_in) || '--'}</TableCell>
-                                <TableCell className="text-text-secondary text-xs">{extractHHmm(row.clock_out) || '--'}</TableCell>
-                                <TableCell className="font-mono text-xs text-text-primary">{row.worked_hours || '0'}h</TableCell>
-                                <TableCell className="text-right">
-                                  <Button 
-                                    variant="ghost" 
-                                    size="sm" 
-                                    disabled={row.is_locked} 
-                                    onClick={() => handleEditAttendance(row)}
-                                    className="text-text-secondary hover:text-text-primary"
-                                  >
-                                    {row.is_locked ? <Lock size={14} /> : 'Edit'}
-                                  </Button>
-                                </TableCell>
-                              </TableRow>
-                            );
-                          })
-                        )}
-                      </TableBody>
-                    </Table>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
-          
           {/* System Roles Tab */}
           <TabsContent value="system_roles" className="mt-6">
             <Card className="bg-surface border border-border-brand rounded-card shadow-card p-5">
