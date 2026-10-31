@@ -209,8 +209,9 @@ export default function HRPage() {
         return {
           employee_id: parseInt(empId),
           target_date: selectedDate,
-          clock_in: `${selectedDate}T${inTime}:00`,
-          clock_out: outTime ? `${selectedDate}T${outTime}:00` : null,
+          // +05:30: these are Sri Lanka times. Without it they were stored as UTC.
+          clock_in: `${selectedDate}T${inTime}:00+05:30`,
+          clock_out: outTime ? `${selectedDate}T${outTime}:00+05:30` : null,
         };
       }
     }).then((result) => {
@@ -254,8 +255,8 @@ export default function HRPage() {
 
         return {
           id: row.id,
-          clock_in: inTime ? `${row.target_date}T${inTime}:00` : undefined,
-          clock_out: outTime ? `${row.target_date}T${outTime}:00` : undefined,
+          clock_in: inTime ? `${row.target_date}T${inTime}:00+05:30` : undefined,
+          clock_out: outTime ? `${row.target_date}T${outTime}:00+05:30` : undefined,
         };
       }
     }).then((result) => {

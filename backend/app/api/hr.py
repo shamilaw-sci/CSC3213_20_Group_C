@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends
 from app.core.supabase import get_supabase
-from app.schemas.hr import (EmployeeProfile, EmployeeProfileCreate,AttendanceLog, AttendanceLogCreate, AttendanceLogUpdate,PayrollLedger)
+from app.schemas.hr import (EmployeeProfile, EmployeeProfileCreate,AttendanceLog, AttendanceLogCreate, AttendanceLogUpdate,PayrollLedger, SRI_LANKA)
 from typing import List, Optional, Dict, Any
 from datetime import date, datetime, timezone
 from supabase import Client
@@ -166,10 +166,14 @@ async def get_attendance(target_date: Optional[date] = None, month: Optional[int
 
 def _compute_worked_hours(clock_in, clock_out):
     if clock_in and clock_out:
-        if clock_in.tzinfo is not None:
-            clock_in = clock_in.replace(tzinfo=None)
-        if clock_out.tzinfo is not None:
-            clock_out = clock_out.replace(tzinfo=None)
+        # Subtract real instants. Stripping the timezones (as this used to)
+        # mixed a stored UTC time with a newly entered Sri Lanka time when
+        # only one of the two was edited, putting worked hours 5.5 h out.
+        # A naive value is a Sri Lanka wall-clock time.
+        if clock_in.tzinfo is None:
+            clock_in = clock_in.replace(tzinfo=SRI_LANKA)
+        if clock_out.tzinfo is None:
+            clock_out = clock_out.replace(tzinfo=SRI_LANKA)
         delta = (clock_out - clock_in).total_seconds() / 3600
         if delta < 0:
             delta += 24  # overnight shift: check-out landed after midnight
