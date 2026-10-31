@@ -25,6 +25,7 @@ from app.services.leave_rules import (
     annual_entitlement,
     carry_forward,
     casual_accrued,
+    casual_earned_to_date,
     casual_entitlement,
     check_request,
     complete_months,
@@ -119,34 +120,65 @@ MATERNITY = LeaveType("Maternity leave", uses_balance=False, allow_half_day=Fals
 
 def test_balance_blocks_an_oversized_request():
     days = [(date(2026, 11, d), D(1)) for d in (23, 25, 26, 27)]
-    check = check_request(ANNUAL, days, "none", {2026: Balance(entitled=D(14), approved=D(9), pending=D(2))}, date(2020, 1, 1))
+    check = check_request(ANNUAL, days, "none", {2026: Balance(entitled=D(14), approved=D(9), pending=D(2))})
     assert not check.ok and "Only 3" in check.errors[0]
 
 
 def test_request_across_new_year_draws_on_each_years_balance():
     days = [(date(2026, 12, 31), D(1)), (date(2027, 1, 4), D(1))]
-    check = check_request(ANNUAL, days, "none", {2026: Balance(entitled=D(1)), 2027: None}, date(2020, 1, 1))
+    check = check_request(ANNUAL, days, "none", {2026: Balance(entitled=D(1)), 2027: None})
     assert len(check.errors) == 1 and "2027" in check.errors[0]
 
 
 def test_event_leave_is_capped_per_request_not_by_balance():
     days = [(date(2026, 1, 1), D(1))] * 85
-    check = check_request(MATERNITY, days, "none", {}, None)
+    check = check_request(MATERNITY, days, "none", {})
     assert not check.ok and "84" in check.errors[0]
 
 
 def test_maternity_cannot_be_a_half_day():
-    check = check_request(MATERNITY, [(date(2026, 1, 5), D("0.5"))], "am", {}, None)
+    check = check_request(MATERNITY, [(date(2026, 1, 5), D("0.5"))], "am", {})
     assert "half day" in check.errors[0]
 
 
-def test_first_year_casual_cannot_outrun_what_has_built_up():
-    joined = date(2026, 3, 15)
-    days = [(date(2026, 7, 20), D(1)), (date(2026, 7, 21), D(1))]   # 2 built up by 21 July
-    balances = {2026: Balance(entitled=D(4))}
-    assert check_request(CASUAL, days, "none", balances, joined, casual_used_in_joining_year=D(0)).ok
-    blocked = check_request(CASUAL, days, "none", balances, joined, casual_used_in_joining_year=D(1))
-    assert not blocked.ok and "s.6(4)(a)" in blocked.errors[0]
+# First-year casual accrues to date (policy confirmed 2026-10-31): one day
+# per complete two months worked SO FAR, whatever dates the leave is for.
+
+@pytest.mark.parametrize("today, expected", [
+    (date(2026, 3, 14), D(0)),    # before joining
+    (date(2026, 5, 14), D(1)),    # two complete months
+    (date(2026, 7, 14), D(2)),
+    (date(2026, 12, 31), D(4)),   # nine complete months by year end
+])
+def test_casual_is_earned_as_you_go_in_the_joining_year(today, expected):
+    assert casual_earned_to_date(date(2026, 3, 15), 2026, today) == expected
+
+
+def test_casual_is_not_capped_outside_the_current_joining_year():
+    assert casual_earned_to_date(date(2025, 3, 15), 2026, date(2026, 5, 1)) is None   # second year
+    assert casual_earned_to_date(date(2025, 3, 15), 2025, date(2026, 5, 1)) is None   # joining year is over
+    assert casual_earned_to_date(None, 2026, date(2026, 5, 1)) is None
+
+
+def test_balance_counts_only_casual_earned_so_far():
+    b = Balance(entitled=D(5), earned_to_date=D(2), approved=D(1))
+    assert (b.usable_entitlement, b.total, b.available) == (D(2), D(2), D(1))
+
+
+def test_future_dated_casual_cannot_use_days_not_yet_earned():
+    # Joined 5 Jan; today 20 May: 2 earned (4 complete months), 5 by year
+    # end. A December request for 3 days used to pass, because it was checked
+    # against what would have built up by December. Now it is refused.
+    days = [(date(2026, 12, d), D(1)) for d in (14, 15, 16)]
+    balances = {2026: Balance(entitled=D(5), earned_to_date=casual_earned_to_date(date(2026, 1, 5), 2026, date(2026, 5, 20)))}
+    check = check_request(CASUAL, days, "none", balances)
+    assert not check.ok
+    assert "2 earned so far of 5" in check.errors[0] and "s.6(4)(a)" in check.errors[0]
+
+
+def test_casual_within_what_is_earned_is_allowed():
+    balances = {2026: Balance(entitled=D(5), earned_to_date=D(2))}
+    assert check_request(CASUAL, [(date(2026, 12, 14), D(1)), (date(2026, 12, 15), D(1))], "none", balances).ok
 
 
 # --------------------------------------------------------------------------
@@ -430,3 +462,23 @@ def test_director_and_finance_officer_can_request_their_own_leave(role):
 def test_system_administrator_cannot_use_self_service():
     response = _send("System Administrator", _db(), "POST", "/api/leave/requests", json=ANNUAL_WEEK, user_id=OTHER_USER_ID)
     assert response.status_code == 403
+
+
+def test_my_balance_shows_casual_earned_so_far_for_this_years_joiner():
+    today = date.today()
+    joined = date(today.year, 1, 1)
+    casual = {**TYPES[1], "id": 2, "code": "CASUAL", "name": "Casual leave", "first_year_rule": "soe_casual"}
+    supabase = _RecordingSupabase({
+        "employee_profile": {"select": [{**EMP_OTHER, "date_joined": joined.isoformat()}]},
+        "leave_types": {"select": [casual]},
+        "leave_entitlements": {"select": [{"id": 50, "employee_id": 8, "leave_type_id": 2, "year": today.year,
+                                           "entitled_days": 6, "carried_forward": 0, "adjustment": 0}]},
+        "leave_requests": {"select": []},
+        "leave_request_days": {"select": []},
+    })
+    body = _send("General Staff", supabase, "GET", "/api/leave/me", user_id=OTHER_USER_ID).json()
+    (balance,) = body["balances"]
+    earned = complete_months(joined, today) // 2
+    assert balance["entitled"] == 6
+    assert balance["earned_to_date"] == min(6, earned)
+    assert balance["available"] == min(6, earned)
