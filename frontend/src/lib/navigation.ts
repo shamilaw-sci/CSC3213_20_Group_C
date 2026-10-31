@@ -51,7 +51,8 @@ export const NAVIGATION_CONFIG: NavSection[] = [
     title: 'HUMAN RESOURCES',
     items: [
       { label: 'Employees', href: '/hr/employees', icon: Users, requiredPermission: 'hr:manage' },
-      { label: 'Attendance', href: '/hr/attendance', icon: Calendar, requiredPermission: 'hr:attendance:manage' },
+      // Director reads the monthly grid (hr:attendance:read); HR also edits.
+      { label: 'Attendance', href: '/hr/attendance', icon: Calendar, requiredPermission: ['hr:attendance:manage', 'hr:attendance:read'] },
       // Attendance managers read it; editing inside needs hr:manage.
       { label: 'Schedules & Holidays', href: '/hr/schedules', icon: CalendarDays, requiredPermission: ['hr:manage', 'hr:attendance:manage'] },
       { label: 'Leave', href: '/hr/leave', icon: Plane, requiredPermission: 'leave:approve' },
