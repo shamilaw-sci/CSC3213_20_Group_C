@@ -29,6 +29,9 @@ class InventoryTransactionBase(BaseModel):
     # Now includes 'Restock', matching the updated CHECK constraint in the DB.
     transaction_type: str  # Enum: Issue, Return, Restock
     transaction_date: date
+    # The Stock In form sends a free-text note and inventory_transactions has a
+    # `notes` column, but this field was missing, so the note was silently dropped.
+    notes: Optional[str] = None
 
 
 # What the CLIENT sends us to create a transaction. Deliberately has NO
@@ -38,6 +41,25 @@ class InventoryTransactionBase(BaseModel):
 # fake a cost.
 class InventoryTransactionCreate(InventoryTransactionBase):
     pass
+
+
+# ---------------------------------------------------------------
+# Small nested references returned with each transaction.
+#
+# GET /inventory/transactions already asks Supabase for
+#   "*, inventory_items(item_name), programs(program_name)"
+# but FastAPI only returns the fields declared on the response model,
+# so those two joined names were being thrown away before they reached
+# the browser. Declaring them here lets them through.
+# Both are Optional because a transaction may have no program, and the
+# POST /transactions response does not include the joins at all.
+# ---------------------------------------------------------------
+class TransactionItemRef(BaseModel):
+    item_name: str
+
+
+class TransactionProgramRef(BaseModel):
+    program_name: str
 
 
 # What we return to the client.
@@ -53,6 +75,8 @@ class InventoryTransactionCreate(InventoryTransactionBase):
 class InventoryTransaction(InventoryTransactionBase):
     id: int
     total_cost: float = 0
+    inventory_items: Optional[TransactionItemRef] = None
+    programs: Optional[TransactionProgramRef] = None
     model_config = ConfigDict(from_attributes=True)
 
 
