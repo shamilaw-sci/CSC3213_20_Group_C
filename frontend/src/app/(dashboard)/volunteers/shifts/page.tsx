@@ -6,10 +6,14 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   VolunteersService, type Shift, type Volunteer, type Assignment,
 } from '@/services/volunteers.service';
+import { FinanceService } from '@/services/finance.service';
+import type { Program } from '@/types';
 import { useAuthStore } from '@/store/useAuthStore';
 import { hasPermission } from '@/lib/permissions';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Skeleton } from '@/components/ui/skeleton';
+import { KPICard } from '@/components/shared/kpi-card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 // No DialogTrigger: this is Base UI, not Radix, so there is no `asChild`, and
@@ -23,7 +27,7 @@ import {
 } from '@/components/ui/select';
 import { toast } from 'sonner';
 import {
-  Loader2, Plus, MapPin, Users, Check, X, Clock, AlertTriangle, Trash2,
+  Loader2, Plus, MapPin, Users, Clock, AlertTriangle, Trash2,
 } from 'lucide-react';
 import { cn, getErrorMessage } from '@/lib/utils';
 
@@ -85,27 +89,151 @@ function ConfirmationLine({ shift }: { shift: Shift }) {
   );
 }
 
-function NewShiftDialog({ onCreated }: { onCreated: () => void }) {
+/** Active programmes are the only ones a new shift can be for. */
+function isActiveProgram(p: Program): boolean {
+  return (p.status || '').trim().toLowerCase() === 'active';
+}
+
+/**
+ * Assign several volunteers to one shift. One request per volunteer rather
+ * than a bulk endpoint, so each still gets its own audit entry and its own
+ * notification email, exactly as a single assignment does.
+ */
+async function assignMany(shiftId: string, volunteerIds: string[]) {
+  const results = await Promise.allSettled(
+    volunteerIds.map((id) => VolunteersService.assign({ volunteer_id: id, shift_id: shiftId }))
+  );
+  const failed = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+  return {
+    assigned: results.length - failed.length,
+    failed: failed.length,
+    firstError: failed[0]?.reason as unknown,
+  };
+}
+
+function toggleIn(set: Set<string>, id: string): Set<string> {
+  const next = new Set(set);
+  if (next.has(id)) next.delete(id); else next.add(id);
+  return next;
+}
+
+/**
+ * Checklist of approved volunteers. Volunteers already on the shift are shown
+ * ticked and locked, so the coordinator sees the whole approved list in one
+ * place rather than only the people who are left.
+ */
+function VolunteerChecklist({
+  volunteers, selected, onToggle, lockedIds, emptyText,
+}: {
+  volunteers: Volunteer[];
+  selected: Set<string>;
+  onToggle: (id: string) => void;
+  lockedIds?: Set<string>;
+  emptyText: string;
+}) {
+  const [filter, setFilter] = useState('');
+
+  if (volunteers.length === 0) {
+    return <p className="text-xs text-text-muted">{emptyText}</p>;
+  }
+
+  const needle = filter.trim().toLowerCase();
+  const shown = volunteers.filter((v) =>
+    `${v.full_name} ${v.email}`.toLowerCase().includes(needle)
+  );
+
+  return (
+    <div className="space-y-2">
+      {volunteers.length > 6 && (
+        <Input
+          placeholder="Search volunteers..."
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+        />
+      )}
+      <ul className="max-h-56 overflow-y-auto rounded-lg border border-border-brand/60 divide-y divide-border-brand/40">
+        {shown.map((v) => {
+          const locked = lockedIds?.has(v.id) ?? false;
+          return (
+            <li key={v.id}>
+              <label
+                className={cn(
+                  'flex items-center gap-2.5 px-3 py-2 text-sm',
+                  locked ? 'opacity-60 cursor-default' : 'cursor-pointer hover:bg-bg-subtle'
+                )}
+              >
+                <input
+                  type="checkbox"
+                  checked={locked || selected.has(v.id)}
+                  disabled={locked}
+                  onChange={() => onToggle(v.id)}
+                  className="accent-[var(--color-accent)]"
+                />
+                <span className="flex-1 min-w-0">
+                  <span className="block truncate text-text-primary">{v.full_name}</span>
+                  <span className="block truncate text-xs text-text-muted">{v.email}</span>
+                </span>
+                {locked && <span className="text-[11px] text-text-muted">Assigned</span>}
+              </label>
+            </li>
+          );
+        })}
+        {shown.length === 0 && (
+          <li className="px-3 py-2 text-xs text-text-muted">No volunteers match.</li>
+        )}
+      </ul>
+    </div>
+  );
+}
+
+const EMPTY_FORM = {
+  title: '', description: '', location: '',
+  shift_date: '', start_time: '09:00', end_time: '13:00',
+  volunteers_needed: 1,
+};
+
+function NewShiftDialog({
+  volunteers, onCreated,
+}: { volunteers: Volunteer[]; onCreated: () => void }) {
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({
-    title: '', description: '', location: '',
-    shift_date: '', start_time: '09:00', end_time: '13:00',
-    volunteers_needed: 1,
+  const [form, setForm] = useState(EMPTY_FORM);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  // Same query key as the Programs page, so the list is shared and cached.
+  const { data: programs = [], isLoading: programsLoading } = useQuery({
+    queryKey: ['programs'],
+    queryFn: FinanceService.getPrograms,
+    enabled: open,
   });
+  const activePrograms = programs.filter(isActiveProgram);
 
   const create = useMutation({
-    mutationFn: () => VolunteersService.createShift({
-      ...form,
-      description: form.description || undefined,
-      location: form.location || undefined,
-    }),
-    onSuccess: () => {
-      toast.success('Shift created.');
-      setOpen(false);
-      setForm({
-        title: '', description: '', location: '',
-        shift_date: '', start_time: '09:00', end_time: '13:00', volunteers_needed: 1,
+    mutationFn: async () => {
+      const shift = await VolunteersService.createShift({
+        ...form,
+        description: form.description || undefined,
+        location: form.location || undefined,
       });
+      // Assigning at creation is optional. The shift exists either way, and
+      // anyone left out can still be added later through Manage.
+      if (selected.size === 0) return { assigned: 0, failed: 0, firstError: undefined };
+      return assignMany(shift.id, [...selected]);
+    },
+    onSuccess: ({ assigned, failed, firstError }) => {
+      if (failed > 0) {
+        toast.warning(
+          `Shift created, but ${failed} volunteer${failed === 1 ? '' : 's'} could not be assigned` +
+          (firstError ? ` (${getErrorMessage(firstError)})` : '') +
+          '. You can add them through Manage.'
+        );
+      } else if (assigned > 0) {
+        toast.success(`Shift created and ${assigned} volunteer${assigned === 1 ? '' : 's'} assigned.`);
+      } else {
+        toast.success('Shift created.');
+      }
+      setOpen(false);
+      setForm(EMPTY_FORM);
+      setSelected(new Set());
       onCreated();
     },
     onError: (err) => toast.error(getErrorMessage(err) || "Couldn't create the shift."),
@@ -122,11 +250,30 @@ function NewShiftDialog({ onCreated }: { onCreated: () => void }) {
       <DialogContent>
         <DialogHeader><DialogTitle>New shift</DialogTitle></DialogHeader>
         <div className="space-y-3">
-          <Input
-            placeholder="Title — e.g. Saturday sterilization clinic"
-            value={form.title}
-            onChange={(e) => setForm({ ...form, title: e.target.value })}
-          />
+          <div className="space-y-1">
+            <label className="text-xs text-text-secondary">Programme</label>
+            {/* The shift's title is the programme's name: volunteer_shifts has
+                no programme column, so the name is what gets stored. The value
+                is the name itself, so Base UI's Select.Value (which renders the
+                raw value, not the label) still shows the right text. */}
+            <Select
+              value={form.title || null}
+              onValueChange={(v) => { if (typeof v === 'string') setForm({ ...form, title: v }); }}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder={
+                  programsLoading ? 'Loading programmes...'
+                  : activePrograms.length ? 'Select an active programme'
+                  : 'No active programmes'
+                } />
+              </SelectTrigger>
+              <SelectContent>
+                {activePrograms.map((p) => (
+                  <SelectItem key={p.id} value={p.program_name}>{p.program_name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
           <Input
             placeholder="Location (optional)"
             value={form.location}
@@ -164,6 +311,20 @@ function NewShiftDialog({ onCreated }: { onCreated: () => void }) {
             <Input type="number" min={1} max={200} value={form.volunteers_needed}
               onChange={(e) => setForm({ ...form, volunteers_needed: Number(e.target.value) })} />
           </div>
+          <div className="space-y-1">
+            <label className="text-xs text-text-secondary">
+              Assign volunteers{' '}
+              <span className="text-text-muted">
+                (optional{selected.size ? ` · ${selected.size} selected` : ''})
+              </span>
+            </label>
+            <VolunteerChecklist
+              volunteers={volunteers}
+              selected={selected}
+              onToggle={(id) => setSelected((s) => toggleIn(s, id))}
+              emptyText="No approved volunteers yet. You can assign people later through Manage."
+            />
+          </div>
           <Button
             className="w-full"
             disabled={!valid || create.isPending}
@@ -178,9 +339,11 @@ function NewShiftDialog({ onCreated }: { onCreated: () => void }) {
   );
 }
 
-function AssignPanel({ shift, volunteers }: { shift: Shift; volunteers: Volunteer[] }) {
+function AssignPanel({
+  shift, volunteers, canAssign,
+}: { shift: Shift; volunteers: Volunteer[]; canAssign: boolean }) {
   const queryClient = useQueryClient();
-  const [picked, setPicked] = useState('');
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const { data: assignments = [] } = useQuery({
     queryKey: ['volunteer-assignments', shift.id],
@@ -193,10 +356,23 @@ function AssignPanel({ shift, volunteers }: { shift: Shift; volunteers: Voluntee
   };
 
   const assign = useMutation({
-    mutationFn: (volunteerId: string) =>
-      VolunteersService.assign({ volunteer_id: volunteerId, shift_id: shift.id }),
-    onSuccess: () => { toast.success('Assigned — notification sent if email is configured.'); setPicked(''); refresh(); },
-    onError: (err) => toast.error(getErrorMessage(err) || "Couldn't assign that volunteer."),
+    mutationFn: (volunteerIds: string[]) => assignMany(shift.id, volunteerIds),
+    onSuccess: ({ assigned, failed, firstError }) => {
+      if (failed > 0) {
+        toast.error(
+          `${failed} could not be assigned` +
+          (firstError ? `: ${getErrorMessage(firstError)}` : '.') +
+          (assigned ? ` ${assigned} assigned.` : '')
+        );
+      } else {
+        toast.success(
+          `${assigned} volunteer${assigned === 1 ? '' : 's'} assigned — notification sent if email is configured.`
+        );
+      }
+      setSelected(new Set());
+      refresh();
+    },
+    onError: (err) => toast.error(getErrorMessage(err) || "Couldn't assign those volunteers."),
   });
 
   const unassign = useMutation({
@@ -207,7 +383,6 @@ function AssignPanel({ shift, volunteers }: { shift: Shift; volunteers: Voluntee
 
   const byId = new Map(volunteers.map((v) => [v.id, v]));
   const assignedIds = new Set(assignments.map((a) => a.volunteer_id));
-  const available = volunteers.filter((v) => !assignedIds.has(v.id));
 
   const badge = (a: Assignment) =>
     a.response === 'accepted' ? <Badge className="bg-emerald-600 text-white">Accepted</Badge>
@@ -218,7 +393,7 @@ function AssignPanel({ shift, volunteers }: { shift: Shift; volunteers: Voluntee
 
   return (
     <div className="space-y-3 pt-3 border-t border-border-brand/50">
-      {assignments.length > 0 && (
+      {assignments.length > 0 ? (
         <ul className="space-y-1.5">
           {assignments.map((a) => (
             <li key={a.id} className="flex items-center gap-2 text-sm">
@@ -231,38 +406,42 @@ function AssignPanel({ shift, volunteers }: { shift: Shift; volunteers: Voluntee
                 </span>
               )}
               {badge(a)}
-              <Button
-                size="sm" variant="ghost"
-                aria-label="Remove assignment"
-                disabled={unassign.isPending}
-                onClick={() => unassign.mutate(a.id)}
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-              </Button>
+              {canAssign && (
+                <Button
+                  size="sm" variant="ghost"
+                  aria-label="Remove assignment"
+                  disabled={unassign.isPending}
+                  onClick={() => unassign.mutate(a.id)}
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </Button>
+              )}
             </li>
           ))}
         </ul>
+      ) : (
+        <p className="text-sm text-text-muted">Nobody is assigned to this shift yet.</p>
       )}
 
-      {!shift.is_cancelled && (
-        <div className="flex gap-2">
-          <Select value={picked} onValueChange={(v) => { if (typeof v === 'string') setPicked(v); }}>
-            <SelectTrigger className="flex-1">
-              <SelectValue placeholder={
-                available.length ? 'Add a volunteer...' : 'Everyone approved is already assigned'
-              } />
-            </SelectTrigger>
-            <SelectContent>
-              {available.map((v) => (
-                <SelectItem key={v.id} value={v.id}>{v.full_name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+      {canAssign && !shift.is_cancelled && (
+        <div className="space-y-2">
+          <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">
+            Approved volunteers
+          </p>
+          <VolunteerChecklist
+            volunteers={volunteers}
+            selected={selected}
+            onToggle={(id) => setSelected((s) => toggleIn(s, id))}
+            lockedIds={assignedIds}
+            emptyText="No approved volunteers yet. Approve applications first."
+          />
           <Button
-            disabled={!picked || assign.isPending}
-            onClick={() => assign.mutate(picked)}
+            disabled={selected.size === 0 || assign.isPending}
+            onClick={() => assign.mutate([...selected])}
           >
-            {assign.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Assign'}
+            {assign.isPending
+              ? <Loader2 className="w-4 h-4 animate-spin" />
+              : `Assign selected${selected.size ? ` (${selected.size})` : ''}`}
           </Button>
         </div>
       )}
@@ -299,90 +478,160 @@ export default function VolunteerShiftsPage() {
     onError: (err) => toast.error(getErrorMessage(err) || "Couldn't cancel the shift."),
   });
 
+  const active = shifts.filter((s) => !s.is_cancelled);
+  const upcoming = active.filter((s) => daysUntil(s.shift_date) >= 0);
+  const understaffed = upcoming.filter((s) => s.confirmation.accepted < s.confirmation.needed).length;
+  const accepted = upcoming.reduce((n, s) => n + s.confirmation.accepted, 0);
+  const needed = upcoming.reduce((n, s) => n + s.confirmation.needed, 0);
+  const awaiting = upcoming.reduce((n, s) => n + s.confirmation.awaiting, 0);
+  const kpi = (v: number | string) => (isLoading ? '—' : v);
+
   return (
-    <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4">
+    <div className="space-y-8 pb-12">
+      {/* Header, in the finance pages' shape */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold font-heading text-text-primary">Shifts</h1>
-          <p className="text-sm text-text-secondary mt-1">
-            Who is coming, who has answered, and who still needs chasing.
+          <h1 className="text-3xl font-bold font-heading tracking-tight mb-2 text-text-primary">Shifts</h1>
+          <p className="text-text-secondary text-sm">
+            Create and manage volunteer shifts, assign volunteers, and track shift schedules across all programs.
           </p>
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={() => setIncludePast(!includePast)}>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="outline"
+            className="border-border-brand text-text-primary"
+            onClick={() => setIncludePast(!includePast)}
+          >
             {includePast ? 'Upcoming only' : 'Include past'}
           </Button>
           {canAssign && (
             <NewShiftDialog
+              volunteers={volunteers}
               onCreated={() => queryClient.invalidateQueries({ queryKey: ['volunteer-shifts'] })}
             />
           )}
         </div>
       </div>
 
-      {isLoading ? (
-        <div className="py-12 flex justify-center">
-          <Loader2 className="w-5 h-5 animate-spin text-text-muted" />
-        </div>
-      ) : shifts.length === 0 ? (
-        <Card><CardContent className="py-12 text-center text-sm text-text-secondary">
-          No {includePast ? '' : 'upcoming '}shifts.
-        </CardContent></Card>
-      ) : (
-        <div className="space-y-3">
-          {shifts.map((shift) => (
-            <Card key={shift.id} className={cn(shift.is_cancelled && 'opacity-60')}>
-              <CardContent className="pt-5 space-y-3">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <h2 className="font-semibold text-text-primary">{shift.title}</h2>
-                      {shift.is_cancelled && <Badge variant="outline">Cancelled</Badge>}
-                    </div>
-                    <p className="text-sm text-text-secondary mt-0.5">
-                      {formatDate(shift.shift_date)} · {shift.start_time.slice(0, 5)}–{shift.end_time.slice(0, 5)}
-                    </p>
-                    {shift.location && (
-                      <p className="text-sm text-text-muted flex items-center gap-1 mt-0.5">
-                        <MapPin className="w-3.5 h-3.5" /> {shift.location}
-                      </p>
+      {/* KPI strip. Counts cover upcoming, non-cancelled shifts only, so
+          "Include past" changes the list below but not these numbers. */}
+      <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
+        <KPICard title="Upcoming Shifts" value={kpi(upcoming.length)} />
+        <KPICard
+          title="Understaffed"
+          value={kpi(understaffed)}
+          className={understaffed > 0 ? 'border-red-500/40 dark:border-red-500/40' : undefined}
+        />
+        <KPICard title="Volunteers Confirmed" value={kpi(`${accepted}/${needed}`)} />
+        <KPICard title="Awaiting Response" value={kpi(awaiting)} />
+      </div>
+
+      <Card className="bg-surface border border-border-brand rounded-card shadow-card p-5">
+        <CardHeader className="p-0 pb-4">
+          <CardTitle className="text-base font-semibold font-heading text-text-primary">
+            {includePast ? 'All Shifts' : 'Upcoming Shifts'}
+          </CardTitle>
+          <CardDescription className="text-text-secondary text-xs mt-1">
+            Who is coming, who has answered, and who still needs chasing.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="p-0">
+          {isLoading ? (
+            <div className="space-y-3">
+              {[1, 2, 3].map((i) => <Skeleton key={i} className="h-20 w-full bg-bg-subtle" />)}
+            </div>
+          ) : shifts.length === 0 ? (
+            <p className="py-12 text-center text-sm text-text-muted">
+              No {includePast ? '' : 'upcoming '}shifts.
+            </p>
+          ) : (
+            <div className="space-y-3">
+              {shifts.map((shift) => {
+                const c = shift.confirmation;
+                const pct = c.needed ? Math.min(100, Math.round((c.accepted / c.needed) * 100)) : 0;
+                const [, m, d] = shift.shift_date.split('-').map(Number);
+                const month = new Date(2000, m - 1, 1).toLocaleDateString('en-GB', { month: 'short' });
+                return (
+                  <div
+                    key={shift.id}
+                    className={cn(
+                      'rounded-lg border border-border-brand bg-bg-subtle/40 p-4 space-y-3 transition-colors hover:border-accent/40',
+                      shift.is_cancelled && 'opacity-60'
                     )}
-                    <div className="mt-2"><ConfirmationLine shift={shift} /></div>
-                  </div>
+                  >
+                    <div className="flex flex-col sm:flex-row sm:items-start gap-4">
+                      {/* Date block */}
+                      <div className="flex sm:flex-col items-center justify-center gap-1.5 sm:gap-0 sm:w-14 shrink-0 self-start rounded-lg border border-border-brand bg-surface px-3 py-1.5 sm:py-2">
+                        <span className="text-[10px] font-semibold uppercase tracking-wider text-accent">{month}</span>
+                        <span className="text-xl font-bold font-mono text-text-primary leading-none sm:mt-0.5">{d}</span>
+                      </div>
 
-                  <div className="flex flex-col items-end gap-2 shrink-0">
-                    <div className="flex items-center gap-1 text-sm text-text-secondary">
-                      <Users className="w-4 h-4" />
-                      {shift.confirmation.accepted}/{shift.confirmation.needed}
-                    </div>
-                    <div className="flex gap-2">
-                      <Button
-                        size="sm" variant="outline"
-                        onClick={() => setExpanded(expanded === shift.id ? null : shift.id)}
-                      >
-                        {expanded === shift.id ? 'Hide' : 'Manage'}
-                      </Button>
-                      {canAssign && !shift.is_cancelled && (
-                        <Button
-                          size="sm" variant="ghost"
-                          disabled={cancel.isPending}
-                          onClick={() => cancel.mutate(shift.id)}
-                        >
-                          Cancel
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                </div>
+                      <div className="min-w-0 flex-1 space-y-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h2 className="font-semibold font-heading text-text-primary">{shift.title}</h2>
+                          {shift.is_cancelled && <Badge variant="outline">Cancelled</Badge>}
+                        </div>
+                        <div className="flex flex-wrap items-center gap-x-4 gap-y-0.5 text-xs text-text-secondary">
+                          <span className="flex items-center gap-1">
+                            <Clock className="w-3.5 h-3.5" />
+                            {formatDate(shift.shift_date)} · {shift.start_time.slice(0, 5)}–{shift.end_time.slice(0, 5)}
+                          </span>
+                          {shift.location && (
+                            <span className="flex items-center gap-1">
+                              <MapPin className="w-3.5 h-3.5" /> {shift.location}
+                            </span>
+                          )}
+                        </div>
+                        <div className="pt-1"><ConfirmationLine shift={shift} /></div>
+                      </div>
 
-                {expanded === shift.id && (
-                  <AssignPanel shift={shift} volunteers={volunteers} />
-                )}
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      )}
+                      <div className="flex sm:flex-col items-center sm:items-end justify-between gap-3 shrink-0 sm:w-44">
+                        <div className="w-28 sm:w-full space-y-1">
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="flex items-center gap-1 text-text-secondary">
+                              <Users className="w-3.5 h-3.5" /> Confirmed
+                            </span>
+                            <span className="font-mono font-semibold text-text-primary">{c.accepted}/{c.needed}</span>
+                          </div>
+                          <div className="h-1.5 w-full rounded-full bg-border-brand/60 overflow-hidden">
+                            <div
+                              className={cn('h-full rounded-full', pct >= 100 ? 'bg-emerald-500' : 'bg-accent')}
+                              style={{ width: `${pct}%` }}
+                            />
+                          </div>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button
+                            size="sm" variant="outline"
+                            className="border-border-brand"
+                            onClick={() => setExpanded(expanded === shift.id ? null : shift.id)}
+                          >
+                            {expanded === shift.id ? 'Hide' : 'Manage'}
+                          </Button>
+                          {canAssign && !shift.is_cancelled && (
+                            <Button
+                              size="sm" variant="ghost"
+                              className="text-text-secondary hover:text-red-500"
+                              disabled={cancel.isPending}
+                              onClick={() => cancel.mutate(shift.id)}
+                            >
+                              Cancel
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {expanded === shift.id && (
+                      <AssignPanel shift={shift} volunteers={volunteers} canAssign={canAssign} />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

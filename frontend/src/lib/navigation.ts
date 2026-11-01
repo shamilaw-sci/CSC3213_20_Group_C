@@ -16,7 +16,9 @@ import {
   HeartHandshake,
   CalendarClock,
   CalendarDays,
-  Plane
+  Plane,
+  CalendarPlus,
+  CircleCheckBig
 } from 'lucide-react';
 
 import { hasAnyPermission, type Permission } from './permissions';
@@ -82,7 +84,21 @@ export const NAVIGATION_CONFIG: NavSection[] = [
   {
     title: 'PROGRAMS',
     items: [
-      { label: 'Active Programs', href: '/programs', icon: FolderOpen, requiredPermission: 'programs:read' },
+      // Programs move Upcoming -> Active -> Completed; one page per stage.
+      { label: 'Upcoming Programs', href: '/programs/upcoming', icon: CalendarPlus, requiredPermission: 'programs:read' },
+      { label: 'Active Programs', href: '/programs/active', icon: FolderOpen, requiredPermission: 'programs:read' },
+      { label: 'Completed Programs', href: '/programs/completed', icon: CircleCheckBig, requiredPermission: 'programs:read' },
+    ]
+  },
+  {
+    // Both gated on volunteers:read, which no role holds without also holding
+    // approve or assign. The pages themselves gate the mutating controls
+    // separately, so a Director sees the roster and the rota but no Assign
+    // button, and an Operations Lead sees no Approve button.
+    title: 'VOLUNTEERS',
+    items: [
+      { label: 'Applications', href: '/volunteers', icon: HeartHandshake, requiredPermission: 'volunteers:read' },
+      { label: 'Shifts', href: '/volunteers/shifts', icon: CalendarClock, requiredPermission: 'volunteers:read' },
     ]
   },
   {
@@ -92,17 +108,6 @@ export const NAVIGATION_CONFIG: NavSection[] = [
     { label: 'Case Triage', href: '/case-triage', icon: ClipboardList, requiredPermission: 'rescue:read' },
     { label: 'Field Dispatch', href: '/dispatch', icon: Navigation, requiredPermission: 'rescue:read' },
   ]
-  },
-  {
-    // Both gated on volunteers:read, which no role holds without also holding
-    // approve or assign. The pages themselves gate the mutating controls
-    // separately, so a Director sees the roster and the rota but no Assign
-    // button, and an Operations Lead sees no Approve button.
-    title: 'VOLUNTEERS',
-    items: [
-      { label: 'Roster', href: '/volunteers', icon: HeartHandshake, requiredPermission: 'volunteers:read' },
-      { label: 'Shifts', href: '/volunteers/shifts', icon: CalendarClock, requiredPermission: 'volunteers:read' },
-    ]
   },
   {
     title: 'SELF SERVICE',

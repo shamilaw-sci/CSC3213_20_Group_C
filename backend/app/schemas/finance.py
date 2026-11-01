@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from datetime import date
 from typing import Optional
 from decimal import Decimal
@@ -11,10 +11,23 @@ class ProgramBase(BaseModel):
     status: str = "Active"
 
 class ProgramCreate(ProgramBase):
-    pass
+    # Accepted for backwards compatibility but IGNORED: every new program
+    # starts as Upcoming (see create_program and the program lifecycle).
+    status: str = "Upcoming"
+    # Optional planned start; replaced by the real day when it is started.
+    start_date: Optional[date] = None
+    # Where it takes place. Required for every new program; trimmed, and a
+    # blank or whitespace-only value is refused (422).
+    location: str = Field(..., min_length=1, max_length=200)
+
+    @field_validator("location", mode="before")
+    @classmethod
+    def _trim_location(cls, v):
+        return v.strip() if isinstance(v, str) else v
 
 class Program(ProgramBase):
     id: int
+    location: Optional[str] = None
     model_config = ConfigDict(from_attributes=True)
 
 # --- Enums (matching DB values exactly) ---
