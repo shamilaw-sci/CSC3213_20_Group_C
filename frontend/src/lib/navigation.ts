@@ -16,7 +16,9 @@ import {
   HeartHandshake,
   CalendarClock,
   CalendarDays,
-  Plane
+  Plane,
+  CalendarPlus,
+  CircleCheckBig
 } from 'lucide-react';
 
 import { hasAnyPermission, type Permission } from './permissions';
@@ -82,7 +84,10 @@ export const NAVIGATION_CONFIG: NavSection[] = [
   {
     title: 'PROGRAMS',
     items: [
-      { label: 'Active Programs', href: '/programs', icon: FolderOpen, requiredPermission: 'programs:read' },
+      // Programs move Upcoming -> Active -> Completed; one page per stage.
+      { label: 'Upcoming Programs', href: '/programs/upcoming', icon: CalendarPlus, requiredPermission: 'programs:read' },
+      { label: 'Active Programs', href: '/programs/active', icon: FolderOpen, requiredPermission: 'programs:read' },
+      { label: 'Completed Programs', href: '/programs/completed', icon: CircleCheckBig, requiredPermission: 'programs:read' },
     ]
   },
   {

@@ -11,6 +11,9 @@ from app.core.permissions import has_permission
 from app.core.audit import log_audit_action
 from app.services.finance_reports import fetch_ledger, finance_snapshot
 from app.services.ledger import build_ledger_page
+from app.services.program_lifecycle import (
+    LOCATION_MIGRATION_MESSAGE, UPCOMING, is_missing_location_column,
+)
 from app.services.restricted_funds import (
     _to_decimal,
     compute_restricted_balance,
@@ -448,7 +451,17 @@ async def create_program(
     user = Depends(require_permission('programs:manage')), # SECURED
     supabase: Client = Depends(get_supabase)
 ):
-    response = supabase.table("programs").insert(program.model_dump()).execute()
+    # Every program starts as Upcoming, whatever the client sent; it only
+    # moves on through POST /api/programs/{id}/start and /complete.
+    data = program.model_dump(mode="json", exclude_none=True)
+    data["status"] = UPCOMING
+    data.pop("end_date", None)
+    try:
+        response = supabase.table("programs").insert(data).execute()
+    except Exception as e:
+        if is_missing_location_column(e):
+            raise HTTPException(status_code=503, detail=LOCATION_MIGRATION_MESSAGE)
+        raise
 
     if not response.data:
         raise HTTPException(status_code=400, detail="Failed to create program")

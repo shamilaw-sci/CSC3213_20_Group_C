@@ -10,13 +10,17 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ArrowLeft, Users, TrendingUp, X, UserPlus, Lock, HeartHandshake, CalendarClock } from 'lucide-react';
+import { ArrowLeft, Users, X, UserPlus, Lock, HeartHandshake, CalendarClock } from 'lucide-react';
 import { SKILLS } from '@/services/volunteers.service';
 import { FinanceService } from '@/services/finance.service';
 import { useAuthStore } from '@/store/useAuthStore';
 import { hasPermission } from '@/lib/permissions';
 import { toast } from 'sonner';
 import ProtectedRoute from '@/components/layout/protected-route';
+import {
+  EditAnimalsTreatedButton, EditableProgramLocation, STAGE_BADGE, STAGE_PATH, TransitionButton, asStage, daysBetween, formatDay,
+} from '@/components/programs/program-lifecycle';
+import { cn, getErrorMessage } from '@/lib/utils';
 
 export default function ProgramDetailsPage() {
   const params = useParams();
@@ -35,12 +39,6 @@ export default function ProgramDetailsPage() {
   const { data: team, isLoading: teamLoading } = useQuery({
     queryKey: ['program-team', programId],
     queryFn: () => ProgramService.getTeam(programId),
-  });
-
-  const { data: costData } = useQuery({
-    queryKey: ['program-cost-per-animal', programId],
-    queryFn: () => ProgramService.getCostPerAnimal(programId),
-    retry: false, // don't hammer the RPC if the program has no cost data yet
   });
 
   const { data: financials } = useQuery({
@@ -64,6 +62,11 @@ export default function ProgramDetailsPage() {
   // for the role that most often opens this view.
   const { user } = useAuthStore();
   const canReadFinance = hasPermission(user?.role as string, 'finance:read');
+  const canManage = hasPermission(user?.role as string, 'programs:manage');
+  const stage = asStage(program?.status);
+  // A completed program's team is a record, not a roster: the API refuses
+  // changes, so the controls are not offered.
+  const teamEditable = canManage && stage !== 'Completed';
 
   const { data: restricted } = useQuery({
     queryKey: ['restrictedBalance', programId],
@@ -84,8 +87,8 @@ export default function ProgramDetailsPage() {
       setSelectedEmployeeId('');
       setRoleInput('');
     },
-    onError: (err: any) => {
-      toast.error(err?.response?.data?.detail || 'Failed to assign worker');
+    onError: (err) => {
+      toast.error(getErrorMessage(err) || 'Failed to assign worker');
     },
   });
 
@@ -108,8 +111,12 @@ export default function ProgramDetailsPage() {
   return (
     <ProtectedRoute requiredPermission="programs:read">
       <div className="space-y-6 pb-12">
-        <Button variant="ghost" size="sm" onClick={() => router.push('/programs')} className="-ml-2 text-xs">
-          <ArrowLeft className="mr-2 h-4 w-4" /> Back to Programs
+        <Button
+          variant="ghost" size="sm"
+          onClick={() => router.push(program ? STAGE_PATH[stage] : '/programs')}
+          className="-ml-2 text-xs"
+        >
+          <ArrowLeft className="mr-2 h-4 w-4" /> Back to {program ? `${stage} Programs` : 'Programs'}
         </Button>
 
         {programLoading ? (
@@ -121,23 +128,61 @@ export default function ProgramDetailsPage() {
             {/* Basic Info */}
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
               <div>
-                <h1 className="text-2xl font-bold font-heading text-text-primary">{program.program_name}</h1>
+                <div className="flex items-center gap-3 flex-wrap">
+                  <h1 className="text-3xl font-bold font-heading tracking-tight text-text-primary">{program.program_name}</h1>
+                  <Badge variant="outline" className={cn('text-xs w-fit', STAGE_BADGE[stage])}>{stage}</Badge>
+                </div>
+                <div className="mt-2">
+                  <EditableProgramLocation program={program} canEdit={canManage} />
+                </div>
                 <p className="text-text-secondary text-sm mt-1">
-                  {program.start_date ? `Started ${program.start_date}` : 'No start date set'}
-                  {program.end_date ? ` · Ends ${program.end_date}` : ''}
+                  {stage === 'Upcoming' && (program.start_date
+                    ? `Start date ${formatDay(program.start_date)}`
+                    : 'No start date planned yet')}
+                  {stage === 'Active' && (program.start_date
+                    ? `Started ${formatDay(program.start_date)} · running ${Math.max(0, daysBetween(program.start_date))} days`
+                    : 'Start date not recorded')}
+                  {stage === 'Completed' && (
+                    <>
+                      {program.start_date ? formatDay(program.start_date) : '—'} → {formatDay(program.end_date)}
+                      {program.start_date && program.end_date &&
+                        ` · ${daysBetween(program.start_date, program.end_date) + 1} days`}
+                    </>
+                  )}
                 </p>
               </div>
-              <Badge variant="outline" className="text-xs w-fit">{program.status}</Badge>
+              {canManage && stage !== 'Completed' && (
+                <TransitionButton program={program} stage={stage} size="default" />
+              )}
             </div>
 
             {/* Stats */}
             <div className="grid grid-cols-2 md:grid-cols-3 gap-5">
-              <StatBox label="Animals Treated" value={program.total_animals_treated} />
+              <StatBox label="Start Date" value={formatDay(program.start_date)} />
+              {stage === 'Completed' && <StatBox label="End Date" value={formatDay(program.end_date)} />}
+              {/* The animal count is recorded when the program is marked as
+                  completed, so it and cost per animal only mean something
+                  then. Cost / animal is total cost / animals treated — the
+                  same sum the program cards and list API use. */}
+              {stage === 'Completed' && (
+                <StatBox
+                  label="Animals Treated"
+                  value={(program.total_animals_treated ?? 0).toLocaleString()}
+                  action={canManage ? <EditAnimalsTreatedButton program={program} /> : undefined}
+                />
+              )}
               <StatBox label="Total Cost" value={`Rs. ${(program.total_cost ?? 0).toLocaleString()}`} />
-              <StatBox
-                label="Cost / Animal"
-                value={costData ? `Rs. ${costData.cost_per_animal.toLocaleString()}` : '—'}
-              />
+              {stage === 'Completed' && (
+                <StatBox
+                  label="Cost / Animal"
+                  value={program.total_animals_treated
+                    ? `Rs. ${((program.total_cost ?? 0) / program.total_animals_treated).toLocaleString(undefined, { maximumFractionDigits: 2 })}`
+                    : '—'}
+                  hint={program.total_animals_treated
+                    ? undefined
+                    : 'Needs the number of animals treated (0 recorded).'}
+                />
+              )}
               <StatBox label="Workers Assigned" value={team?.length ?? 0} />
               <StatBox
                 label="Revenue"
@@ -195,6 +240,7 @@ export default function ProgramDetailsPage() {
               </CardHeader>
               <CardContent className="space-y-4">
                 {/* Add worker form */}
+                {teamEditable && (
                 <div className="flex flex-col sm:flex-row gap-2">
                   <select
                     className="flex-1 h-10 rounded-lg border border-border-brand bg-bg-subtle px-3 text-xs text-text-primary"
@@ -223,6 +269,7 @@ export default function ProgramDetailsPage() {
                     <UserPlus className="mr-2 h-4 w-4" /> Add
                   </Button>
                 </div>
+                )}
 
                 {/* Team list */}
                 {teamLoading ? (
@@ -244,14 +291,17 @@ export default function ProgramDetailsPage() {
                             {member.role_on_program || 'No role specified'}
                           </p>
                         </div>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 w-7 p-0 text-text-secondary hover:text-red-500"
-                          onClick={() => removeWorker.mutate(member.id)}
-                        >
-                          <X size={14} />
-                        </Button>
+                        {teamEditable && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            aria-label="Remove from team"
+                            className="h-7 w-7 p-0 text-text-secondary hover:text-red-500"
+                            onClick={() => removeWorker.mutate(member.id)}
+                          >
+                            <X size={14} />
+                          </Button>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -338,15 +388,23 @@ function StatBox({
   label,
   value,
   valueClassName,
+  hint,
+  action,
 }: {
   label: string;
   value: string | number;
   valueClassName?: string;
+  hint?: string;
+  action?: React.ReactNode;
 }) {
   return (
     <div className="bg-surface border border-border-brand p-6 min-h-[120px] flex flex-col justify-center rounded-card">
-      <p className="text-xs text-text-secondary font-bold uppercase tracking-wider">{label}</p>
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs text-text-secondary font-bold uppercase tracking-wider">{label}</p>
+        {action}
+      </div>
       <p className={`text-2xl font-bold font-heading mt-1.5 ${valueClassName ?? 'text-text-primary'}`}>{value}</p>
+      {hint && <p className="text-[11px] text-text-muted mt-1">{hint}</p>}
     </div>
   );
 }

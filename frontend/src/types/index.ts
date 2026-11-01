@@ -482,6 +482,8 @@ export interface ProgramDetail {
   start_date?: string | null;
   end_date?: string | null;
   total_cost?: number;
+  // Null on programs created before locations were recorded.
+  location?: string | null;
 }
 
 export interface ProgramFinancials {
