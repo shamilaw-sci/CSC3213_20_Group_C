@@ -86,23 +86,23 @@ export const NAVIGATION_CONFIG: NavSection[] = [
     ]
   },
   {
-  title: 'RESCUE CASES',
-  items: [
-    { label: 'Case Hotspots', href: '/cases', icon: MapPin, requiredPermission: 'rescue:read' },
-    { label: 'Case Triage', href: '/case-triage', icon: ClipboardList, requiredPermission: 'rescue:read' },
-    { label: 'Field Dispatch', href: '/dispatch', icon: Navigation, requiredPermission: 'rescue:read' },
-  ]
-  },
-  {
     // Both gated on volunteers:read, which no role holds without also holding
     // approve or assign. The pages themselves gate the mutating controls
     // separately, so a Director sees the roster and the rota but no Assign
     // button, and an Operations Lead sees no Approve button.
     title: 'VOLUNTEERS',
     items: [
-      { label: 'Roster', href: '/volunteers', icon: HeartHandshake, requiredPermission: 'volunteers:read' },
+      { label: 'Applications', href: '/volunteers', icon: HeartHandshake, requiredPermission: 'volunteers:read' },
       { label: 'Shifts', href: '/volunteers/shifts', icon: CalendarClock, requiredPermission: 'volunteers:read' },
     ]
+  },
+  {
+  title: 'RESCUE CASES',
+  items: [
+    { label: 'Case Hotspots', href: '/cases', icon: MapPin, requiredPermission: 'rescue:read' },
+    { label: 'Case Triage', href: '/case-triage', icon: ClipboardList, requiredPermission: 'rescue:read' },
+    { label: 'Field Dispatch', href: '/dispatch', icon: Navigation, requiredPermission: 'rescue:read' },
+  ]
   },
   {
     title: 'SELF SERVICE',

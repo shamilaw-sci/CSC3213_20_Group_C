@@ -10,19 +10,28 @@ import {
 import { useAuthStore } from '@/store/useAuthStore';
 import { hasPermission } from '@/lib/permissions';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Skeleton } from '@/components/ui/skeleton';
+import { KPICard } from '@/components/shared/kpi-card';
 import { Badge } from '@/components/ui/badge';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from 'sonner';
-import { Loader2, Copy, Check, X, Link2, AlertTriangle } from 'lucide-react';
+import { Copy, Check, X, Link2, AlertTriangle } from 'lucide-react';
 import { cn, getErrorMessage } from '@/lib/utils';
 
 const LABEL = Object.fromEntries(
   [...SKILLS, ...AVAILABILITY].map((o) => [o.value, o.label])
 ) as Record<string, string>;
+
+const STATUS_TABS: { value: VolunteerStatus; label: string; description: string }[] = [
+  { value: 'pending', label: 'Pending', description: 'New applications waiting for a decision.' },
+  { value: 'approved', label: 'Approved', description: 'Active volunteers who can be assigned to shifts.' },
+  { value: 'rejected', label: 'Rejected', description: 'Applications that were turned down. They may apply again.' },
+  { value: 'inactive', label: 'Inactive', description: 'Volunteers who have been deactivated.' },
+];
 
 function relativeDays(iso?: string | null): string {
   if (!iso) return 'Never shared';
@@ -45,10 +54,21 @@ export default function VolunteersRosterPage() {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const queryClient = useQueryClient();
 
-  const { data: volunteers = [], isLoading } = useQuery({
-    queryKey: ['volunteers', tab],
-    queryFn: () => VolunteersService.list(tab),
+  // One fetch of every status rather than one per tab, so the summary cards
+  // and tab counts come from the same rows the table shows. Invalidating
+  // ['volunteers'] after a review still refreshes it.
+  const { data: allVolunteers = [], isLoading } = useQuery({
+    queryKey: ['volunteers', 'all'],
+    queryFn: () => VolunteersService.list(),
   });
+  const volunteers = allVolunteers.filter((v) => v.status === tab);
+  const counts = STATUS_TABS.reduce(
+    (acc, s) => ({ ...acc, [s.value]: allVolunteers.filter((v) => v.status === s.value).length }),
+    {} as Record<VolunteerStatus, number>
+  );
+  const neverContacted = allVolunteers.filter(
+    (v) => v.status === 'approved' && !v.link_shared_at
+  ).length;
 
   const review = useMutation({
     mutationFn: ({ id, status }: { id: string; status: 'approved' | 'rejected' | 'inactive' }) =>
@@ -87,36 +107,74 @@ export default function VolunteersRosterPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold font-heading text-text-primary">Volunteers</h1>
-        <p className="text-sm text-text-secondary mt-1">
-          Review applications and manage the approved roster.
-        </p>
+    <div className="space-y-8 pb-12">
+      {/* Header, in the finance pages' shape */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold font-heading tracking-tight mb-2 text-text-primary">
+            Volunteer Applications
+          </h1>
+          <p className="text-text-secondary text-sm">
+            Review and manage volunteer applications across all programs.
+          </p>
+        </div>
+      </div>
+
+      {/* KPI strip */}
+      <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
+        <KPICard title="Awaiting Review" value={isLoading ? '—' : counts.pending} />
+        <KPICard title="Approved Volunteers" value={isLoading ? '—' : counts.approved} />
+        <KPICard title="Never Contacted" value={isLoading ? '—' : neverContacted} />
+        <KPICard title="Total Applications" value={isLoading ? '—' : allVolunteers.length} />
       </div>
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as VolunteerStatus)}>
-        <TabsList>
-          <TabsTrigger value="pending">Pending</TabsTrigger>
-          <TabsTrigger value="approved">Approved</TabsTrigger>
-          <TabsTrigger value="rejected">Rejected</TabsTrigger>
-          <TabsTrigger value="inactive">Inactive</TabsTrigger>
+        {/* Larger than the default tab size: these are the page's primary
+            navigation, and the default h-8 was easy to miss and to mis-tap.
+            The group-data-horizontal height has to be overridden with the
+            same variant, or tailwind-merge keeps the original h-8. */}
+        <TabsList className="w-full sm:w-fit p-1 group-data-horizontal/tabs:h-12 bg-bg-subtle border border-border-brand overflow-x-auto">
+          {STATUS_TABS.map((s) => (
+            <TabsTrigger
+              key={s.value}
+              value={s.value}
+              className="px-4 sm:px-5 text-sm sm:text-base font-semibold gap-2 data-active:bg-surface data-active:text-text-primary"
+            >
+              {s.label}
+              <span
+                className={cn(
+                  'min-w-6 rounded-full px-1.5 py-0.5 text-xs font-mono',
+                  tab === s.value ? 'bg-accent/15 text-accent' : 'bg-surface/70 text-text-secondary'
+                )}
+              >
+                {isLoading ? '·' : counts[s.value]}
+              </span>
+            </TabsTrigger>
+          ))}
         </TabsList>
       </Tabs>
 
-      <Card>
-        <CardContent className="pt-6">
+      <Card className="bg-surface border border-border-brand rounded-card shadow-card overflow-hidden">
+        <CardHeader className="px-5 pt-5 pb-0">
+          <CardTitle className="text-base font-semibold font-heading text-text-primary">
+            {STATUS_TABS.find((s) => s.value === tab)?.label} Applications
+          </CardTitle>
+          <CardDescription className="text-text-secondary text-xs mt-1">
+            {STATUS_TABS.find((s) => s.value === tab)?.description}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="p-0 pt-4">
           {isLoading ? (
-            <div className="py-12 flex justify-center">
-              <Loader2 className="w-5 h-5 animate-spin text-text-muted" />
+            <div className="space-y-3 p-5">
+              {[1, 2, 3].map((i) => <Skeleton key={i} className="h-10 w-full bg-bg-subtle" />)}
             </div>
           ) : volunteers.length === 0 ? (
-            <p className="py-12 text-center text-sm text-text-secondary">
+            <p className="py-12 text-center text-sm text-text-muted">
               No {tab} volunteers.
             </p>
           ) : (
             <Table>
-              <TableHeader>
+              <TableHeader className="bg-bg-subtle/60 [&_th]:text-[11px] [&_th]:uppercase [&_th]:tracking-wider [&_th]:font-semibold [&_th]:text-text-secondary [&_th:first-child]:pl-5 [&_th:last-child]:pr-5">
                 <TableRow>
                   <TableHead>Name</TableHead>
                   <TableHead>Contact</TableHead>
@@ -126,7 +184,7 @@ export default function VolunteersRosterPage() {
                   <TableHead className="text-right whitespace-nowrap">Actions</TableHead>
                 </TableRow>
               </TableHeader>
-              <TableBody>
+              <TableBody className="[&_td:first-child]:pl-5 [&_td:last-child]:pr-5">
                 {volunteers.map((v) => (
                   <TableRow key={v.id}>
                     <TableCell className="font-medium align-top">{v.full_name}</TableCell>
