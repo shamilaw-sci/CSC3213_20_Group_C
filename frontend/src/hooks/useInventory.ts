@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { InventoryService } from '@/services/inventory.service';
-import { InventoryItem, InventoryTransaction } from '@/types';
+import { InventoryTransaction } from '@/types';
 
 export function useInventoryItems() {
   return useQuery({
@@ -9,10 +9,13 @@ export function useInventoryItems() {
   });
 }
 
-export function useInventoryTransactions(itemId?: number) {
+// `enabled` lets a page skip the request for a user who cannot read the
+// movement history, instead of firing a request that is sure to be refused.
+export function useInventoryTransactions(itemId?: number, enabled: boolean = true) {
   return useQuery({
     queryKey: ['inventoryTransactions', itemId],
-    queryFn: () => InventoryService.getTransactions(itemId)
+    queryFn: () => InventoryService.getTransactions(itemId),
+    enabled,
   });
 }
 
@@ -23,13 +26,16 @@ export function useCreateInventoryTransaction() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['inventoryItems'] });
       queryClient.invalidateQueries({ queryKey: ['inventoryTransactions'] });
-      // NEW: a transaction can change a program's total_cost (via the DB
-      // trigger), and it can change whether an item now counts as low
-      // stock. Invalidating these too means the Programs page and any
-      // low-stock banner refresh automatically instead of showing stale
-      // numbers until the user manually reloads the page.
-      queryClient.invalidateQueries({ queryKey: ['programs'] });
+      queryClient.invalidateQueries({ queryKey: ['inventoryOutstanding'] });
+      // A movement changes stock levels, which both alert lists show.
       queryClient.invalidateQueries({ queryKey: ['lowStockItems'] });
+      queryClient.invalidateQueries({ queryKey: ['expiringItems'] });
+      // A transaction can change a program's total_cost (via the DB
+      // trigger), so the program views that show it refresh too.
+      queryClient.invalidateQueries({ queryKey: ['programs'] });
+      queryClient.invalidateQueries({ queryKey: ['program'] });
+      queryClient.invalidateQueries({ queryKey: ['program-financials'] });
+      queryClient.invalidateQueries({ queryKey: ['programs-stage'] });
       queryClient.invalidateQueries({ queryKey: ['costPerAnimal'] });
     }
   });
@@ -44,7 +50,23 @@ export function useCreateInventoryItem() {
       queryClient.invalidateQueries({ queryKey: ['inventoryItems'] });
       queryClient.invalidateQueries({ queryKey: ['lowStockItems'] });
       queryClient.invalidateQueries({ queryKey: ['expiringItems'] });
+      // Initial stock is recorded as a Stock In movement.
+      queryClient.invalidateQueries({ queryKey: ['inventoryTransactions'] });
+    },
+    // If only the initial stock failed, the item itself was still created,
+    // so the list must show it (the error tells the user to use Stock In).
+    onError: () => {
+      queryClient.invalidateQueries({ queryKey: ['inventoryItems'] });
     }
+  });
+}
+
+// What each program still holds of one item. Off until an item is chosen.
+export function useItemOutstanding(itemId?: number) {
+  return useQuery({
+    queryKey: ['inventoryOutstanding', itemId],
+    queryFn: () => InventoryService.getOutstanding(itemId as number),
+    enabled: !!itemId,
   });
 }
 
@@ -78,4 +100,4 @@ export function useCostPerAnimal(programId?: number) {
     queryFn: () => InventoryService.getCostPerAnimal(programId as number),
     enabled: !!programId,
   });
-}
+}

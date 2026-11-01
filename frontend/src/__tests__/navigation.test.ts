@@ -36,11 +36,14 @@ const expectedItemsPerRole: Record<UserRole, string[]> = {
     'Stock', 'Active Programs', 'My Attendance', 'My Leave', ...PERSONAL
   ],
   // Clinic and field operations: inventory, programs and rescue, no HR/finance.
+  // Inventory through the Stock page only; Issue and Returns are for General
+  // Staff and Admin (decided 2026-11-01).
   'Operations Lead': [
-    'Overview', 'Stock', 'Issue', 'Returns', 'Active Programs',
+    'Overview', 'Stock', 'Active Programs',
     'Case Hotspots', 'Case Triage', 'Field Dispatch', 'My Attendance', 'My Leave', ...PERSONAL
   ],
-  // No Stock: General Staff can issue inventory but not browse the catalogue.
+  // No Stock: General Staff issue and return through the Issue and Returns
+  // pages only, and do not browse the catalogue or its movement log.
   'General Staff': [
     'Overview', 'Issue', 'Returns', 'Active Programs',
     'Case Hotspots', 'Case Triage', 'Field Dispatch', 'My Attendance', 'My Leave', ...PERSONAL

@@ -1,6 +1,25 @@
-from pydantic import BaseModel, ConfigDict
-from datetime import date
-from typing import Optional
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+from datetime import date, datetime, timedelta, timezone
+from typing import Literal, Optional
+
+
+# The three stock movements the system records. Anything else is refused at
+# the edge, before it can reach the stock maths in app/api/inventory.py.
+TransactionType = Literal["Issue", "Return", "Restock"]
+
+# Upper bound on a single movement. Far above any real clinic order, low
+# enough that a typo (or a deliberate 10**12) cannot overflow current_stock.
+MAX_QUANTITY = 100_000
+
+# Sri Lanka has no daylight saving, so a fixed +05:30 offset is exact and
+# avoids depending on the tz database being installed.
+_SRI_LANKA = timezone(timedelta(hours=5, minutes=30))
+
+
+def today_in_sri_lanka() -> date:
+    """Today's date where the clinics are. The server may run on UTC, which
+    is still 'yesterday' until 05:30 local time."""
+    return datetime.now(_SRI_LANKA).date()
 
 
 class InventoryItemBase(BaseModel):
@@ -13,8 +32,28 @@ class InventoryItemBase(BaseModel):
     supplier_name: Optional[str] = None
 
 
+# What the client sends to create an item. The rules live here and not on the
+# base class, so that reading an older row that breaks them (a 0 unit cost,
+# say) never turns a GET into a 500.
 class InventoryItemCreate(InventoryItemBase):
-    pass
+    item_name: str = Field(min_length=1, max_length=255)
+    current_stock: int = Field(default=0, ge=0, le=MAX_QUANTITY)
+    unit_cost: float = Field(gt=0, le=100_000_000)
+    supplier_name: Optional[str] = Field(default=None, max_length=255)
+
+    @field_validator("item_name", mode="before")
+    @classmethod
+    def _strip_name(cls, value):
+        # "  " must count as empty (min_length then refuses it), and stray
+        # spaces must not create a second item that only differs by whitespace.
+        return value.strip() if isinstance(value, str) else value
+
+    @field_validator("supplier_name", mode="before")
+    @classmethod
+    def _blank_supplier_is_none(cls, value):
+        if isinstance(value, str):
+            return value.strip() or None
+        return value
 
 
 class InventoryItem(InventoryItemBase):
@@ -36,11 +75,32 @@ class InventoryTransactionBase(BaseModel):
 
 # What the CLIENT sends us to create a transaction. Deliberately has NO
 # total_cost field — the client never gets to decide what something cost.
-# The database calculates that itself (quantity * unit_cost) inside
-# process_inventory_transaction(), so a buggy or malicious request can't
-# fake a cost.
+#
+# quantity must be a positive whole number: the stock maths adds it for a
+# Return/Restock and subtracts it for an Issue, so a negative value would turn
+# an Issue into a hidden restock (and skip the stock check) and a Return into
+# a hidden issue that can drive stock below zero.
 class InventoryTransactionCreate(InventoryTransactionBase):
-    pass
+    quantity: int = Field(gt=0, le=MAX_QUANTITY)
+    transaction_type: TransactionType
+    notes: Optional[str] = Field(default=None, max_length=500)
+
+    @field_validator("notes", mode="before")
+    @classmethod
+    def _blank_notes_are_none(cls, value):
+        if isinstance(value, str):
+            value = value.strip()
+            return value or None
+        return value
+
+    # Back-dating is allowed (a movement recorded the next day); a date that
+    # has not happened yet is not (decided 2026-11-01).
+    @field_validator("transaction_date")
+    @classmethod
+    def _not_in_the_future(cls, value: date):
+        if value > today_in_sri_lanka():
+            raise ValueError("Date cannot be in the future")
+        return value
 
 
 # ---------------------------------------------------------------
@@ -96,6 +156,17 @@ class ExpiringItem(BaseModel):
     item_name: str
     expire_date: date
     current_stock: int
+
+
+# How much of one item a program still holds: everything issued to it, less
+# everything already returned from it. The Returns form uses this to offer
+# only programs that actually have something to give back.
+class OutstandingByProgram(BaseModel):
+    program_id: int
+    program_name: Optional[str] = None
+    issued: int
+    returned: int
+    outstanding: int
 
 
 class CostPerAnimalResult(BaseModel):

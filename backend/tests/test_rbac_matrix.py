@@ -243,9 +243,11 @@ PERMISSION_ROUTES = [
     ("GET", "/api/auth/users", "admin:users"),
     ("PUT", f"/api/auth/users/{OTHER_USER_ID}/role", "admin:users"),
     ("DELETE", f"/api/auth/users/{OTHER_USER_ID}", "admin:users"),
-    ("POST", "/api/inventory/items", "inventory:issue"),
+    ("POST", "/api/inventory/items", "inventory:manage"),
     ("GET", "/api/inventory/transactions", "inventory:read"),
-    ("POST", "/api/inventory/transactions", "inventory:issue"),
+    # POST /api/inventory/transactions takes inventory:manage OR
+    # inventory:issue, which a single-permission row cannot express; it is
+    # covered role by role in test_inventory.py.
     # Volunteers. read = see the roster and rota; approve = vetting decisions;
     # assign = scheduling. Deliberately three permissions rather than one, so
     # this table is also what proves the split is actually enforced and not
@@ -297,8 +299,10 @@ def test_permission_routes_cover_every_granted_permission():
         # express. Covered by test_grid_needs_attendance_manage_or_read in
         # test_attendance_month.py, across every role.
         "hr:attendance:read",
-        # No route enforces these yet.
-        "inventory:read",
+        # Enforced only together with inventory:manage (POST /transactions)
+        # or inventory:read (the item list, alerts, outstanding) through
+        # require_any_permission. Covered across every role in
+        # test_inventory.py.
         "inventory:issue",
     }
     assert not uncovered, f"permissions with no route coverage: {sorted(uncovered)}"

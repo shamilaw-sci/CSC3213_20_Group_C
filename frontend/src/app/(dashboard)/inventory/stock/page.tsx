@@ -3,12 +3,11 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { format, parseISO } from 'date-fns';
-import Swal from 'sweetalert2';
-import { toast } from 'sonner';
 import {
   AlertTriangle,
   ArrowDownCircle,
   ArrowUpCircle,
+  CalendarClock,
   CheckCircle2,
   Package,
   Plus,
@@ -20,15 +19,17 @@ import {
 import {
   useInventoryItems,
   useInventoryTransactions,
-  useCreateInventoryTransaction,
-  useCreateInventoryItem,
   useLowStockItems,
+  useExpiringItems,
 } from '@/hooks/useInventory';
 import { FinanceService } from '@/services/finance.service';
 import { useAuthStore } from '@/store/useAuthStore';
-import { useThemeStore } from '@/store/useThemeStore';
 import { hasPermission } from '@/lib/permissions';
 import { formatLKR } from '@/lib/formatters';
+import { todayISO } from '@/lib/inventory';
+import ProtectedRoute from '@/components/layout/protected-route';
+import { KPICard } from '@/components/shared/kpi-card';
+import { AddItemDialog, MovementDialog, type MovementKind } from '@/components/inventory/stock-dialogs';
 import { cn } from '@/lib/utils';
 import type { InventoryItem, InventoryTransaction } from '@/types';
 import {
@@ -55,9 +56,15 @@ import { Input } from '@/components/ui/input';
 const LOW_STOCK_THRESHOLD = 10;
 const MAX_ALERT_CARDS = 4;
 const MAX_MOVEMENTS = 10;
+const EXPIRY_WINDOW_DAYS = 30;
+const MAX_EXPIRY_ROWS = 5;
 
-const ACTION_BUTTON =
-  'h-11 gap-2 rounded-lg px-5 text-sm font-semibold text-white shadow-sm transition-colors';
+// One accent primary action; the rest are outline buttons with a coloured icon.
+const ACTION_BUTTON = 'h-10 gap-2 rounded-lg px-4 text-sm font-semibold shadow-sm transition-colors';
+const SECONDARY_BUTTON = cn(
+  ACTION_BUTTON,
+  'border-border-brand bg-surface text-text-primary hover:bg-bg-subtle'
+);
 
 const ALERT_TONES = {
   out: {
@@ -96,7 +103,7 @@ const MOVEMENT_STYLES: Record<string, MovementStyle> = {
     label: 'Return',
     Icon: RotateCcw,
     sign: '+',
-    pill: 'border-blue-500/20 bg-blue-500/10 text-blue-600',
+    pill: 'border-border-brand bg-bg-subtle text-text-primary',
   },
 };
 
@@ -111,75 +118,30 @@ const getMovementStyle = (type: string): MovementStyle =>
   MOVEMENT_STYLES[type] ?? FALLBACK_MOVEMENT;
 
 // ---------------------------------------------------------------------------
-// Dialog helpers (SweetAlert forms)
-// ---------------------------------------------------------------------------
-
-// Item and program names are typed by users and end up inside HTML strings,
-// so they are escaped before being put in <option> tags.
-const escapeHtml = (value: string) =>
-  value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-
-function getSwalTheme() {
-  const isDark = useThemeStore.getState().theme === 'dark';
-  const muted = isDark ? '#9CA3AF' : '#6B7280';
-  const inputStyle = `width: 100%; margin-top: 4px; box-sizing: border-box; font-size: 12px; height: 38px; background: ${
-    isDark ? '#14161C' : '#FFFFFF'
-  }; color: ${isDark ? '#F9FAFB' : '#111318'}; border: 1px solid ${
-    isDark ? '#232730' : '#E5E7EB'
-  }; border-radius: 8px; padding: 0 10px;`;
-
-  return {
-    background: isDark ? '#0F1520' : '#FFFFFF',
-    color: isDark ? '#F9FAFB' : '#111318',
-    cancelButtonColor: isDark ? '#232730' : '#E5E7EB',
-    inputStyle,
-    textareaStyle: `${inputStyle} height: 70px; padding: 8px 10px; font-family: inherit;`,
-    labelStyle: `display: block; font-size: 10px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: ${muted};`,
-    helpStyle: `margin-top: 4px; font-size: 11px; color: ${muted};`,
-  };
-}
-
-type SwalTheme = ReturnType<typeof getSwalTheme>;
-
-const swalField = (t: SwalTheme, label: string, control: string, help?: string) =>
-  `<div><label style="${t.labelStyle}">${label}</label>${control}${
-    help ? `<p style="${t.helpStyle}">${help}</p>` : ''
-  }</div>`;
-
-const swalForm = (fields: string[]) =>
-  `<div style="display: flex; flex-direction: column; gap: 12px; text-align: left; font-family: sans-serif;">${fields.join(
-    ''
-  )}</div>`;
-
-const buildItemOptions = (items: InventoryItem[], selectedId?: number) =>
-  items
-    .map(
-      (item) =>
-        `<option value="${item.id}"${item.id === selectedId ? ' selected' : ''}>${escapeHtml(
-          item.item_name
-        )} (Current: ${item.current_stock})</option>`
-    )
-    .join('');
-
-const buildProgramOptions = (programs?: { id: number; program_name: string }[]) =>
-  (programs ?? [])
-    .map((p) => `<option value="${p.id}">${escapeHtml(p.program_name)}</option>`)
-    .join('');
-
-// ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
 
+// The sidebar hides Stock from roles without inventory:read, but a URL typed
+// by hand bypasses the sidebar, so the page checks for itself (as the Finance
+// Ledger does). The inner check stops the page's requests from firing during
+// the moment before ProtectedRoute's redirect happens.
 export default function InventoryPage() {
   const { user } = useAuthStore();
-  const canIssue = hasPermission(user?.role as string, 'inventory:issue');
+  const canRead = hasPermission(user?.role as string, 'inventory:read');
+  return (
+    <ProtectedRoute requiredPermission="inventory:read">
+      {canRead ? <StockPage /> : null}
+    </ProtectedRoute>
+  );
+}
 
-  const { data: items, isLoading: loadingItems } = useInventoryItems();
+function StockPage() {
+  const { user } = useAuthStore();
+  // Every Stock page action (Add Item, Stock In, Stock Out, Return) needs
+  // inventory:manage: Admin, Director, Finance Officer and Operations Lead.
+  const canManage = hasPermission(user?.role as string, 'inventory:manage');
+
+  const { data: items, isLoading: loadingItems, isError: itemsError } = useInventoryItems();
   const {
     data: transactions,
     isLoading: loadingTransactions,
@@ -190,9 +152,17 @@ export default function InventoryPage() {
     isLoading: loadingLowStock,
     isError: lowStockError,
   } = useLowStockItems(LOW_STOCK_THRESHOLD);
+  const {
+    data: expiring,
+    isLoading: loadingExpiring,
+    isError: expiringError,
+  } = useExpiringItems(EXPIRY_WINDOW_DAYS);
 
-  const createItem = useCreateInventoryItem();
-  const createTransaction = useCreateInventoryTransaction();
+  // Which form is open. Each form saves and disables its own button while
+  // saving, so the same movement cannot be submitted twice.
+  const [addItemOpen, setAddItemOpen] = useState(false);
+  const [movement, setMovement] = useState<{ kind: MovementKind; itemId?: number } | null>(null);
+  const hasItems = (items?.length ?? 0) > 0;
 
   // Programs for the Stock Out / Return dialogs
   const { data: programs } = useQuery({
@@ -217,6 +187,23 @@ export default function InventoryPage() {
       .filter((i) => i.item_name.toLowerCase().includes(term))
       .sort((a, b) => a.item_name.localeCompare(b.item_name));
   }, [items, search, stockFilter, lowStockIds]);
+
+  // All items A-Z for the form pickers (the table's search filter does not apply there).
+  const sortedItems = useMemo(
+    () => [...(items ?? [])].sort((a, b) => a.item_name.localeCompare(b.item_name)),
+    [items]
+  );
+
+  const totalValue = useMemo(
+    () => (items ?? []).reduce((sum, i) => sum + i.current_stock * Number(i.unit_cost), 0),
+    [items]
+  );
+
+  const today = todayISO();
+  const expiryRows = (expiring ?? [])
+    .slice()
+    .sort((a, b) => a.expire_date.localeCompare(b.expire_date))
+    .slice(0, MAX_EXPIRY_ROWS);
 
   const visibleValue = useMemo(
     () => visibleItems.reduce((sum, i) => sum + i.current_stock * Number(i.unit_cost), 0),
@@ -288,334 +275,6 @@ export default function InventoryPage() {
     return { label: '', badge: 'border-green-500/20 bg-green-500/5 text-positive' };
   };
 
-  // ---- dialogs ------------------------------------------------------------
-
-  const handleAddItem = () => {
-    const t = getSwalTheme();
-
-    Swal.fire({
-      title: 'Add Inventory Item',
-      html: swalForm([
-        swalField(
-          t,
-          'Item name',
-          `<input id="swal-iname" style="${t.inputStyle}" placeholder="e.g. Rabies Vaccine Vials">`
-        ),
-        swalField(
-          t,
-          'Initial stock',
-          `<input id="swal-istock" type="number" min="0" style="${t.inputStyle}" placeholder="100">`
-        ),
-        swalField(
-          t,
-          'Unit cost (LKR)',
-          `<input id="swal-icost" type="number" min="0" step="0.01" style="${t.inputStyle}" placeholder="1500">`
-        ),
-        swalField(
-          t,
-          'Supplier (optional)',
-          `<input id="swal-isupplier" style="${t.inputStyle}" placeholder="e.g. ABC Pharma">`
-        ),
-        swalField(
-          t,
-          'Expire date (optional)',
-          `<input id="swal-iexpire" type="date" style="${t.inputStyle}">`
-        ),
-      ]),
-      background: t.background,
-      color: t.color,
-      showCancelButton: true,
-      confirmButtonText: 'Add Item',
-      confirmButtonColor: '#EF9F27',
-      cancelButtonText: 'Cancel',
-      cancelButtonColor: t.cancelButtonColor,
-      preConfirm: () => {
-        const name = (document.getElementById('swal-iname') as HTMLInputElement).value.trim();
-        const stock = (document.getElementById('swal-istock') as HTMLInputElement).value.trim();
-        const cost = (document.getElementById('swal-icost') as HTMLInputElement).value.trim();
-        const supplier = (document.getElementById('swal-isupplier') as HTMLInputElement).value.trim();
-        const expire = (document.getElementById('swal-iexpire') as HTMLInputElement).value;
-
-        if (!name || !stock || !cost) {
-          Swal.showValidationMessage('Item name, stock, and unit cost are required');
-          return false;
-        }
-
-        const stockVal = parseInt(stock);
-        const costVal = parseFloat(cost);
-
-        if (isNaN(stockVal) || stockVal < 0) {
-          Swal.showValidationMessage('Stock must be a non-negative integer');
-          return false;
-        }
-        if (isNaN(costVal) || costVal <= 0) {
-          Swal.showValidationMessage('Unit cost must be a positive number');
-          return false;
-        }
-
-        return {
-          item_name: name,
-          current_stock: stockVal,
-          unit_cost: costVal,
-          supplier_name: supplier || undefined,
-          expire_date: expire || undefined,
-        };
-      },
-    }).then((result) => {
-      if (result.isConfirmed && result.value) {
-        createItem.mutate(result.value, {
-          onSuccess: () => toast.success('Inventory item added successfully!'),
-          onError: (err: any) =>
-            toast.error(err?.response?.data?.detail || 'Failed to add inventory item'),
-        });
-      }
-    });
-  };
-
-  // STOCK IN: new inventory entering the organization (transaction_type
-  // 'Restock', never tied to a program). Supplier, unit cost and expiry belong
-  // to the item and are set once in Add Item. An optional item id pre-selects
-  // that item, which is how the "Restock" button on a low-stock box works.
-  const handleStockIn = (presetItemId?: number) => {
-    if (!items || items.length === 0) {
-      toast.error('Add an inventory item first before stocking in');
-      return;
-    }
-
-    const t = getSwalTheme();
-    const today = format(new Date(), 'yyyy-MM-dd');
-
-    Swal.fire({
-      title: 'Stock In',
-      html: swalForm([
-        swalField(
-          t,
-          'Inventory item',
-          `<select id="swal-in-item" style="${t.inputStyle}">${buildItemOptions(items, presetItemId)}</select>`
-        ),
-        swalField(
-          t,
-          'Quantity',
-          `<input id="swal-in-qty" type="number" min="1" style="${t.inputStyle}" placeholder="50">`
-        ),
-        swalField(
-          t,
-          'Date',
-          `<input id="swal-in-date" type="date" style="${t.inputStyle}" value="${today}">`
-        ),
-        swalField(
-          t,
-          'Notes (optional)',
-          `<textarea id="swal-in-notes" style="${t.textareaStyle}" placeholder="Any additional detail..."></textarea>`
-        ),
-      ]),
-      background: t.background,
-      color: t.color,
-      showCancelButton: true,
-      confirmButtonText: 'Stock In',
-      confirmButtonColor: '#059669',
-      cancelButtonText: 'Cancel',
-      cancelButtonColor: t.cancelButtonColor,
-      preConfirm: () => {
-        const itemIdStr = (document.getElementById('swal-in-item') as HTMLSelectElement).value;
-        const qtyStr = (document.getElementById('swal-in-qty') as HTMLInputElement).value.trim();
-        const dateStr = (document.getElementById('swal-in-date') as HTMLInputElement).value;
-        const notes = (document.getElementById('swal-in-notes') as HTMLTextAreaElement).value.trim();
-
-        if (!itemIdStr || !qtyStr || !dateStr) {
-          Swal.showValidationMessage('Item, quantity, and date are required');
-          return false;
-        }
-
-        const qtyVal = parseInt(qtyStr);
-        if (isNaN(qtyVal) || qtyVal <= 0) {
-          Swal.showValidationMessage('Quantity must be a positive number');
-          return false;
-        }
-
-        return {
-          item_id: parseInt(itemIdStr),
-          quantity: qtyVal,
-          transaction_type: 'Restock' as const,
-          transaction_date: dateStr,
-          program_id: null,
-          notes: notes || undefined,
-        };
-      },
-    }).then((result) => {
-      if (result.isConfirmed && result.value) {
-        createTransaction.mutate(result.value, {
-          onSuccess: () => toast.success('Stock In recorded successfully!'),
-          onError: (err: any) =>
-            toast.error(err?.response?.data?.detail || 'Failed to record Stock In'),
-        });
-      }
-    });
-  };
-
-  // STOCK OUT: inventory issued for veterinary work (transaction_type 'Issue').
-  // program_id is how Cost-per-Animal knows which program used the stock.
-  const handleStockOut = () => {
-    if (!items || items.length === 0) {
-      toast.error('No inventory items available to issue');
-      return;
-    }
-
-    const t = getSwalTheme();
-    const today = format(new Date(), 'yyyy-MM-dd');
-
-    Swal.fire({
-      title: 'Stock Out',
-      html: swalForm([
-        swalField(
-          t,
-          'Inventory item',
-          `<select id="swal-out-item" style="${t.inputStyle}">${buildItemOptions(items)}</select>`
-        ),
-        swalField(
-          t,
-          'Quantity',
-          `<input id="swal-out-qty" type="number" min="1" style="${t.inputStyle}" placeholder="10">`
-        ),
-        swalField(
-          t,
-          'Program (optional)',
-          `<select id="swal-out-program" style="${t.inputStyle}"><option value="none">Stock Adjustment (No Program)</option>${buildProgramOptions(
-            programs
-          )}</select>`
-        ),
-        swalField(
-          t,
-          'Date',
-          `<input id="swal-out-date" type="date" style="${t.inputStyle}" value="${today}">`
-        ),
-      ]),
-      background: t.background,
-      color: t.color,
-      showCancelButton: true,
-      confirmButtonText: 'Stock Out',
-      confirmButtonColor: '#E11D48',
-      cancelButtonText: 'Cancel',
-      cancelButtonColor: t.cancelButtonColor,
-      preConfirm: () => {
-        const itemIdStr = (document.getElementById('swal-out-item') as HTMLSelectElement).value;
-        const qtyStr = (document.getElementById('swal-out-qty') as HTMLInputElement).value.trim();
-        const progIdStr = (document.getElementById('swal-out-program') as HTMLSelectElement).value;
-        const dateStr = (document.getElementById('swal-out-date') as HTMLInputElement).value;
-
-        if (!itemIdStr || !qtyStr || !dateStr) {
-          Swal.showValidationMessage('Item, quantity, and date are required');
-          return false;
-        }
-
-        const qtyVal = parseInt(qtyStr);
-        if (isNaN(qtyVal) || qtyVal <= 0) {
-          Swal.showValidationMessage('Quantity must be a positive number');
-          return false;
-        }
-
-        return {
-          item_id: parseInt(itemIdStr),
-          quantity: qtyVal,
-          transaction_type: 'Issue' as const,
-          transaction_date: dateStr,
-          program_id: progIdStr === 'none' ? null : parseInt(progIdStr),
-        };
-      },
-    }).then((result) => {
-      if (result.isConfirmed && result.value) {
-        createTransaction.mutate(result.value, {
-          onSuccess: () => toast.success('Stock Out recorded successfully!'),
-          // The backend sends the exact reason (e.g. "Insufficient stock").
-          onError: (err: any) =>
-            toast.error(err?.response?.data?.detail || 'Failed to record Stock Out'),
-        });
-      }
-    });
-  };
-
-  // STOCK RETURN: unused inventory coming back (transaction_type 'Return').
-  // The program is optional: choose the program the stock was issued to, or
-  // leave it as general stock.
-  const handleStockReturn = () => {
-    if (!items || items.length === 0) {
-      toast.error('No inventory items available to return');
-      return;
-    }
-
-    const t = getSwalTheme();
-    const today = format(new Date(), 'yyyy-MM-dd');
-
-    Swal.fire({
-      title: 'Stock Return',
-      html: swalForm([
-        swalField(
-          t,
-          'Inventory item',
-          `<select id="swal-ret-item" style="${t.inputStyle}">${buildItemOptions(items)}</select>`
-        ),
-        swalField(
-          t,
-          'Quantity',
-          `<input id="swal-ret-qty" type="number" min="1" style="${t.inputStyle}" placeholder="10">`
-        ),
-        swalField(
-          t,
-          'Returned from program (optional)',
-          `<select id="swal-ret-program" style="${t.inputStyle}"><option value="none">General stock (no program)</option>${buildProgramOptions(
-            programs
-          )}</select>`,
-          'Pick the program this stock was issued to.'
-        ),
-        swalField(
-          t,
-          'Date',
-          `<input id="swal-ret-date" type="date" style="${t.inputStyle}" value="${today}">`
-        ),
-      ]),
-      background: t.background,
-      color: t.color,
-      showCancelButton: true,
-      confirmButtonText: 'Return Stock',
-      confirmButtonColor: '#2563EB',
-      cancelButtonText: 'Cancel',
-      cancelButtonColor: t.cancelButtonColor,
-      preConfirm: () => {
-        const itemIdStr = (document.getElementById('swal-ret-item') as HTMLSelectElement).value;
-        const qtyStr = (document.getElementById('swal-ret-qty') as HTMLInputElement).value.trim();
-        const progIdStr = (document.getElementById('swal-ret-program') as HTMLSelectElement).value;
-        const dateStr = (document.getElementById('swal-ret-date') as HTMLInputElement).value;
-
-        if (!itemIdStr || !qtyStr || !dateStr) {
-          Swal.showValidationMessage('Item, quantity, and date are required');
-          return false;
-        }
-
-        const qtyVal = parseInt(qtyStr);
-        if (isNaN(qtyVal) || qtyVal <= 0) {
-          Swal.showValidationMessage('Quantity must be a positive number');
-          return false;
-        }
-
-        return {
-          item_id: parseInt(itemIdStr),
-          quantity: qtyVal,
-          transaction_type: 'Return' as const,
-          transaction_date: dateStr,
-          program_id: progIdStr === 'none' ? null : parseInt(progIdStr),
-        };
-      },
-    }).then((result) => {
-      if (result.isConfirmed && result.value) {
-        createTransaction.mutate(result.value, {
-          onSuccess: () => toast.success('Stock Return recorded successfully!'),
-          onError: (err: any) =>
-            toast.error(err?.response?.data?.detail || 'Failed to record Stock Return'),
-        });
-      }
-    });
-  };
-
   // ---- render -------------------------------------------------------------
 
   return (
@@ -624,41 +283,65 @@ export default function InventoryPage() {
       <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-center">
         <div>
           <h1 className="mb-2 text-3xl font-bold font-heading tracking-tight text-text-primary">
-            Inventory System
+            Inventory
           </h1>
           <p className="text-sm text-text-secondary">
-            Manage medical supplies, equipment, and resource allocations.
+            Medical supplies and equipment: stock levels, movements and alerts.
           </p>
         </div>
 
-        {canIssue && (
-          <div className="flex flex-wrap items-center gap-3">
+        {canManage && (
+          <div className="flex flex-wrap items-center gap-2">
             <Button
-              onClick={handleAddItem}
-              className={cn(ACTION_BUTTON, 'bg-[#EF9F27] hover:bg-[#D97706]')}
-            >
-              <Plus className="h-4 w-4" /> Add Item
-            </Button>
-            <span className="hidden h-8 w-px bg-border-brand sm:block" />
-            <Button
-              onClick={() => handleStockIn()}
-              className={cn(ACTION_BUTTON, 'bg-emerald-600 hover:bg-emerald-700')}
+              onClick={() => setMovement({ kind: 'in' })}
+              disabled={!hasItems}
+              title={hasItems ? undefined : 'Add an item first'}
+              className={cn(ACTION_BUTTON, 'bg-accent text-white hover:bg-accent/90')}
             >
               <ArrowDownCircle className="h-4 w-4" /> Stock In
             </Button>
             <Button
-              onClick={handleStockOut}
-              className={cn(ACTION_BUTTON, 'bg-rose-600 hover:bg-rose-700')}
+              variant="outline"
+              onClick={() => setMovement({ kind: 'out' })}
+              disabled={!hasItems}
+              className={SECONDARY_BUTTON}
             >
-              <ArrowUpCircle className="h-4 w-4" /> Stock Out
+              <ArrowUpCircle className="h-4 w-4 text-negative" /> Stock Out
             </Button>
             <Button
-              onClick={handleStockReturn}
-              className={cn(ACTION_BUTTON, 'bg-blue-600 hover:bg-blue-700')}
+              variant="outline"
+              onClick={() => setMovement({ kind: 'return' })}
+              disabled={!hasItems}
+              className={SECONDARY_BUTTON}
             >
-              <RotateCcw className="h-4 w-4" /> Stock Return
+              <RotateCcw className="h-4 w-4 text-text-secondary" /> Return
+            </Button>
+            <span className="hidden h-8 w-px bg-border-brand sm:block" />
+            <Button variant="outline" onClick={() => setAddItemOpen(true)} className={SECONDARY_BUTTON}>
+              <Plus className="h-4 w-4 text-accent" /> Add Item
             </Button>
           </div>
+        )}
+      </div>
+
+      {/* Summary */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {loadingItems ? (
+          Array(4)
+            .fill(0)
+            .map((_, i) => (
+              <Skeleton key={i} className="h-28 rounded-card border border-border-brand bg-bg-subtle" />
+            ))
+        ) : (
+          <>
+            <KPICard title="Items" value={items?.length ?? 0} />
+            <KPICard title="Stock value" value={formatLKR(totalValue)} />
+            <KPICard title={`Below ${LOW_STOCK_THRESHOLD} units`} value={lowStockError ? '—' : (lowStock?.length ?? 0)} />
+            <KPICard
+              title={`Expiring in ${EXPIRY_WINDOW_DAYS} days`}
+              value={expiringError ? '—' : (expiring?.length ?? 0)}
+            />
+          </>
         )}
       </div>
 
@@ -747,12 +430,12 @@ export default function InventoryPage() {
                     </p>
                   </div>
 
-                  {canIssue && (
+                  {canManage && (
                     <Button
                       type="button"
                       variant="outline"
                       size="sm"
-                      onClick={() => handleStockIn(item.id)}
+                      onClick={() => setMovement({ kind: 'in', itemId: item.id })}
                       className="h-8 w-fit gap-1.5 rounded-md border-border-brand bg-surface text-xs font-semibold text-text-primary hover:bg-bg-subtle"
                     >
                       <ArrowDownCircle className="h-3.5 w-3.5 text-positive" /> Restock
@@ -763,6 +446,46 @@ export default function InventoryPage() {
             })
           )}
         </div>
+      </section>
+
+      {/* Expiring soon */}
+      <section className="rounded-card border border-border-brand bg-surface p-5 shadow-card">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <CalendarClock className="h-4 w-4 text-accent" />
+            <h2 className="text-sm font-semibold font-heading text-text-primary">Expiring Soon</h2>
+          </div>
+          <p className="text-xs text-text-muted">
+            Items with stock that expire within {EXPIRY_WINDOW_DAYS} days
+            {(expiring?.length ?? 0) > expiryRows.length &&
+              ` · showing the ${expiryRows.length} soonest of ${expiring?.length}`}
+          </p>
+        </div>
+        {loadingExpiring ? (
+          <Skeleton className="h-16 w-full bg-bg-subtle" />
+        ) : expiringError ? (
+          <p className="text-xs text-text-muted">Couldn&apos;t load expiry alerts right now.</p>
+        ) : expiryRows.length === 0 ? (
+          <p className="text-xs text-text-secondary">Nothing expires in the next {EXPIRY_WINDOW_DAYS} days.</p>
+        ) : (
+          <ul className="divide-y divide-border-brand">
+            {expiryRows.map((item) => {
+              const expired = item.expire_date < today;
+              return (
+                <li key={item.id} className="flex items-center justify-between gap-3 py-2 text-xs">
+                  <span className="truncate font-semibold text-text-primary">{item.item_name}</span>
+                  <span className="flex shrink-0 items-center gap-3">
+                    <span className="font-mono text-text-secondary">{item.current_stock} units</span>
+                    <span className={cn('font-mono', expired ? 'text-negative' : 'text-accent')}>
+                      {expired ? 'Expired ' : ''}
+                      {format(parseISO(item.expire_date), 'MMM dd, yyyy')}
+                    </span>
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        )}
       </section>
 
       {/* Stock list & movements */}
@@ -816,7 +539,11 @@ export default function InventoryPage() {
               </div>
             </div>
 
-            {loadingItems ? (
+            {itemsError ? (
+              <p className="rounded-xl border border-border-brand py-8 text-center text-xs text-negative">
+                Couldn&apos;t load the stock list. Refresh the page to try again.
+              </p>
+            ) : loadingItems ? (
               <div className="space-y-2">
                 <Skeleton className="h-10 w-full bg-bg-subtle" />
                 <Skeleton className="h-10 w-full bg-bg-subtle" />
@@ -942,7 +669,7 @@ export default function InventoryPage() {
                               key={tx.id}
                               className="border-border-brand transition-colors hover:bg-bg-subtle/60"
                             >
-                              <TableCell className="whitespace-nowrap text-xs text-text-secondary">
+                              <TableCell className="whitespace-nowrap font-mono text-xs text-text-secondary">
                                 {format(parseISO(tx.transaction_date), 'MMM dd, yyyy')}
                               </TableCell>
                               <TableCell>
@@ -975,6 +702,14 @@ export default function InventoryPage() {
                               </TableCell>
                               <TableCell className="text-xs text-text-secondary">
                                 {getProgramLabel(tx)}
+                                {tx.notes && (
+                                  <span
+                                    title={tx.notes}
+                                    className="block max-w-[140px] truncate text-[10px] text-text-muted"
+                                  >
+                                    {tx.notes}
+                                  </span>
+                                )}
                               </TableCell>
                             </TableRow>
                           );
@@ -994,6 +729,19 @@ export default function InventoryPage() {
           </CardContent>
         </Card>
       </div>
+
+      {canManage && (
+        <>
+          <AddItemDialog open={addItemOpen} onClose={() => setAddItemOpen(false)} />
+          <MovementDialog
+            kind={movement?.kind ?? null}
+            presetItemId={movement?.itemId}
+            items={sortedItems}
+            programs={programs ?? []}
+            onClose={() => setMovement(null)}
+          />
+        </>
+      )}
     </div>
   );
 }

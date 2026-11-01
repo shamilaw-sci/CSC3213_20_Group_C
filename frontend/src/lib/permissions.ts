@@ -24,7 +24,10 @@ export type Permission =
   | 'finance:read'
   | 'finance:write'
   | 'finance:restricted:override'
+  // Inventory is split by page (decided 2026-11-01): read opens the Stock
+  // page, manage is every action on it, issue is the Issue and Returns pages.
   | 'inventory:read'
+  | 'inventory:manage'
   | 'inventory:issue'
   | 'programs:read'
   | 'programs:manage'
@@ -53,7 +56,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'hr:manage', 'hr:attendance:self', 'hr:attendance:manage', 'leave:approve', 'hr:attendance:read',
     'payroll:generate', 'payroll:approve', 'finance:read',
     'finance:write', 'finance:restricted:override',
-    'inventory:read', 'inventory:issue',
+    'inventory:read', 'inventory:manage', 'inventory:issue',
     'programs:read', 'programs:manage', 'admin:users', 'audit:read',
     'rescue:read', 'rescue:manage', 'rescue:assign',
     'volunteers:read', 'volunteers:approve', 'volunteers:assign'
@@ -68,7 +71,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     // Oversight of all staff attendance, read-only (confirmed 2026-10-31).
     'hr:attendance:read',
     'finance:read', 'payroll:approve', 'programs:read',
-    'inventory:read', 'audit:read', 'rescue:read' , 'rescue:assign',
+    'inventory:read', 'inventory:manage', 'audit:read', 'rescue:read' , 'rescue:assign',
     'volunteers:read', 'volunteers:approve'
   ],
   // Vetting and onboarding a person is squarely HR, so this role approves
@@ -82,7 +85,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     // Self-service: own attendance, schedule and leave only (confirmed 2026-10-29).
     'hr:attendance:self',
     'finance:read', 'finance:write', 'payroll:generate',
-    'inventory:read', 'programs:read'
+    'inventory:read', 'inventory:manage', 'programs:read'
   ],
   // Clinic and field operations, per the RBAC table on the support page.
   // programs:manage because leading a clinic means running the programs;
@@ -94,7 +97,8 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
   // are staffed onto, so it owns the rota. Whether someone is taken on at all
   // stays a vetting decision with HR/Director/Admin.
   'Operations Lead': [
-    'hr:attendance:self', 'inventory:read', 'inventory:issue',
+    // Stock page only (read + manage), not the Issue and Returns pages.
+    'hr:attendance:self', 'inventory:read', 'inventory:manage',
     'programs:read', 'programs:manage',
     'rescue:read', 'rescue:manage',
     'volunteers:read', 'volunteers:assign'

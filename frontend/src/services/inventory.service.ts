@@ -7,6 +7,17 @@ import {
   CostPerAnimalResult,
 } from '@/types';
 
+// One row per program for a single item: issued, already returned, and what
+// is still out. Matches OutstandingByProgram in backend/app/schemas/inventory.py.
+// Declared here rather than in @/types so this fix touches inventory files only.
+export interface OutstandingByProgram {
+  program_id: number;
+  program_name: string | null;
+  issued: number;
+  returned: number;
+  outstanding: number;
+}
+
 export const InventoryService = {
   getItems: async () => {
     const response = await api.get<InventoryItem[]>('/inventory/items');
@@ -26,6 +37,12 @@ export const InventoryService = {
 
   createTransaction: async (transaction: Omit<InventoryTransaction, 'id' | 'total_cost'>) => {
     const response = await api.post<InventoryTransaction>('/inventory/transactions', transaction);
+    return response.data;
+  },
+
+  // What each program still holds of one item (Returns form).
+  getOutstanding: async (itemId: number) => {
+    const response = await api.get<OutstandingByProgram[]>(`/inventory/items/${itemId}/outstanding`);
     return response.data;
   },
 
@@ -76,4 +93,4 @@ export const InventoryService = {
       low_stock_items: lowStockItems.length,
     };
   },
-};
+};
