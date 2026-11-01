@@ -73,8 +73,8 @@ def annual_entitlement(joined: Optional[date], year: int, full_days: Decimal) ->
 
 def casual_entitlement(joined: Optional[date], year: int, full_days: Decimal) -> Optional[Decimal]:
     """
-    Casual leave for `year`. In the joining year it is what will have built
-    up by 31 December; casual_accrued() limits what can be used before then.
+    Casual leave for `year`. In the joining year this is the most that can
+    build up by 31 December; casual_earned_to_date() is what may be used now.
     """
     if joined is None:
         return None
@@ -93,6 +93,21 @@ def casual_accrued(joined: Optional[date], through: date) -> Optional[Decimal]:
     if joined is None or joined.year != through.year:
         return None
     return Decimal(complete_months(joined, through) // 2)
+
+
+def casual_earned_to_date(joined: Optional[date], year: int, today: date) -> Optional[Decimal]:
+    """
+    The cap on usable casual leave for `year`, as of `today`. VFF policy
+    (confirmed 2026-10-31): in the joining year casual leave accrues to date,
+    one day per complete two months worked so far, so nobody takes casual
+    leave they have not earned yet, whatever dates the leave is for.
+
+    None means no cap: any year other than the current joining year. A past
+    joining year has finished, so all of it has been earned.
+    """
+    if joined is None or joined.year != year or today.year != year:
+        return None
+    return casual_accrued(joined, today)
 
 
 def fixed_entitlement(joined: Optional[date], year: int, full_days: Decimal) -> Decimal:
@@ -160,10 +175,19 @@ class Balance:
     adjustment: Decimal = ZERO
     approved: Decimal = ZERO
     pending: Decimal = ZERO
+    # Set for casual leave in the current joining year: how much of
+    # `entitled` has been earned so far. None: all of it.
+    earned_to_date: Optional[Decimal] = None
+
+    @property
+    def usable_entitlement(self) -> Decimal:
+        if self.earned_to_date is None:
+            return self.entitled
+        return min(self.entitled, self.earned_to_date)
 
     @property
     def total(self) -> Decimal:
-        return self.entitled + self.carried_forward + self.adjustment
+        return self.usable_entitlement + self.carried_forward + self.adjustment
 
     @property
     def available(self) -> Decimal:
@@ -199,14 +223,12 @@ def check_request(
     days: list[tuple[date, Decimal]],
     half_day: str,
     balances: dict[int, Optional[Balance]],
-    joined: Optional[date],
-    casual_used_in_joining_year: Decimal = ZERO,
 ) -> Check:
     """
     `balances` holds, per year the request touches, the employee's balance
     for this type EXCLUDING this request (None: no entitlement row that
-    year). `casual_used_in_joining_year` is approved + pending casual days in
-    the joining year, also excluding this request.
+    year). First-year casual accrual is already inside the balance
+    (Balance.earned_to_date), so it is checked here like any other limit.
     """
     check = Check()
     if half_day != "none" and not leave_type.allow_half_day:
@@ -228,21 +250,15 @@ def check_request(
                     f"No {leave_type.name.lower()} entitlement has been set up for {year} yet. Ask HR to generate it."
                 )
             elif wanted > balance.available:
-                check.errors.append(
-                    f"Only {balance.available.normalize()} days of {leave_type.name.lower()} are available in {year}; "
+                message = (
+                    f"Only {max(balance.available, ZERO).normalize()} days of {leave_type.name.lower()} are available in {year}; "
                     f"this request needs {wanted.normalize()}."
                 )
-
-        if leave_type.first_year_rule == "soe_casual" and joined is not None:
-            in_joining_year = [(d, f) for d, f in days if d.year == joined.year]
-            if in_joining_year:
-                last = max(d for d, _ in in_joining_year)
-                accrued = casual_accrued(joined, last) or ZERO
-                wanted = sum((f for _, f in in_joining_year), ZERO)
-                if casual_used_in_joining_year + wanted > accrued:
-                    check.errors.append(
-                        f"In the first year, casual leave builds up at one day per two complete months "
-                        f"(Shop and Office Employees Act s.6(4)(a)). By {last.isoformat()}, "
-                        f"{accrued.normalize()} days have built up and {casual_used_in_joining_year.normalize()} are already used or requested."
+                if balance.earned_to_date is not None and balance.earned_to_date < balance.entitled:
+                    message += (
+                        f" In the first year casual leave is earned as you go, one day per two complete months "
+                        f"worked (Shop and Office Employees Act s.6(4)(a)): {balance.earned_to_date.normalize()} "
+                        f"earned so far of {balance.entitled.normalize()} by year end."
                     )
+                check.errors.append(message)
     return check

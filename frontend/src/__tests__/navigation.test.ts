@@ -20,8 +20,9 @@ const expectedItemsPerRole: Record<UserRole, string[]> = {
   // My Attendance / My Leave: Director is an employee too (hr:attendance:self,
   // granted 2026-10-29); it reaches only their own records.
   // Payroll: Director approves it (payroll:approve) without generating it.
+  // Attendance: the monthly grid, read-only (hr:attendance:read, 2026-10-31).
   'Director': [
-    'Overview', 'Payroll', 'Overview', 'Ledger', 'Reports', 'Stock',
+    'Overview', 'Attendance', 'Payroll', 'Overview', 'Ledger', 'Reports', 'Stock',
     'Active Programs', 'Case Hotspots', 'Case Triage', 'Field Dispatch', 'My Attendance', 'My Leave', ...PERSONAL
   ],
   'HR Officer': [

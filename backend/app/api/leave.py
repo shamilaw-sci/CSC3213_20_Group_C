@@ -30,6 +30,7 @@ from app.services.leave_rules import (
     Balance,
     LeaveType,
     carry_forward,
+    casual_earned_to_date,
     check_request,
     days_by_year,
     entitlement_for,
@@ -157,8 +158,18 @@ def _live_days(supabase: Client, employee_id: int, leave_type_id: Optional[int] 
     ]
 
 
+def _joined(employee: dict) -> Optional[date]:
+    return _date(employee["date_joined"]) if employee.get("date_joined") else None
+
+
 def _balance(supabase: Client, employee_id: int, leave_type_id: int, year: int,
-             live: list[dict]) -> Optional[Balance]:
+             live: list[dict], rule: str = "none", joined: Optional[date] = None) -> Optional[Balance]:
+    """
+    `rule` and `joined` matter only for first-year casual leave, which is
+    capped at what has been earned by today (casual_earned_to_date). Every
+    caller that checks or shows a balance passes them, so the cap applies to
+    previews, requests, approvals and the balance cards alike.
+    """
     rows = supabase.table("leave_entitlements").select("*").eq("employee_id", employee_id) \
         .eq("leave_type_id", leave_type_id).eq("year", year).execute().data
     if not rows:
@@ -171,6 +182,7 @@ def _balance(supabase: Client, employee_id: int, leave_type_id: int, year: int,
         adjustment=_d(e.get("adjustment")),
         approved=sum((_d(r["fraction"]) for r in in_year if r["status"] == "Approved"), ZERO),
         pending=sum((_d(r["fraction"]) for r in in_year if r["status"] == "Pending"), ZERO),
+        earned_to_date=casual_earned_to_date(joined, year, date.today()) if rule == "soe_casual" else None,
     )
 
 
@@ -196,15 +208,11 @@ def _assess(supabase: Client, employee: dict, body: LeaveIn, exclude_request: Op
     clash = {r["leave_date"] for r in live}
     overlapping = sorted(str(d) for d, _ in days if d.isoformat() in clash)
     years = sorted(days_by_year(days)) or [body.start_date.year]
-    balances = {y: _balance(supabase, employee["id"], body.leave_type_id, y, live) for y in years}
+    joined = _joined(employee)
+    balances = {y: _balance(supabase, employee["id"], body.leave_type_id, y, live, lt.first_year_rule, joined)
+                for y in years}
 
-    joined = _date(employee["date_joined"]) if employee.get("date_joined") else None
-    casual_used = ZERO
-    if lt.first_year_rule == "soe_casual" and joined is not None:
-        casual_used = sum((_d(r["fraction"]) for r in live
-                           if r["leave_type_id"] == body.leave_type_id and _date(r["leave_date"]).year == joined.year), ZERO)
-
-    check = check_request(lt, days, body.half_day, balances, joined, casual_used)
+    check = check_request(lt, days, body.half_day, balances)
     errors = list(check.errors)
     if overlapping:
         errors.insert(0, f"You already have leave requested or approved on {', '.join(overlapping[:3])}"
@@ -262,13 +270,18 @@ def _summary(supabase: Client, employee: dict, year: int) -> list[dict]:
         .order("sort_order").execute().data or []
     live = _live_days(supabase, employee["id"])
     out = []
+    joined = _joined(employee)
     for t in types:
-        b = _balance(supabase, employee["id"], t["id"], year, live)
+        b = _balance(supabase, employee["id"], t["id"], year, live, t.get("first_year_rule") or "none", joined)
         out.append({
             "leave_type_id": t["id"], "code": t["code"], "name": t["name"],
             "set_up": b is not None,
             **({} if b is None else {
-                "entitled": float(b.entitled), "carried_forward": float(b.carried_forward),
+                # entitled is the year's allowance; earned_to_date, when set,
+                # is how much of it can be used yet (first-year casual).
+                "entitled": float(b.entitled),
+                "earned_to_date": None if b.earned_to_date is None else float(b.usable_entitlement),
+                "carried_forward": float(b.carried_forward),
                 "adjustment": float(b.adjustment), "total": float(b.total),
                 "approved": float(b.approved), "pending": float(b.pending), "available": float(b.available),
             }),
@@ -408,10 +421,12 @@ async def _decide(supabase: Client, user: dict, request_id: int, approve: bool, 
         # block, since this is the one being decided.
         lt_row = _leave_type(supabase, req["leave_type_id"])
         if lt_row.get("uses_balance"):
+            employee = _employee(supabase, req["employee_id"])
             live = _live_days(supabase, req["employee_id"], exclude_request=request_id)
             own = supabase.table("leave_request_days").select("*").eq("request_id", request_id).execute().data or []
             for year, wanted in sorted(days_by_year([(_date(r["leave_date"]), _d(r["fraction"])) for r in own]).items()):
-                b = _balance(supabase, req["employee_id"], req["leave_type_id"], year, live)
+                b = _balance(supabase, req["employee_id"], req["leave_type_id"], year, live,
+                             lt_row.get("first_year_rule") or "none", _joined(employee))
                 if b is None or wanted > b.remaining:
                     have = ZERO if b is None else b.remaining
                     raise HTTPException(status_code=409, detail=(

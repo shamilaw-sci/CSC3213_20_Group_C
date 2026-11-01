@@ -15,6 +15,8 @@ export type Permission =
   | 'hr:manage'
   | 'hr:attendance:self'
   | 'hr:attendance:manage'
+  // Read the whole attendance grid without editing it (Director)
+  | 'hr:attendance:read'
   // Approve leave and manage entitlements, never for the approver themselves
   | 'leave:approve'
   | 'payroll:generate'
@@ -48,7 +50,7 @@ export type Permission =
 // NOTE: Must stay in sync with backend/app/core/permissions.py
 export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
   Admin: [
-    'hr:manage', 'hr:attendance:self', 'hr:attendance:manage', 'leave:approve',
+    'hr:manage', 'hr:attendance:self', 'hr:attendance:manage', 'leave:approve', 'hr:attendance:read',
     'payroll:generate', 'payroll:approve', 'finance:read',
     'finance:write', 'finance:restricted:override',
     'inventory:read', 'inventory:issue',
@@ -63,6 +65,8 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
   Director: [
     // Self-service: own attendance, schedule and leave only (confirmed 2026-10-29).
     'hr:attendance:self',
+    // Oversight of all staff attendance, read-only (confirmed 2026-10-31).
+    'hr:attendance:read',
     'finance:read', 'payroll:approve', 'programs:read',
     'inventory:read', 'audit:read', 'rescue:read' , 'rescue:assign',
     'volunteers:read', 'volunteers:approve'
