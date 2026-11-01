@@ -57,6 +57,11 @@ export function BalanceCards({ balances }: { balances: LeaveBalance[] }) {
                 {fmtDays(b.approved)} taken{b.pending ? ` · ${fmtDays(b.pending)} pending` : ''}
                 {b.carried_forward ? ` · ${fmtDays(b.carried_forward)} carried over` : ''}
               </p>
+              {b.earned_to_date != null && b.entitled !== undefined && b.earned_to_date < b.entitled && (
+                <p className="mt-1 text-xs text-text-muted">
+                  {fmtDays(b.earned_to_date)} earned so far · {fmtDays(b.entitled)} by year end (one day per two complete months)
+                </p>
+              )}
             </>
           ) : (
             <p className="mt-1 text-sm text-text-muted">Not set up for this year yet.</p>

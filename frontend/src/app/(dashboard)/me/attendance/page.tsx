@@ -7,6 +7,7 @@ import { format } from 'date-fns';
 import { Clock, Lock, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { MyScheduleCard } from '@/components/hr/calendar/MyScheduleCard';
+import { MyMonth } from '@/components/hr/attendance/MyMonth';
 
 export default function MyAttendancePage() {
   const currentMonth = new Date().getMonth() + 1;
@@ -157,6 +158,8 @@ export default function MyAttendancePage() {
           </CardContent>
         </Card>
       </div>
+
+      <MyMonth />
 
       <MyScheduleCard />
     </div>

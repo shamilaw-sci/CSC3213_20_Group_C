@@ -16,6 +16,24 @@ export function useAttendance(date?: string, month?: number, year?: number) {
   });
 }
 
+// Under 'attendance', so the existing log / edit / lock / unlock mutations,
+// which invalidate that key, refresh the grid too.
+export function useAttendanceMonth(year: number, month: number) {
+  return useQuery({
+    queryKey: ['attendance', 'month', { year, month }],
+    queryFn: () => HRService.getAttendanceMonth(year, month),
+    placeholderData: (previous) => previous,
+  });
+}
+
+export function useMyAttendanceMonth(year: number, month: number) {
+  return useQuery({
+    queryKey: ['attendance', 'me', 'month', { year, month }],
+    queryFn: () => HRService.getMyAttendanceMonth(year, month),
+    retry: false,
+  });
+}
+
 export function useMyAttendance(month?: number, year?: number) {
   return useQuery({
     queryKey: ['my-attendance', { month, year }],
@@ -30,6 +48,7 @@ export function useClockIn() {
     mutationFn: HRService.clockIn,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['my-attendance'] });
+      queryClient.invalidateQueries({ queryKey: ['attendance', 'me'] });
       toast.success('Successfully clocked in');
     },
     onError: (error: any) => {
@@ -45,6 +64,7 @@ export function useClockOut() {
     mutationFn: HRService.clockOut,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['my-attendance'] });
+      queryClient.invalidateQueries({ queryKey: ['attendance', 'me'] });
       toast.success('Successfully clocked out');
     },
     onError: (error: any) => {

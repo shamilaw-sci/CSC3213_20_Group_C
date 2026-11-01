@@ -221,6 +221,7 @@ PERMISSION_ROUTES = [
     ("POST", "/api/hr/employees", "hr:manage"),
     ("POST", "/api/hr/attendance/clock-in", "hr:attendance:self"),
     ("GET", "/api/hr/attendance", "hr:attendance:manage"),
+    ("GET", "/api/hr/attendance/me/month?year=2026&month=10", "hr:attendance:self"),
     ("POST", "/api/hr/payroll/generate", "payroll:generate"),
     ("POST", "/api/hr/payroll/runs/1/approve", "payroll:approve"),
     ("GET", "/api/finance/summary", "finance:read"),
@@ -291,6 +292,11 @@ def test_permission_routes_cover_every_granted_permission():
         # an expense that overspends a restricted program — so no route-level
         # Depends can express it. Covered by the restricted-fund tests below.
         "finance:restricted:override",
+        # Enforced only together with hr:attendance:manage on the monthly grid
+        # (require_any_permission), which a single-permission row cannot
+        # express. Covered by test_grid_needs_attendance_manage_or_read in
+        # test_attendance_month.py, across every role.
+        "hr:attendance:read",
         # No route enforces these yet.
         "inventory:read",
         "inventory:issue",
