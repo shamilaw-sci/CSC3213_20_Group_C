@@ -489,9 +489,9 @@ function StockPage() {
       </section>
 
       {/* Stock list & movements */}
-      <div className="grid gap-8 lg:grid-cols-5">
+      <div className="grid gap-6 lg:grid-cols-2">
         {/* Detailed Stock List */}
-        <Card className="rounded-card border border-border-brand bg-surface p-5 shadow-card lg:col-span-3">
+        <Card className="rounded-card border border-border-brand bg-surface p-5 shadow-card">
           <CardHeader className="p-0 pb-4">
             <CardTitle className="text-base font-semibold font-heading text-text-primary">
               Detailed Stock List
@@ -617,13 +617,13 @@ function StockPage() {
         </Card>
 
         {/* Recent Movements */}
-        <Card className="rounded-card border border-border-brand bg-surface p-5 shadow-card lg:col-span-2">
+        <Card className="rounded-card border border-border-brand bg-surface p-5 shadow-card">
           <CardHeader className="p-0 pb-4">
             <CardTitle className="text-base font-semibold font-heading text-text-primary">
               Recent Movements
             </CardTitle>
             <CardDescription className="mt-1 text-xs text-text-secondary">
-              Last {MAX_MOVEMENTS} stock movements.
+              The latest {MAX_MOVEMENTS} stock movements, newest first.
             </CardDescription>
           </CardHeader>
 
@@ -645,18 +645,19 @@ function StockPage() {
                     <TableHeader className="bg-bg-subtle">
                       <TableRow className="border-border-brand hover:bg-transparent">
                         <TableHead className="font-heading text-xs text-text-secondary">Date</TableHead>
+                        <TableHead className="font-heading text-xs text-text-secondary">Item</TableHead>
                         <TableHead className="font-heading text-xs text-text-secondary">Type</TableHead>
+                        <TableHead className="text-right font-heading text-xs text-text-secondary">Qty</TableHead>
                         <TableHead className="text-right font-heading text-xs text-text-secondary">
                           Amount
                         </TableHead>
-                        <TableHead className="font-heading text-xs text-text-secondary">Program</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {movements.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={4} className="py-8 text-center text-xs italic text-text-muted">
-                            No recent movements
+                          <TableCell colSpan={5} className="py-8 text-center text-xs text-text-muted">
+                            No movements yet
                           </TableCell>
                         </TableRow>
                       ) : (
@@ -664,52 +665,58 @@ function StockPage() {
                           const style = getMovementStyle(tx.transaction_type);
                           const MovementIcon = style.Icon;
                           const { value, estimated } = getMovementAmount(tx);
+                          const isOut = style.sign === '-';
+                          const destination = getProgramLabel(tx);
                           return (
                             <TableRow
                               key={tx.id}
-                              className="border-border-brand transition-colors hover:bg-bg-subtle/60"
+                              className="border-border-brand align-top transition-colors hover:bg-bg-subtle/60"
                             >
-                              <TableCell className="whitespace-nowrap font-mono text-xs text-text-secondary">
-                                {format(parseISO(tx.transaction_date), 'MMM dd, yyyy')}
+                              <TableCell className="whitespace-nowrap py-3 font-mono text-xs text-text-secondary">
+                                {format(parseISO(tx.transaction_date), 'dd MMM yyyy')}
                               </TableCell>
-                              <TableCell>
-                                <div className="flex flex-col items-start gap-1">
-                                  <span
-                                    className={cn(
-                                      'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide',
-                                      style.pill
-                                    )}
-                                  >
-                                    <MovementIcon size={12} /> {style.label}
-                                  </span>
-                                  <span className="max-w-[130px] truncate text-[10px] text-text-muted">
-                                    {getItemName(tx)}
-                                  </span>
-                                </div>
+                              <TableCell className="max-w-[200px] py-3">
+                                <p className="truncate text-xs font-semibold text-text-primary" title={getItemName(tx)}>
+                                  {getItemName(tx)}
+                                </p>
+                                {destination !== '—' && (
+                                  <p className="mt-0.5 truncate text-[11px] text-text-secondary" title={destination}>
+                                    {destination}
+                                  </p>
+                                )}
+                                {tx.notes && (
+                                  <p className="mt-0.5 truncate text-[11px] italic text-text-muted" title={tx.notes}>
+                                    {tx.notes}
+                                  </p>
+                                )}
                               </TableCell>
-                              <TableCell className="text-right">
-                                <p
-                                  title={estimated ? 'Estimated from the current unit cost' : undefined}
+                              <TableCell className="py-3">
+                                <span
                                   className={cn(
-                                    'font-mono text-xs font-bold',
-                                    style.sign === '-' ? 'text-negative' : 'text-positive',
-                                    estimated && 'italic'
+                                    'inline-flex items-center gap-1 whitespace-nowrap rounded-full border px-2 py-0.5 text-[10px] font-semibold',
+                                    style.pill
                                   )}
                                 >
-                                  {value > 0 ? `${style.sign}${formatLKR(value)}` : '—'}
-                                </p>
-                                <p className="font-mono text-[10px] text-text-muted">{tx.quantity} units</p>
+                                  <MovementIcon size={12} /> {style.label}
+                                </span>
                               </TableCell>
-                              <TableCell className="text-xs text-text-secondary">
-                                {getProgramLabel(tx)}
-                                {tx.notes && (
-                                  <span
-                                    title={tx.notes}
-                                    className="block max-w-[140px] truncate text-[10px] text-text-muted"
-                                  >
-                                    {tx.notes}
-                                  </span>
+                              <TableCell
+                                className={cn(
+                                  'whitespace-nowrap py-3 text-right font-mono text-xs font-semibold',
+                                  isOut ? 'text-negative' : 'text-positive'
                                 )}
+                              >
+                                {style.sign}
+                                {tx.quantity.toLocaleString()}
+                              </TableCell>
+                              <TableCell
+                                title={estimated ? 'Estimated from the current unit cost' : undefined}
+                                className={cn(
+                                  'whitespace-nowrap py-3 text-right font-mono text-xs text-text-primary',
+                                  estimated && 'italic text-text-secondary'
+                                )}
+                              >
+                                {value > 0 ? formatLKR(value) : '—'}
                               </TableCell>
                             </TableRow>
                           );
