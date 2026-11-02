@@ -1,5 +1,5 @@
 import api from '@/lib/api-client';
-import { Employee, AttendanceRecord, AttendanceMonth, PayrollRun, PayrollRunView } from '@/types';
+import { Employee, AttendanceRecord, AttendanceMonth, PayrollRun, PayrollRunView, TrackingImpact } from '@/types';
 
 export const HRService = {
   getEmployees: async () => {
@@ -67,6 +67,19 @@ export const HRService = {
 
   getMyAttendanceMonth: async (year: number, month: number) =>
     (await api.get<AttendanceMonth>('/hr/attendance/me/month', { params: { year, month } })).data,
+
+  // When attendance tracking starts: the organisation date, or one person's
+  // override (null start clears it). Impact first, so HR sees what changes.
+  getTrackingImpact: async (start: string | null, employeeId?: number) =>
+    (await api.get<TrackingImpact>('/hr/attendance-tracking/impact', {
+      params: { ...(start ? { start } : {}), ...(employeeId ? { employee_id: employeeId } : {}) },
+    })).data,
+
+  setTrackingStart: async (date: string) =>
+    (await api.put('/hr/attendance-tracking', { tracking_start_date: date })).data,
+
+  setEmployeeTracking: async (employeeId: number, date: string | null) =>
+    (await api.put(`/hr/employees/${employeeId}/attendance-tracking`, { tracked_from: date })).data,
 
   getPayrollRun: async (month: number, year: number) => {
     const response = await api.get<PayrollRunView>('/hr/payroll/run', { params: { month, year } });

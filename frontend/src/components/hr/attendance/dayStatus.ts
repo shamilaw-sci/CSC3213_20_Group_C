@@ -38,6 +38,8 @@ export function lookOf(c: DayCell): Look {
       return { code: c.leave ? 'LV' : '', label: c.leave ? `${c.leave.type_name} (upcoming)` : 'Upcoming', tone: c.leave ? 'leave' : 'none' };
     case 'not_employed':
       return { code: '', label: 'Not yet employed', tone: 'none' };
+    case 'not_tracked':
+      return { code: '–', label: 'Not tracked (before attendance tracking started)', tone: 'none' };
   }
 }
 
@@ -60,6 +62,7 @@ export const LEGEND: { code: string; label: string; tone: Tone }[] = [
   { code: 'LV', label: 'Leave', tone: 'leave' },
   { code: 'H', label: 'Holiday', tone: 'off' },
   { code: 'W', label: 'Worked a day off', tone: 'info' },
+  { code: '–', label: 'Not tracked', tone: 'none' },
 ];
 
 const TIME = new Intl.DateTimeFormat('en-LK', { timeZone: 'Asia/Colombo', hour: '2-digit', minute: '2-digit', hour12: false });

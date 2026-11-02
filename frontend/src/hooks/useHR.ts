@@ -34,6 +34,33 @@ export function useMyAttendanceMonth(year: number, month: number) {
   });
 }
 
+// What a new tracked-from date would do; only fetched once a date is chosen
+// (or, for an employee, when clearing their override).
+export function useTrackingImpact(start: string | null, employeeId: number | undefined, enabled: boolean) {
+  return useQuery({
+    queryKey: ['attendance', 'tracking-impact', { start, employeeId }],
+    queryFn: () => HRService.getTrackingImpact(start, employeeId),
+    enabled,
+    retry: false,
+  });
+}
+
+export function useSetTracking() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ employeeId, date }: { employeeId?: number; date: string | null }) =>
+      employeeId ? HRService.setEmployeeTracking(employeeId, date) : HRService.setTrackingStart(date as string),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['attendance'] });
+      queryClient.invalidateQueries({ queryKey: ['work-calendar'] });
+      toast.success('Tracking date saved');
+    },
+    onError: (error: { response?: { data?: { detail?: string } } }) => {
+      toast.error(error?.response?.data?.detail || 'Failed to save the tracking date');
+    },
+  });
+}
+
 export function useMyAttendance(month?: number, year?: number) {
   return useQuery({
     queryKey: ['my-attendance', { month, year }],

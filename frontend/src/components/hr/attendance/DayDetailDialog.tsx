@@ -34,7 +34,7 @@ export function DayDetailDialog({
   const { mutate: create, isPending: isCreating } = useLogAttendance();
   const { mutate: unlock, isPending: isUnlocking } = useUnlockAttendance();
 
-  const editable = canEdit && !cell.locked && cell.status !== 'not_employed' && cell.status !== 'upcoming';
+  const editable = canEdit && !cell.locked && !['not_employed', 'not_tracked', 'upcoming'].includes(cell.status);
   const changed = clockIn !== toInput(cell.clock_in) || clockOut !== toInput(cell.clock_out);
 
   const save = () => {

@@ -27,6 +27,8 @@ export default function HRAttendancePage() {
 function Attendance() {
   const { user } = useAuthStore();
   const canManage = hasPermission(user?.role as string, 'hr:attendance:manage');
+  // HR Officer and Admin set when tracking starts; the Director sees it.
+  const canChangeTracking = hasPermission(user?.role as string, 'hr:manage');
   const [tab, setTab] = useState<'month' | 'day'>('month');
 
   return (
@@ -49,7 +51,7 @@ function Attendance() {
           ))}
         </div>
       )}
-      {tab === 'month' || !canManage ? <MonthGrid canEdit={canManage} /> : <DayView />}
+      {tab === 'month' || !canManage ? <MonthGrid canEdit={canManage} canChangeTracking={canChangeTracking} /> : <DayView />}
     </div>
   );
 }
