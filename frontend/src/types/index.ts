@@ -335,6 +335,8 @@ export interface InventoryTransaction {
   transaction_type: 'Issue' | 'Return' | 'Restock';
   transaction_date: string;
   total_cost: number; // calculated by the DB (quantity * unit_cost at the time), never sent by the client
+  // Free-text reason. Required by the API for a Stock Out with no program (a stock adjustment).
+  notes?: string | null;
   inventory_items?: {
     item_name: string;
   };

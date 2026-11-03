@@ -38,7 +38,16 @@ class Permission(str, Enum):
     # finance:write to make the override reachable would also hand Director
     # blanket create/edit/void power over the ledger.
     FINANCE_RESTRICTED_OVERRIDE = 'finance:restricted:override'
+    # Inventory is split by page (decided 2026-11-01):
+    #   read   - open the Stock page: stock list, movements, alerts.
+    #   manage - every action on the Stock page: add item, stock in, stock
+    #            out (with or without a program) and return.
+    #   issue  - the Issue and Returns pages only: issue to a program and
+    #            return from one. No stock in, no new items.
+    # Admin holds all three; Director, Finance Officer and Operations Lead
+    # hold read + manage; General Staff holds issue only.
     INVENTORY_READ = 'inventory:read'
+    INVENTORY_MANAGE = 'inventory:manage'
     INVENTORY_ISSUE = 'inventory:issue'
     PROGRAMS_READ = 'programs:read'
     PROGRAMS_MANAGE = 'programs:manage'
@@ -72,7 +81,7 @@ ROLE_PERMISSIONS = {
         Permission.LEAVE_APPROVE.value, Permission.HR_ATTENDANCE_READ.value,
         Permission.PAYROLL_GENERATE.value, Permission.PAYROLL_APPROVE.value, Permission.FINANCE_READ.value,
         Permission.FINANCE_WRITE.value, Permission.FINANCE_RESTRICTED_OVERRIDE.value,
-        Permission.INVENTORY_READ.value, Permission.INVENTORY_ISSUE.value,
+        Permission.INVENTORY_READ.value, Permission.INVENTORY_MANAGE.value, Permission.INVENTORY_ISSUE.value,
         Permission.PROGRAMS_READ.value, Permission.PROGRAMS_MANAGE.value, Permission.ADMIN_USERS.value, Permission.AUDIT_READ.value,
         Permission.RESCUE_READ.value, Permission.RESCUE_MANAGE.value, Permission.RESCUE_ASSIGN.value,
         Permission.VOLUNTEERS_READ.value, Permission.VOLUNTEERS_APPROVE.value, Permission.VOLUNTEERS_ASSIGN.value
@@ -87,7 +96,7 @@ ROLE_PERMISSIONS = {
         # only the holder's own records, so it adds no business-data access.
         Permission.HR_ATTENDANCE_SELF.value, Permission.HR_ATTENDANCE_READ.value,
         Permission.FINANCE_READ.value, Permission.PAYROLL_APPROVE.value, Permission.PROGRAMS_READ.value,
-        Permission.INVENTORY_READ.value, Permission.AUDIT_READ.value,
+        Permission.INVENTORY_READ.value, Permission.INVENTORY_MANAGE.value, Permission.AUDIT_READ.value,
         Permission.RESCUE_READ.value, Permission.RESCUE_ASSIGN.value,
         Permission.VOLUNTEERS_READ.value, Permission.VOLUNTEERS_APPROVE.value
     ],
@@ -106,7 +115,7 @@ ROLE_PERMISSIONS = {
         # only the holder's own records, so it adds no business-data access.
         Permission.HR_ATTENDANCE_SELF.value,
         Permission.FINANCE_READ.value, Permission.FINANCE_WRITE.value, Permission.PAYROLL_GENERATE.value,
-        Permission.INVENTORY_READ.value,
+        Permission.INVENTORY_READ.value, Permission.INVENTORY_MANAGE.value,
         # Not a widening of what this role can see: GET /finance/transactions
         # already returns programs(program_name) under finance:read, so a
         # Finance Officer reads program names throughout the ledger. Without
@@ -131,7 +140,8 @@ ROLE_PERMISSIONS = {
     # is taken on at all stays a vetting decision with HR/Director/Admin.
     UserRole.OPERATIONS_LEAD.value: [
         Permission.HR_ATTENDANCE_SELF.value,
-        Permission.INVENTORY_READ.value, Permission.INVENTORY_ISSUE.value,
+        # Stock page only (read + manage), not the Issue/Returns pages.
+        Permission.INVENTORY_READ.value, Permission.INVENTORY_MANAGE.value,
         Permission.PROGRAMS_READ.value, Permission.PROGRAMS_MANAGE.value,
         Permission.RESCUE_READ.value, Permission.RESCUE_MANAGE.value,
         Permission.VOLUNTEERS_READ.value, Permission.VOLUNTEERS_ASSIGN.value

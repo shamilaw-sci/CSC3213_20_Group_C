@@ -14,7 +14,7 @@ const items = [
   { label: 'Financial Management', href: '/finance', icon: Wallet },
   { label: 'HR Module / Employees', href: '/hr', icon: Users },
   { label: 'Programs & Allocations', href: '/programs', icon: Handshake },
-  { label: 'Inventory & Assets', href: '/inventory', icon: Package },
+  { label: 'Inventory & Assets', href: '/inventory/stock', icon: Package },
   { label: 'System Admin Panel', href: '/admin', icon: ShieldCheck },
 ];
 
