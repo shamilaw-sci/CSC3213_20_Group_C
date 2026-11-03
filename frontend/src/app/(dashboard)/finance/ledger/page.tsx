@@ -29,6 +29,12 @@ import { cn } from '@/lib/utils';
 
 const PAGE_SIZES = [25, 50, 100];
 
+// The Description column: "Source-Program" (e.g. "Donation-Distemper outbreak"),
+// or "Source-General" when the row has no program (e.g. "Stock in-General").
+// The API builds it; the fallback covers a backend that does not send it yet.
+const describeRow = (r: LedgerRow) =>
+  r.description ?? `Manual-${r.program_id === null ? 'General' : r.program_name}`;
+
 const control =
   'h-9 rounded-md border border-border-brand bg-surface px-2 text-xs text-text-primary outline-none focus:border-accent';
 
@@ -147,10 +153,10 @@ function Ledger() {
       downloadCsv(
         `ledger_${toISODate(new Date())}.csv`,
         buildCsv(
-          ['ID', 'Date', 'Type', 'Restricted', 'Program', 'Status', 'Amount', 'Balance'],
+          ['ID', 'Date', 'Type', 'Restricted', 'Description', 'Status', 'Amount', 'Balance'],
           all.rows.map((r) => [
             r.id, r.transaction_date, r.transaction_type, r.is_restricted ? 'Yes' : 'No',
-            r.program_name, r.status, r.amount, r.balance,
+            describeRow(r), r.status, r.amount, r.balance,
           ]),
         ),
       );
@@ -198,7 +204,7 @@ function Ledger() {
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search program, amount, status or #id"
+              placeholder="Search description, amount, status or #id"
               aria-label="Search the ledger"
               className={cn(control, 'w-full pl-8')}
             />
@@ -326,7 +332,7 @@ function Ledger() {
                   <tr>
                     <th className="px-4 py-3 font-semibold">Date</th>
                     <th className="px-4 py-3 font-semibold">Type</th>
-                    <th className="px-4 py-3 font-semibold">Program</th>
+                    <th className="px-4 py-3 font-semibold">Description</th>
                     <th className="px-4 py-3 font-semibold">Status</th>
                     <th className="px-4 py-3 text-right font-semibold">Amount</th>
                     <th
@@ -354,7 +360,7 @@ function Ledger() {
                             {r.is_restricted && <Lock className="h-3 w-3 text-accent" aria-label="Restricted" />}
                           </span>
                         </td>
-                        <td className="px-4 py-3 text-text-primary">{r.program_name}</td>
+                        <td className="px-4 py-3 text-text-primary">{describeRow(r)}</td>
                         <td className="px-4 py-3"><StatusBadge row={r} /></td>
                         <td
                           className={cn(
@@ -478,7 +484,7 @@ function Ledger() {
             <DialogDescription>
               {voiding && (
                 <>
-                  {voiding.transaction_type} of {formatLKR(voiding.amount)} on {voiding.transaction_date} ({voiding.program_name}).
+                  {voiding.transaction_type} of {formatLKR(voiding.amount)} on {voiding.transaction_date} ({describeRow(voiding)}).
                   Voiding keeps it on the ledger as a reversal. Voided transactions can&apos;t be edited or restored.
                 </>
               )}

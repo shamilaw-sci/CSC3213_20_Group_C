@@ -88,10 +88,14 @@ async def create_item(
             detail=f"An item named '{existing.data[0]['item_name']}' already exists. Use Stock In to add to it.",
         )
 
-    # The item is inserted with no stock; any initial stock is then recorded
-    # as an ordinary Stock In movement, so it has a cost and an audit row
-    # like every other movement.
-    requested_initial_stock = item.current_stock
+    # Add Item only registers the item. Stock is added afterwards with Stock
+    # In, the one place a purchase is recorded (and posted to finance), so an
+    # opening quantity here is refused rather than quietly dropped.
+    if item.current_stock:
+        raise HTTPException(
+            status_code=400,
+            detail="A new item starts with 0 stock. Add the item first, then use Stock In to add its stock.",
+        )
     insert_data = item.model_dump(mode="json")
     insert_data["current_stock"] = 0
 
@@ -100,39 +104,6 @@ async def create_item(
         raise HTTPException(status_code=400, detail="Failed to create item")
 
     new_item = response.data[0]
-
-    if requested_initial_stock > 0:
-        try:
-            _created, _before, after = _record_movement(
-                supabase,
-                item_id=new_item["id"],
-                tx_type="Restock",
-                program_id=None,
-                quantity=requested_initial_stock,
-                transaction_date=today_in_sri_lanka().isoformat(),
-                notes="Initial stock",
-            )
-        except HTTPException as e:
-            # The item row already exists at this point, so it is recorded in
-            # the audit trail before we report the failure. The message tells
-            # the user the item is there, so they add the stock with Stock In
-            # instead of retrying and creating a duplicate.
-            await log_audit_action(
-                supabase,
-                user_id=current_user["id"],
-                action_type="INVENTORY_ITEM_CREATE",
-                table_name="inventory_items",
-                old_payload=None,
-                new_payload={**new_item, "initial_stock_error": e.detail},
-            )
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"Item '{new_item['item_name']}' was created, but its initial stock could not be "
-                    f"recorded ({e.detail}). Use Stock In to add the stock."
-                ),
-            )
-        new_item = {**new_item, "current_stock": after}
 
     await log_audit_action(
         supabase,

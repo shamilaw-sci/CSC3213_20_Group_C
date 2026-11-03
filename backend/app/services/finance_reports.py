@@ -40,22 +40,48 @@ AGING_BUCKETS = (
 ZERO = Decimal("0.00")
 
 
-def fetch_ledger(supabase: Client, end: date) -> list[dict]:
+_LEDGER_COLUMNS = (
+    "id, transaction_date, amount, transaction_type, status, "
+    "program_id, is_restricted, programs(program_name)"
+)
+
+
+def _is_missing_source_type_column(error: Exception) -> bool:
+    """True when PostgREST refused the select because
+    financial_transactions.source_type does not exist yet (migration 013 not
+    applied): Postgres 42703 'column ... does not exist'."""
+    text = str(error).lower()
+    return "source_type" in text and ("42703" in text or "column" in text)
+
+
+def fetch_ledger(supabase: Client, end: date, *, include_source: bool = False) -> list[dict]:
     """
     Every transaction dated on or before `end`, voided rows included.
 
     Not just the period: restricted opening balances need everything before
     it, the comparison needs the previous period, and outstanding items can
     date from any time. build_finance_report does the filtering.
+
+    include_source=True also reads source_type (migration 013), for the
+    ledger page. Off by default so every other caller sends exactly the
+    query it always has. If the column is not there yet, the rows come back
+    without it rather than failing.
     """
+    if include_source:
+        try:
+            return _fetch_ledger_rows(supabase, end, _LEDGER_COLUMNS + ", source_type")
+        except Exception as e:
+            if not _is_missing_source_type_column(e):
+                raise
+    return _fetch_ledger_rows(supabase, end, _LEDGER_COLUMNS)
+
+
+def _fetch_ledger_rows(supabase: Client, end: date, columns: str) -> list[dict]:
     rows: list[dict] = []
     offset = 0
     while True:
         page = supabase.table("financial_transactions") \
-            .select(
-                "id, transaction_date, amount, transaction_type, status, "
-                "program_id, is_restricted, programs(program_name)"
-            ) \
+            .select(columns) \
             .lte("transaction_date", str(end)) \
             .order("id") \
             .range(offset, offset + PAGE_SIZE - 1) \

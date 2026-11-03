@@ -111,7 +111,7 @@ export function AddItemDialog({ open, onClose }: { open: boolean; onClose: () =>
       open={open}
       onClose={onClose}
       title="Add Inventory Item"
-      description="Initial stock is recorded as a Stock In movement, so it shows in the history."
+      description="This registers the item with 0 stock. Add its stock afterwards with Stock In."
     >
       {/* Remounted on each open, so the fields start empty every time. */}
       {open && <AddItemForm onClose={onClose} />}
@@ -122,7 +122,6 @@ export function AddItemDialog({ open, onClose }: { open: boolean; onClose: () =>
 function AddItemForm({ onClose }: { onClose: () => void }) {
   const createItem = useCreateInventoryItem();
   const [name, setName] = useState('');
-  const [stock, setStock] = useState('');
   const [cost, setCost] = useState('');
   const [supplier, setSupplier] = useState('');
   const [expire, setExpire] = useState('');
@@ -132,13 +131,8 @@ function AddItemForm({ onClose }: { onClose: () => void }) {
     e.preventDefault();
     setError('');
 
-    if (!name.trim() || !stock.trim() || !cost.trim()) {
-      setError('Item name, initial stock and unit cost are required.');
-      return;
-    }
-    const stockVal = Number(stock);
-    if (!Number.isInteger(stockVal) || stockVal < 0 || stockVal > MAX_QUANTITY) {
-      setError(`Initial stock must be a whole number from 0 to ${MAX_QUANTITY.toLocaleString()}.`);
+    if (!name.trim() || !cost.trim()) {
+      setError('Item name and unit cost are required.');
       return;
     }
     const costVal = Number(cost);
@@ -150,7 +144,8 @@ function AddItemForm({ onClose }: { onClose: () => void }) {
     createItem.mutate(
       {
         item_name: name.trim(),
-        current_stock: stockVal,
+        // Always 0: stock is only added with Stock In.
+        current_stock: 0,
         unit_cost: costVal,
         supplier_name: supplier.trim() || undefined,
         expire_date: expire || undefined,
@@ -181,23 +176,7 @@ function AddItemForm({ onClose }: { onClose: () => void }) {
           className={FIELD_CLASS}
         />
       </div>
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label htmlFor="inv-add-stock" className={LABEL_CLASS}>
-            Initial stock
-          </label>
-          <input
-            id="inv-add-stock"
-            type="number"
-            min={0}
-            step={1}
-            inputMode="numeric"
-            value={stock}
-            onChange={(e) => setStock(e.target.value)}
-            placeholder="100"
-            className={cn(FIELD_CLASS, 'font-mono')}
-          />
-        </div>
+      <div>
         <div>
           <label htmlFor="inv-add-cost" className={LABEL_CLASS}>
             Unit cost (LKR)
