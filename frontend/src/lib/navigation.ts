@@ -18,7 +18,8 @@ import {
   CalendarDays,
   Plane,
   CalendarPlus,
-  CircleCheckBig
+  CircleCheckBig,
+  HandCoins
 } from 'lucide-react';
 
 import { hasAnyPermission, type Permission } from './permissions';
@@ -99,6 +100,14 @@ export const NAVIGATION_CONFIG: NavSection[] = [
     items: [
       { label: 'Applications', href: '/volunteers', icon: HeartHandshake, requiredPermission: 'volunteers:read' },
       { label: 'Shifts', href: '/volunteers/shifts', icon: CalendarClock, requiredPermission: 'volunteers:read' },
+    ]
+  },
+  {
+    // Donations from the public donate page. finance:read, because every paid
+    // donation is ledger income and the page shows donor contact details.
+    title: 'DONATIONS',
+    items: [
+      { label: 'Donation details', href: '/donations', icon: HandCoins, requiredPermission: 'finance:read' },
     ]
   },
   {

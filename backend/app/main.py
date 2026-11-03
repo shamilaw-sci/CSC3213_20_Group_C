@@ -34,6 +34,7 @@ from app.api import (
     programs,
     chat,
     volunteers,
+    donations,
 )
 
 
@@ -96,6 +97,7 @@ app.include_router(rescue_cases.router, prefix="/api/rescue_cases", tags=["Rescu
 app.include_router(programs.router, prefix="/api/programs", tags=["Programs"])
 app.include_router(chat.router, prefix="/api/chat", tags=["Chat"])
 app.include_router(volunteers.router, prefix="/api/volunteers", tags=["Volunteers"])
+app.include_router(donations.router, prefix="/api/donations", tags=["Donations"])
 
 
 if __name__ == "__main__":

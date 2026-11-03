@@ -1,6 +1,7 @@
 # backend/app/services/email.py
 #
-# Transactional email via Brevo, for volunteer approvals and assignment notices.
+# Transactional email via Brevo, for volunteer approvals, assignment notices
+# and donation thank-you emails.
 #
 # FAIL-SOFT BY CONTRACT. Every function here returns a bool and never raises.
 # Email is a notification, never a control: approving a volunteer and assigning
@@ -105,9 +106,13 @@ async def _send(
         return False
 
 
-def _shell(heading: str, body: str) -> str:
+_PERSONAL_LINK_NOTE = "This link is personal to you. Please don&rsquo;t forward it."
+
+
+def _shell(heading: str, body: str, footer_note: str = _PERSONAL_LINK_NOTE) -> str:
     """Minimal inline-styled HTML. No external CSS or images: mail clients strip
-    the former and block the latter, and a remote image would leak the open."""
+    the former and block the latter, and a remote image would leak the open.
+    `footer_note` is the last footer line; volunteer emails keep the default."""
     return (
         '<div style="font-family:system-ui,Segoe UI,Arial,sans-serif;'
         'max-width:560px;margin:0 auto;color:#1f2937;line-height:1.6">'
@@ -117,7 +122,7 @@ def _shell(heading: str, body: str) -> str:
         '<p style="font-size:12px;color:#6b7280">'
         "Vets For Future — Sri Lanka&rsquo;s first organization specializing in "
         "humane animal population control.<br>"
-        "This link is personal to you. Please don&rsquo;t forward it."
+        f"{footer_note}"
         "</p></div>"
     )
 
@@ -187,5 +192,39 @@ async def send_assignment_notice(
             + "<p>Please let us know whether you can make it — it takes one "
             "tap, and it helps us know who to expect.</p>"
             + _button(link, "Accept or decline"),
+        ),
+    )
+
+
+async def send_donation_thank_you(
+    to_email: str,
+    full_name: str,
+    amount: str,
+    reference: str,
+    program_name: Optional[str] = None,
+) -> bool:
+    """Thank-you mail after a donation is confirmed paid. Only named donors get
+    one: an anonymous donation stores no email. `amount` is pre-formatted by the
+    caller, e.g. "LKR 5,000.00"."""
+    first_name = html.escape(full_name.split()[0] if full_name.split() else full_name)
+    purpose = (
+        f"the <strong>{html.escape(program_name)}</strong> program"
+        if program_name
+        else "our work wherever it is needed most"
+    )
+    return await _send(
+        to_email,
+        full_name,
+        "Thank you for your donation to Vets For Future",
+        _shell(
+            f"Thank you, {first_name}!",
+            f"<p>We have received your donation of <strong>{html.escape(amount)}</strong> "
+            f"towards {purpose}.</p>"
+            "<p>Every rupee goes to sterilization, vaccination and free clinic "
+            "care for animals across Sri Lanka. Your support makes that work "
+            "possible.</p>"
+            f'<p style="font-size:13px;color:#6b7280">Donation reference: '
+            f"{html.escape(reference)}</p>",
+            footer_note="Please keep this email as your donation receipt.",
         ),
     )

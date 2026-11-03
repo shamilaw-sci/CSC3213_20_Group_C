@@ -12,7 +12,7 @@ const expectedItemsPerRole: Record<UserRole, string[]> = {
   'Admin': [
     'Overview', 'Employees', 'Attendance', 'Schedules & Holidays', 'Leave', 'Payroll', 'Overview', 'Ledger',
     'Reports', 'Stock', 'Issue', 'Returns',
-    'Active Programs', 'Case Hotspots', 'Case Triage', 'Field Dispatch', 'My Attendance', 'My Leave', 'System Admin',
+    'Active Programs', 'Donation details', 'Case Hotspots', 'Case Triage', 'Field Dispatch', 'My Attendance', 'My Leave', 'System Admin',
     ...PERSONAL
   ],
   // Ledger is read-only for Director: it needs finance:read, while adding,
@@ -23,7 +23,7 @@ const expectedItemsPerRole: Record<UserRole, string[]> = {
   // Attendance: the monthly grid, read-only (hr:attendance:read, 2026-10-31).
   'Director': [
     'Overview', 'Attendance', 'Payroll', 'Overview', 'Ledger', 'Reports', 'Stock',
-    'Active Programs', 'Case Hotspots', 'Case Triage', 'Field Dispatch', 'My Attendance', 'My Leave', ...PERSONAL
+    'Active Programs', 'Donation details', 'Case Hotspots', 'Case Triage', 'Field Dispatch', 'My Attendance', 'My Leave', ...PERSONAL
   ],
   'HR Officer': [
     'Overview', 'Employees', 'Attendance', 'Schedules & Holidays', 'Leave', 'Payroll',
@@ -33,7 +33,7 @@ const expectedItemsPerRole: Record<UserRole, string[]> = {
   // picker on the transaction form renders names rather than numeric ids.
   'Finance Officer': [
     'Overview', 'Payroll', 'Overview', 'Ledger', 'Reports',
-    'Stock', 'Active Programs', 'My Attendance', 'My Leave', ...PERSONAL
+    'Stock', 'Active Programs', 'Donation details', 'My Attendance', 'My Leave', ...PERSONAL
   ],
   // Clinic and field operations: inventory, programs and rescue, no HR/finance.
   // Inventory through the Stock page only; Issue and Returns are for General

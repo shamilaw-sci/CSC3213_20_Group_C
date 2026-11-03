@@ -17,6 +17,7 @@ const getPageTitle = (pathname: string) => {
   if (pathname.startsWith('/case-triage')) return "Rescue Case Triage";
   if (pathname.startsWith('/cases')) return "Rescue Case Hotspots";
   if (pathname.startsWith('/dispatch')) return "Field Dispatch";
+  if (pathname.startsWith('/donations')) return "Donations";
   if (pathname.startsWith('/admin')) return "System Admin";
   if (pathname.startsWith('/profile')) return "My Profile";
   if (pathname.startsWith('/settings')) return "Account Settings";
