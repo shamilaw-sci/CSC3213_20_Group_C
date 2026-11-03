@@ -397,25 +397,25 @@ def test_duplicate_item_name_is_refused_case_insensitively(act, db):
     assert len(db.tables["inventory_items"]) == 1
 
 
-def test_create_item_with_initial_stock(act, db):
+def test_add_item_registers_the_item_with_no_stock(act, db):
     act()
-    r = client.post("/api/inventory/items", json={"item_name": "Gauze", "unit_cost": 25, "current_stock": 40})
+    r = client.post("/api/inventory/items", json={"item_name": "Gauze", "unit_cost": 25})
     assert r.status_code == 200, r.text
-    assert r.json()["current_stock"] == 40
-    assert db.rpc_calls and db.rpc_calls[0][1]["p_quantity"] == 40
-    assert db.stock(1001) == 40
-    movement = db.movements()[0]
-    assert movement["transaction_type"] == "Restock" and movement["total_cost"] == 1000
+    assert r.json()["current_stock"] == 0
+    assert db.stock(1001) == 0
+    # No movement: stock (and its cost) only comes in through Stock In.
+    assert db.movements() == []
+    assert not db.rpc_calls
     assert db.tables["system_audit_logs"][-1]["action_type"] == "INVENTORY_ITEM_CREATE"
 
 
-def test_failed_initial_stock_is_audited_and_explained(act, db):
-    db.rpc_error = APIError({"message": "boom", "code": "P0001"})
+def test_add_item_refuses_opening_stock(act, db):
     act()
     r = client.post("/api/inventory/items", json={"item_name": "Gauze", "unit_cost": 25, "current_stock": 40})
     assert r.status_code == 400
-    assert "Use Stock In" in r.json()["detail"]
-    assert db.tables["system_audit_logs"][-1]["new_payload"]["initial_stock_error"] == "boom"
+    assert "Stock In" in r.json()["detail"]
+    assert len(db.tables["inventory_items"]) == 1
+    assert db.movements() == []
 
 
 # --------------------------------------------------------------------------

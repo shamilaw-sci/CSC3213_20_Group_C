@@ -16,6 +16,33 @@ from app.services.restricted_funds import _to_decimal
 # Sentinel for the program filter: rows charged to no program.
 GENERAL = "general"
 
+# How each financial_transactions.source_type (migration 013) is named on the
+# ledger. A row read before that migration has no source_type; the column's
+# default is 'manual', so it is shown as Manual.
+SOURCE_LABELS = {
+    "donation": "Donation",
+    "stock_in": "Stock in",
+    "payroll": "Payroll",
+    "manual": "Manual",
+}
+DEFAULT_SOURCE = "manual"
+
+
+def source_type(row: dict) -> str:
+    return row.get("source_type") or DEFAULT_SOURCE
+
+
+def describe(row: dict) -> str:
+    """
+    The ledger's Description column: "<Source>-<Program>", for example
+    "Donation-Distemper outbreak", or "<Source>-General" when the row is
+    charged to no program, for example "Stock in-General".
+    """
+    source = source_type(row)
+    label = SOURCE_LABELS.get(source, source.replace("_", " ").capitalize())
+    program = "General" if row.get("program_id") is None else program_label(row)
+    return f"{label}-{program}"
+
 
 def _signed(row: dict) -> Decimal:
     """What a row does to the balance: income adds, expense subtracts."""
@@ -27,9 +54,9 @@ def _signed(row: dict) -> Decimal:
 
 def _matches_search(row: dict, q: str) -> bool:
     """
-    Free-text match. Transactions have no description yet, so search covers
-    what a row does carry: program, type, status, id ("#12") and amount,
-    with or without thousands separators.
+    Free-text match. Search covers what a row carries: program, its
+    Description (source and program, e.g. "Stock in-General"), type, status,
+    id ("#12") and amount, with or without thousands separators.
     """
     needle = q.strip().lower()
     if not needle:
@@ -40,6 +67,7 @@ def _matches_search(row: dict, q: str) -> bool:
     amount = f"{_to_decimal(row.get('amount')):.2f}"
     haystack = " ".join([
         program_label(row).lower(),
+        describe(row).lower(),
         _type(row),
         (row.get("status") or "").lower(),
         "restricted" if row.get("is_restricted") else "",
@@ -90,6 +118,8 @@ def build_ledger_page(
             "status": row.get("status"),
             "program_id": row.get("program_id"),
             "program_name": program_label(row),
+            "source_type": source_type(row),
+            "description": describe(row),
             "is_restricted": bool(row.get("is_restricted")),
             "balance": None if voided else _money(balance),
             "_row": row,

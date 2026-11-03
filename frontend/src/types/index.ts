@@ -297,6 +297,8 @@ export interface Transaction {
   // Donor earmarked this income for program_id. Only meaningful on Income
   // rows; expenses draw down restricted funds via program_id alone.
   is_restricted?: boolean;
+  // Where the row came from (migration 013). Set by the database, never sent.
+  source_type?: 'donation' | 'stock_in' | 'payroll' | 'manual';
   programs?: {
     program_name: string;
   };
@@ -499,6 +501,9 @@ export interface ProgramFinancials {
 
 export interface LedgerRow extends Transaction {
   program_name: string;
+  // "Source-Program", e.g. "Stock in-General". Optional so an older backend
+  // without it still type-checks.
+  description?: string;
   // Ledger-wide running net after this entry; null on voided rows.
   balance: number | null;
 }

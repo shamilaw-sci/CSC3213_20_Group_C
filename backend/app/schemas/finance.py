@@ -96,6 +96,10 @@ class LinkedProgram(BaseModel):
 class FinancialTransaction(FinancialTransactionBase):
     id: int
     programs: Optional[LinkedProgram] = None  # This catches the joined data!
+    # Where the row came from (migration 013): donation, stock_in, payroll or
+    # manual. Response only: it is set by the database (default 'manual') and
+    # by the Stock In / payroll triggers, never by the client.
+    source_type: Optional[str] = None
     
     model_config = ConfigDict(
         from_attributes=True, 

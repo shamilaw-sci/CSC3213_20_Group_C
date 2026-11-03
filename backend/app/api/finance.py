@@ -80,7 +80,7 @@ async def get_ledger(
         raise HTTPException(status_code=400, detail="start_date must be on or before end_date.")
 
     # Rows after end_date cannot change the balance of rows on or before it.
-    rows = fetch_ledger(supabase, end_date or date.max)
+    rows = fetch_ledger(supabase, end_date or date.max, include_source=True)
     return build_ledger_page(
         rows,
         start=start_date,
