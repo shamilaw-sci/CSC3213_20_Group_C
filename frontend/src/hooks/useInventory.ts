@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { InventoryService } from '@/services/inventory.service';
-import { InventoryTransaction } from '@/types';
+import { InventoryTransactionCreate } from '@/types';
 
 export function useInventoryItems() {
   return useQuery({
@@ -22,7 +22,7 @@ export function useInventoryTransactions(itemId?: number, enabled: boolean = tru
 export function useCreateInventoryTransaction() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (tx: Omit<InventoryTransaction, 'id' | 'total_cost'>) => InventoryService.createTransaction(tx),
+    mutationFn: (tx: InventoryTransactionCreate) => InventoryService.createTransaction(tx),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['inventoryItems'] });
       queryClient.invalidateQueries({ queryKey: ['inventoryTransactions'] });
@@ -37,6 +37,11 @@ export function useCreateInventoryTransaction() {
       queryClient.invalidateQueries({ queryKey: ['program-financials'] });
       queryClient.invalidateQueries({ queryKey: ['programs-stage'] });
       queryClient.invalidateQueries({ queryKey: ['costPerAnimal'] });
+      // A Stock In posts its cost to the finance ledger (migration 013), so
+      // the ledger and the finance totals refresh too.
+      queryClient.invalidateQueries({ queryKey: ['transactions'] });
+      queryClient.invalidateQueries({ queryKey: ['finance-summary'] });
+      queryClient.invalidateQueries({ queryKey: ['financeSummary'] });
     }
   });
 }
@@ -50,13 +55,6 @@ export function useCreateInventoryItem() {
       queryClient.invalidateQueries({ queryKey: ['inventoryItems'] });
       queryClient.invalidateQueries({ queryKey: ['lowStockItems'] });
       queryClient.invalidateQueries({ queryKey: ['expiringItems'] });
-      // Initial stock is recorded as a Stock In movement.
-      queryClient.invalidateQueries({ queryKey: ['inventoryTransactions'] });
-    },
-    // If only the initial stock failed, the item itself was still created,
-    // so the list must show it (the error tells the user to use Stock In).
-    onError: () => {
-      queryClient.invalidateQueries({ queryKey: ['inventoryItems'] });
     }
   });
 }

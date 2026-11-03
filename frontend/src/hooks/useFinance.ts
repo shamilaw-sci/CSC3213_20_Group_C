@@ -52,6 +52,34 @@ export function usePrograms() {
   });
 }
 
+// One void for the Ledger and the Overview. The Overview reads its summary
+// and aging under different keys from the hooks above, so both are cleared.
+export function useVoidTransaction() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, reason }: { id: number; reason?: string }) =>
+      FinanceService.voidTransaction(id, reason),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['transactions'] });
+      queryClient.invalidateQueries({ queryKey: ['finance-summary'] });
+      queryClient.invalidateQueries({ queryKey: ['finance-aging'] });
+      queryClient.invalidateQueries({ queryKey: ['financeSummary'] });
+      queryClient.invalidateQueries({ queryKey: ['financeAging'] });
+      queryClient.invalidateQueries({ queryKey: ['restrictedBalance'] });
+    },
+  });
+}
+
+// The Stock In behind a stock_in expense, for the void warning. Off unless
+// an id is given.
+export function useStockMovement(transactionId?: number) {
+  return useQuery({
+    queryKey: ['transactions', 'stockMovement', transactionId],
+    queryFn: () => FinanceService.getStockMovement(transactionId as number),
+    enabled: transactionId !== undefined,
+  });
+}
+
 export function useSettleTransaction() {
   const queryClient = useQueryClient();
   return useMutation({

@@ -84,6 +84,11 @@ class InventoryTransactionCreate(InventoryTransactionBase):
     quantity: int = Field(gt=0, le=MAX_QUANTITY)
     transaction_type: TransactionType
     notes: Optional[str] = Field(default=None, max_length=500)
+    # Stock In only: the price actually paid per unit. It costs the movement
+    # (and so the expense posted to finance) and becomes the item's stored
+    # unit_cost. Omitted, the stored unit_cost is used as before. This is what
+    # was paid, not a cost the client invents: Issue and Return refuse it.
+    unit_cost: Optional[float] = Field(default=None, gt=0, le=100_000_000)
 
     @field_validator("notes", mode="before")
     @classmethod

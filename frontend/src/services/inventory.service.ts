@@ -2,6 +2,7 @@ import api from '@/lib/api-client';
 import {
   InventoryItem,
   InventoryTransaction,
+  InventoryTransactionCreate,
   LowStockItem,
   ExpiringItem,
   CostPerAnimalResult,
@@ -35,7 +36,7 @@ export const InventoryService = {
     return response.data;
   },
 
-  createTransaction: async (transaction: Omit<InventoryTransaction, 'id' | 'total_cost'>) => {
+  createTransaction: async (transaction: InventoryTransactionCreate) => {
     const response = await api.post<InventoryTransaction>('/inventory/transactions', transaction);
     return response.data;
   },

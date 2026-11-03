@@ -299,9 +299,28 @@ export interface Transaction {
   is_restricted?: boolean;
   // Where the row came from (migration 013). Set by the database, never sent.
   source_type?: 'donation' | 'stock_in' | 'payroll' | 'manual';
+  // The Stock In movement a stock_in row was posted for (migration 016).
+  inventory_transaction_id?: number | null;
   programs?: {
     program_name: string;
   };
+}
+
+// What the client sends to record a movement. unit_cost is Stock In only:
+// the price paid per unit, which costs the movement (and the finance
+// expense) and becomes the item's stored cost. Never a total.
+export type InventoryTransactionCreate = Omit<InventoryTransaction, 'id' | 'total_cost'> & {
+  unit_cost?: number;
+};
+
+// The Stock In behind a stock_in expense: what to correct in Inventory if
+// the expense is voided. Matches StockMovementRef in backend/app/schemas/finance.py.
+export interface StockMovementRef {
+  inventory_transaction_id: number;
+  item_name: string | null;
+  quantity: number;
+  transaction_date: string | null;
+  total_cost: number;
 }
 
 export interface RestrictedBalance {

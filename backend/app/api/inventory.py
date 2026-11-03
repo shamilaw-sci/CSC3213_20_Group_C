@@ -298,30 +298,37 @@ def _record_movement(
     quantity: int,
     transaction_date: str,
     notes: Optional[str],
+    unit_cost: Optional[float] = None,
 ) -> tuple[dict, int, int]:
     """
     Move the stock and write the movement row as one step. Returns
     (movement row, stock before, stock after).
 
+    unit_cost is a Stock In's new price paid: it costs the movement and
+    becomes the item's stored unit_cost. None means the stored cost.
+
     Preferred path: the inventory_apply_movement() database function, which
     locks the item row, checks every rule and writes both rows in a single
     transaction, so they succeed or fail together.
 
-    Fallback (only while migration 012 is not applied): compare-and-set the
-    stock, insert the row, and put the stock back if the insert fails.
+    Fallback (only while migration 012, or 017 for a new price, is not
+    applied): compare-and-set the stock, insert the row, and put the stock
+    back if the insert fails.
     """
+    params = {
+        "p_item_id": item_id,
+        "p_program_id": program_id,
+        "p_quantity": quantity,
+        "p_transaction_type": tx_type,
+        "p_transaction_date": transaction_date,
+        "p_notes": notes,
+    }
+    # Sent only when there is a new price, so a database with 012 but not
+    # 017 still takes the locked path for every other movement.
+    if unit_cost is not None:
+        params["p_unit_cost"] = unit_cost
     try:
-        result = supabase.rpc(
-            _MOVEMENT_RPC,
-            {
-                "p_item_id": item_id,
-                "p_program_id": program_id,
-                "p_quantity": quantity,
-                "p_transaction_type": tx_type,
-                "p_transaction_date": transaction_date,
-                "p_notes": notes,
-            },
-        ).execute()
+        result = supabase.rpc(_MOVEMENT_RPC, params).execute()
         row = result.data[0] if isinstance(result.data, list) else result.data
         if not row:
             raise HTTPException(status_code=400, detail="The movement was not saved.")
@@ -335,12 +342,17 @@ def _record_movement(
             # P0002 = no_data_found, raised for an unknown item or program.
             status = 404 if getattr(e, "code", None) == "P0002" else 400
             raise HTTPException(status_code=status, detail=e.message or "The movement was not saved.")
-        logger.warning("%s() not found; apply db/migrations/012_inventory_integrity.sql", _MOVEMENT_RPC)
+        logger.warning(
+            "%s() not found with these parameters; apply db/migrations/012_inventory_integrity.sql "
+            "and 017_stock_in_price.sql",
+            _MOVEMENT_RPC,
+        )
 
     item = _get_item(supabase, item_id)
     delta = -quantity if tx_type == "Issue" else quantity
     before, after = _change_stock(supabase, item_id, delta)
 
+    cost_each = unit_cost if unit_cost is not None else float(item.get("unit_cost") or 0)
     payload = {
         "item_id": item_id,
         "program_id": program_id,
@@ -348,9 +360,10 @@ def _record_movement(
         "transaction_type": tx_type,
         "transaction_date": transaction_date,
         "notes": notes,
-        # Cost at today's unit cost, worked out here and never taken from the
-        # client. Some movements were saved with 0 before.
-        "total_cost": round(quantity * float(item.get("unit_cost") or 0), 2),
+        # Cost at the price paid on a Stock In, else today's unit cost. Worked
+        # out here, never sent as a total by the client. Some movements were
+        # saved with 0 before.
+        "total_cost": round(quantity * cost_each, 2),
     }
 
     failure: Optional[str] = None
@@ -380,6 +393,15 @@ def _record_movement(
             detail=f"The {tx_type.lower()} was not saved ({failure}). Stock has not changed.",
         )
 
+    # Last price paid becomes the stored cost. Not atomic with the movement on
+    # this path; the movement is already saved at the right price, so a
+    # failure here only leaves the stored cost stale.
+    if unit_cost is not None:
+        try:
+            supabase.table("inventory_items").update({"unit_cost": unit_cost}).eq("id", item_id).execute()
+        except APIError:
+            logger.error("Stock In saved but unit_cost of item %s not updated to %s", item_id, unit_cost)
+
     return response.data[0], before, after
 
 
@@ -396,6 +418,11 @@ async def create_transaction(
     # Stock In is new stock entering the organisation, never a program's
     # usage. A program_id on it would wrongly count as that program's cost.
     program_id = None if tx_type == "Restock" else transaction.program_id
+
+    # A price paid only exists for stock bought. Issue and Return are always
+    # costed at the stored unit cost (programs.total_cost relies on that).
+    if transaction.unit_cost is not None and tx_type != "Restock":
+        raise HTTPException(status_code=400, detail="A unit price is only entered for Stock In.")
 
     # --- Rules (decided 2026-11-01) ------------------------------------
     # Issue/Returns pages (inventory:issue without manage) record only
@@ -436,6 +463,14 @@ async def create_transaction(
                 ),
             )
 
+    # Stock In at a new price: the movement is costed at what was paid and the
+    # item keeps it as its stored cost (last price paid). The stored price
+    # sent back unchanged is not a new price, so nothing extra is sent.
+    stored_cost = round(float(item.get("unit_cost") or 0), 2)
+    new_cost = None
+    if transaction.unit_cost is not None and round(transaction.unit_cost, 2) != stored_cost:
+        new_cost = round(transaction.unit_cost, 2)
+
     created_row, before, after = _record_movement(
         supabase,
         item_id=transaction.item_id,
@@ -444,18 +479,26 @@ async def create_transaction(
         quantity=transaction.quantity,
         transaction_date=transaction.transaction_date.isoformat(),
         notes=transaction.notes,
+        unit_cost=new_cost,
     )
     created = _map_transaction_row(created_row)
+
+    # The stock level either side of the movement is the part worth being
+    # able to prove later; the transaction row alone doesn't show it. A price
+    # change is recorded the same way.
+    old_payload = {"item_id": transaction.item_id, "current_stock": before}
+    new_payload = {**created, "current_stock": after}
+    if new_cost is not None:
+        old_payload["unit_cost"] = stored_cost
+        new_payload["unit_cost"] = new_cost
 
     await log_audit_action(
         supabase,
         user_id=current_user["id"],
         action_type=_TRANSACTION_ACTION.get(tx_type, "INVENTORY_TRANSACTION"),
         table_name="inventory_transactions",
-        # The stock level either side of the movement is the part worth being
-        # able to prove later; the transaction row alone doesn't show it.
-        old_payload={"item_id": transaction.item_id, "current_stock": before},
-        new_payload={**created, "current_stock": after},
+        old_payload=old_payload,
+        new_payload=new_payload,
     )
 
     return created
