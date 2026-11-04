@@ -41,6 +41,16 @@ PUBLIC_ROUTES = {
         "volunteers have no login; the link token is the credential",
     ("POST", "/api/volunteers/my-assignments/{token}/{assignment_id}/respond"):
         "volunteers have no login; the link token is the credential",
+    ("GET", "/api/donations/programs"):
+        "public donate page; Upcoming and Active program names and dates only",
+    ("POST", "/api/donations/checkout"):
+        "public donate form; saves a pending donation, never touches the ledger",
+    ("POST", "/api/donations/payhere/notify"):
+        "PayHere server callback; every request is checked against md5sig",
+    ("POST", "/api/donations/confirm/{order_id}"):
+        "donors have no login; records only what PayHere confirms, returns no donor details",
+    ("POST", "/api/donations/cancel/{order_id}"):
+        "donors have no login; only moves a pending donation to cancelled",
 }
 
 

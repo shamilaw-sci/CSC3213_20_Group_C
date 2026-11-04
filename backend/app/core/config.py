@@ -53,3 +53,32 @@ BREVO_REPLY_TO: str = os.environ.get("BREVO_REPLY_TO", "vetsforfuturesl@gmail.co
 # has no other way to know where it is deployed, and a link built against the
 # wrong origin is worse than no email at all — it looks legitimate and 404s.
 PUBLIC_APP_URL: str = os.environ.get("PUBLIC_APP_URL", "http://localhost:3000").rstrip("/")
+
+# PayHere: online donations (https://support.payhere.lk/api-&-mobile-sdk/checkout-api).
+#
+# Unvalidated at import, like ORS and Brevo above: without these the donate
+# page says online donations are not set up, and the rest of the API runs as
+# normal.
+#
+# Sandbox by default. Sandbox accounts (sandbox.payhere.lk) are free and need
+# no bank details. Set PAYHERE_SANDBOX=false only with a live merchant account.
+PAYHERE_SANDBOX: bool = os.environ.get("PAYHERE_SANDBOX", "true").strip().lower() != "false"
+PAYHERE_BASE_URL: str = (
+    "https://sandbox.payhere.lk" if PAYHERE_SANDBOX else "https://www.payhere.lk"
+)
+# Merchant ID and Merchant Secret: Integrations page, for the domain this runs
+# on ("localhost" while developing). The secret signs every checkout and checks
+# every payment notification, so it never leaves the backend.
+PAYHERE_MERCHANT_ID: str | None = os.environ.get("PAYHERE_MERCHANT_ID") or None
+PAYHERE_MERCHANT_SECRET: str | None = os.environ.get("PAYHERE_MERCHANT_SECRET") or None
+# App ID and App Secret: Settings > API Keys. Used to ask PayHere whether an
+# order was paid when the donor comes back to the thank-you page. That is how a
+# payment is confirmed on localhost, where PayHere cannot reach notify_url.
+PAYHERE_APP_ID: str | None = os.environ.get("PAYHERE_APP_ID") or None
+PAYHERE_APP_SECRET: str | None = os.environ.get("PAYHERE_APP_SECRET") or None
+
+# Where PayHere can reach this backend, for its server-to-server payment
+# notification. On localhost PayHere cannot call it, so payments are confirmed
+# through the thank-you page instead. Set it to a public URL (a deployment or an
+# ngrok tunnel to port 8000) to get the notification as well.
+PUBLIC_API_URL: str = os.environ.get("PUBLIC_API_URL", "http://localhost:8000").rstrip("/")
