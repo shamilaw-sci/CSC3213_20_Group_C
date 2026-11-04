@@ -157,6 +157,7 @@ def _request(method, path, json=None):
 PROTECTED_ROUTES = [
     ("GET", "/api/hr/employees"),
     ("GET", "/api/finance/summary"),
+    ("GET", "/api/finance/transactions/1/stock-movement"),
     ("GET", "/api/admin/audit-logs"),
     ("GET", "/api/rescue_cases/cases"),
     ("PATCH", f"/api/rescue_cases/cases/{CASE_ID}/status"),
@@ -227,6 +228,7 @@ PERMISSION_ROUTES = [
     ("GET", "/api/finance/summary", "finance:read"),
     ("GET", "/api/finance/transactions", "finance:read"),
     ("GET", "/api/finance/ledger", "finance:read"),
+    ("GET", "/api/finance/transactions/1/stock-movement", "finance:read"),
     ("POST", "/api/finance/transactions", "finance:write"),
     ("GET", "/api/finance/programs", "programs:read"),
     ("POST", "/api/finance/programs", "programs:manage"),

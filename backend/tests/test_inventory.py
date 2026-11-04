@@ -560,3 +560,66 @@ def test_database_function_refusal_is_passed_on(act, db, code, status):
     r = client.post("/api/inventory/transactions", json=_tx())
     assert r.status_code == status
     assert r.json()["detail"] == "Insufficient stock: only 2 available"
+
+
+# --------------------------------------------------------------------------
+# Price paid at Stock In (migration 017)
+# --------------------------------------------------------------------------
+
+def _stock_in(**overrides):
+    return _tx(transaction_type="Restock", program_id=None, quantity=4, **overrides)
+
+
+def test_stock_in_at_a_new_price_costs_the_movement_and_updates_the_item(act, db):
+    act()
+    r = client.post("/api/inventory/transactions", json=_stock_in(unit_cost=1750))
+    assert r.status_code == 200, r.text
+    # 4 x 1750, not 4 x the stored 1500: this total is what finance posts.
+    assert db.movements()[0]["total_cost"] == 7000
+    assert db.tables["inventory_items"][0]["unit_cost"] == 1750
+    audit = db.tables["system_audit_logs"][-1]
+    assert audit["old_payload"]["unit_cost"] == 1500
+    assert audit["new_payload"]["unit_cost"] == 1750
+
+
+def test_stock_in_at_a_new_price_is_sent_to_the_database_function(act, db):
+    db.rpc_result = {
+        "transaction_id": 56, "item_id": 1, "program_id": None, "quantity": 4, "transaction_type": "Restock",
+        "transaction_date": TODAY, "notes": None, "total_cost": 7000, "stock_before": 10, "stock_after": 14,
+    }
+    act()
+    r = client.post("/api/inventory/transactions", json=_stock_in(unit_cost=1750))
+    assert r.status_code == 200, r.text
+    assert db.rpc_calls[-1][1]["p_unit_cost"] == 1750
+
+
+@pytest.mark.parametrize("price", [None, 1500, 1500.001])
+def test_stock_in_at_the_stored_price_sends_no_price(act, db, price):
+    # Unchanged price: the call is exactly 012's, so a database without 017
+    # still takes the locked path.
+    act()
+    body = _stock_in() if price is None else _stock_in(unit_cost=price)
+    r = client.post("/api/inventory/transactions", json=body)
+    assert r.status_code == 200, r.text
+    assert "p_unit_cost" not in db.rpc_calls[-1][1]
+    assert db.movements()[0]["total_cost"] == 6000
+    assert db.tables["inventory_items"][0]["unit_cost"] == 1500
+    assert "unit_cost" not in db.tables["system_audit_logs"][-1]["old_payload"]
+
+
+@pytest.mark.parametrize("tx_type, program_id", [("Issue", 7), ("Return", 7)])
+def test_only_stock_in_takes_a_price(act, db, tx_type, program_id):
+    act()
+    r = client.post("/api/inventory/transactions",
+                    json=_tx(transaction_type=tx_type, program_id=program_id, unit_cost=10))
+    assert r.status_code == 400
+    assert "only entered for Stock In" in r.json()["detail"]
+    assert db.stock(1) == 10 and db.movements() == []
+
+
+@pytest.mark.parametrize("price", [0, -1, 100_000_001])
+def test_stock_in_price_is_validated(act, db, price):
+    act()
+    r = client.post("/api/inventory/transactions", json=_stock_in(unit_cost=price))
+    assert r.status_code == 422
+    assert db.stock(1) == 10

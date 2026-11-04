@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query
 from typing import List, Optional
 from datetime import date
 from calendar import monthrange
+from postgrest.exceptions import APIError
 from supabase import Client
 
 # Internal App Imports
@@ -10,7 +11,7 @@ from app.core.security import require_permission
 from app.core.permissions import has_permission
 from app.core.audit import log_audit_action
 from app.services.finance_reports import fetch_ledger, finance_snapshot
-from app.services.ledger import build_ledger_page
+from app.services.ledger import DEFAULT_SOURCE, SOURCE_LABELS, build_ledger_page
 from app.services.program_lifecycle import (
     LOCATION_MIGRATION_MESSAGE, UPCOMING, is_missing_location_column,
 )
@@ -26,6 +27,8 @@ from app.schemas.finance import (
     Program,
     ProgramCreate,
     RestrictedBalance,
+    StockMovementRef,
+    VoidTransactionRequest,
 )
 
 router = APIRouter()
@@ -252,6 +255,22 @@ def _get_transaction_or_404(supabase: Client, transaction_id: int) -> dict:
     return existing.data[0]
 
 
+def _source_of(row: dict) -> str:
+    """Where a row came from (migration 013). A row read before 013 has no
+    source_type; the column's default is 'manual', so it is manual."""
+    return row.get("source_type") or DEFAULT_SOURCE
+
+
+def _is_missing_stock_link(error: APIError) -> bool:
+    """True when PostgREST refused the select because migration 016 is not
+    applied: no inventory_transaction_id column (42703) or no relationship
+    to inventory_transactions to embed (PGRST200)."""
+    text = f"{getattr(error, 'code', '')} {getattr(error, 'message', '')}".lower()
+    return "inventory_transaction" in text and any(
+        marker in text for marker in ("42703", "pgrst200", "column", "relationship")
+    )
+
+
 @router.post("/transactions", response_model=FinancialTransaction)
 async def create_transaction(
     transaction: FinancialTransactionCreate,
@@ -338,6 +357,19 @@ async def update_transaction(
             detail="Voided transactions cannot be edited. Record a new transaction instead.",
         )
 
+    # Stock In, payroll and donations post their own rows. An edit here would
+    # let one drift from the movement, payroll run or donation behind it, so
+    # they are corrected by voiding and recording a new transaction.
+    source = _source_of(existing)
+    if source != DEFAULT_SOURCE:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"{SOURCE_LABELS.get(source, source)} transactions are posted automatically and "
+                "cannot be edited. Void this one and record a new transaction instead."
+            ),
+        )
+
     await _enforce_restricted_drawdown(
         supabase,
         user,
@@ -374,6 +406,7 @@ async def update_transaction(
 @router.patch("/transactions/{transaction_id}/void", response_model=FinancialTransaction)
 async def void_transaction(
     transaction_id: int,
+    body: Optional[VoidTransactionRequest] = None,
     user = Depends(require_permission('finance:write')),
     supabase: Client = Depends(get_supabase)
 ):
@@ -382,10 +415,24 @@ async def void_transaction(
     if existing.get("status") == "Voided":
         raise HTTPException(status_code=400, detail="Transaction is already voided")
 
+    # Voiding a Stock In expense takes the money off the books but leaves the
+    # stock in Inventory, which has no reversal yet. The reason is what tells
+    # whoever reconciles the two later what happened.
+    reason = body.reason if body else None
+    if _source_of(existing) == "stock_in" and not reason:
+        raise HTTPException(
+            status_code=400,
+            detail="Give a reason for voiding a Stock In expense.",
+        )
+
     response = supabase.table("financial_transactions") \
         .update({"status": "Voided"}) \
         .eq("id", transaction_id) \
         .execute()
+
+    new_payload = response.data[0]
+    if reason:
+        new_payload = {**new_payload, "void_reason": reason}
 
     await log_audit_action(
         supabase,
@@ -393,10 +440,55 @@ async def void_transaction(
         action_type="FINANCE_TRANSACTION_VOID",
         table_name="financial_transactions",
         old_payload=existing,
-        new_payload=response.data[0],
+        new_payload=new_payload,
     )
 
     return response.data[0]
+
+
+@router.get(
+    "/transactions/{transaction_id}/stock-movement",
+    response_model=Optional[StockMovementRef],
+)
+async def get_transaction_stock_movement(
+    transaction_id: int,
+    user = Depends(require_permission('finance:read')),
+    supabase: Client = Depends(get_supabase)
+):
+    """
+    The Stock In movement a stock_in expense was posted for, so the void
+    dialog can say exactly what to correct in Inventory. null when the row is
+    not a Stock In expense or has no link: migration 016 not applied yet, or
+    an old expense 016 could not pair with its movement.
+    """
+    try:
+        response = supabase.table("financial_transactions") \
+            .select(
+                "id, source_type, inventory_transaction_id, "
+                "inventory_transactions(quantity, transaction_date, total_cost, inventory_items(item_name))"
+            ) \
+            .eq("id", transaction_id) \
+            .execute()
+    except APIError as e:
+        if _is_missing_stock_link(e):
+            return None
+        raise
+
+    if not response.data:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+
+    row = response.data[0]
+    movement = row.get("inventory_transactions")
+    if _source_of(row) != "stock_in" or not movement or row.get("inventory_transaction_id") is None:
+        return None
+
+    return {
+        "inventory_transaction_id": row["inventory_transaction_id"],
+        "item_name": (movement.get("inventory_items") or {}).get("item_name"),
+        "quantity": movement.get("quantity") or 0,
+        "transaction_date": movement.get("transaction_date"),
+        "total_cost": movement.get("total_cost") or 0,
+    }
 
 @router.patch("/transactions/{transaction_id}/settle", response_model=FinancialTransaction)
 async def settle_transaction(

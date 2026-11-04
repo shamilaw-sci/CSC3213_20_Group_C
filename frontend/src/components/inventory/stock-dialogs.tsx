@@ -13,6 +13,7 @@ import {
   useCreateInventoryTransaction,
   useItemOutstanding,
 } from '@/hooks/useInventory';
+import { formatLKR } from '@/lib/formatters';
 import { getApiErrorMessage, MAX_QUANTITY, parseQuantity, todayISO } from '@/lib/inventory';
 import { cn } from '@/lib/utils';
 import type { InventoryItem } from '@/types';
@@ -231,7 +232,8 @@ function AddItemForm({ onClose }: { onClose: () => void }) {
 const MOVEMENT_TEXT: Record<MovementKind, { title: string; description: string; button: string }> = {
   in: {
     title: 'Stock In',
-    description: 'New stock arriving. Unit cost, supplier and expiry belong to the item.',
+    description:
+      'New stock arriving. Its cost is posted to Finance as an expense. Supplier and expiry belong to the item.',
     button: 'Record Stock In',
   },
   out: {
@@ -303,8 +305,19 @@ function MovementForm({
   const [date, setDate] = useState(today);
   const [notes, setNotes] = useState('');
   const [error, setError] = useState('');
+  // Stock In only: the price paid per unit, prefilled with the item's stored
+  // cost. A different price becomes the item's stored cost (last price paid).
+  const [unitPrice, setUnitPrice] = useState(() => {
+    const preset = items.find((i) => i.id === presetItemId);
+    return kind === 'in' && preset ? String(preset.unit_cost) : '';
+  });
 
   const selectedItem = items.find((i) => i.id === Number(itemId));
+  const priceValue = Number(unitPrice);
+  const priceChanged = !!selectedItem && unitPrice.trim() !== '' && priceValue !== selectedItem.unit_cost;
+  const quantityValue = Number(quantity);
+  const stockInTotal =
+    Number.isInteger(quantityValue) && quantityValue > 0 && priceValue > 0 ? quantityValue * priceValue : null;
 
   // Returns: only programs that still hold some of the chosen item.
   const { data: outstanding, isLoading: loadingOutstanding } = useItemOutstanding(
@@ -335,6 +348,11 @@ function MovementForm({
     }
     const qty = parsed.value;
 
+    if (kind === 'in' && (!unitPrice.trim() || !Number.isFinite(priceValue) || priceValue <= 0)) {
+      setError('Unit price must be more than 0.');
+      return;
+    }
+
     if (kind === 'out') {
       if (selectedItem && qty > selectedItem.current_stock) {
         setError(`Insufficient stock: only ${selectedItem.current_stock} available.`);
@@ -364,6 +382,7 @@ function MovementForm({
         transaction_date: date,
         program_id: kind === 'in' || !programId ? null : Number(programId),
         notes: notes.trim() || null,
+        ...(kind === 'in' ? { unit_cost: priceValue } : {}),
       },
       {
         onSuccess: () => {
@@ -390,6 +409,10 @@ function MovementForm({
           onChange={(e) => {
             setItemId(e.target.value);
             setProgramId('');
+            if (kind === 'in') {
+              const item = items.find((i) => i.id === Number(e.target.value));
+              setUnitPrice(item ? String(item.unit_cost) : '');
+            }
           }}
           className={FIELD_CLASS}
         >
@@ -496,6 +519,32 @@ function MovementForm({
           />
         </div>
       </div>
+
+      {kind === 'in' && (
+        <div>
+          <label htmlFor="inv-mv-price" className={LABEL_CLASS}>
+            Unit price paid (LKR)
+          </label>
+          <input
+            id="inv-mv-price"
+            type="number"
+            min={0.01}
+            step="0.01"
+            inputMode="decimal"
+            value={unitPrice}
+            onChange={(e) => setUnitPrice(e.target.value)}
+            disabled={!selectedItem}
+            placeholder={selectedItem ? undefined : 'Choose an item first'}
+            className={cn(FIELD_CLASS, 'font-mono')}
+          />
+          <p className={HELP_CLASS}>
+            {selectedItem && priceChanged
+              ? `Was ${formatLKR(selectedItem.unit_cost)}. This price becomes the item's stored cost.`
+              : "Prefilled with the item's stored cost. Change it if you paid a different price."}
+            {stockInTotal !== null && ` Total ${formatLKR(stockInTotal)}, posted to Finance as an expense.`}
+          </p>
+        </div>
+      )}
 
       <div>
         <label htmlFor="inv-mv-notes" className={LABEL_CLASS}>
