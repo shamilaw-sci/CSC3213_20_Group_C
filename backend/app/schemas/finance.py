@@ -100,8 +100,37 @@ class FinancialTransaction(FinancialTransactionBase):
     # manual. Response only: it is set by the database (default 'manual') and
     # by the Stock In / payroll triggers, never by the client.
     source_type: Optional[str] = None
-    
+    # The Stock In movement a stock_in row was posted for (migration 016).
+    # NULL on every other row, and set only by the database.
+    inventory_transaction_id: Optional[int] = None
+
     model_config = ConfigDict(
-        from_attributes=True, 
+        from_attributes=True,
         json_encoders={Decimal: float}
     )
+
+
+class VoidTransactionRequest(BaseModel):
+    """
+    Optional body of PATCH /transactions/{id}/void. The reason is written to
+    the audit entry. It is required for a Stock In expense: voiding one
+    leaves the stock it paid for in Inventory, so the record has to say why.
+    """
+    reason: Optional[str] = Field(default=None, max_length=500)
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def _blank_reason_is_none(cls, value):
+        if isinstance(value, str):
+            return value.strip() or None
+        return value
+
+
+class StockMovementRef(BaseModel):
+    """The Stock In behind a stock_in expense, for the void warning: what to
+    correct in Inventory if the expense is voided."""
+    inventory_transaction_id: int
+    item_name: Optional[str] = None
+    quantity: int
+    transaction_date: Optional[date] = None
+    total_cost: float

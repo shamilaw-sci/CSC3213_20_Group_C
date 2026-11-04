@@ -1,5 +1,5 @@
 import api from '@/lib/api-client';
-import { Transaction, Program, RestrictedBalance, LedgerFilters, LedgerPage } from '@/types';
+import { Transaction, Program, RestrictedBalance, LedgerFilters, LedgerPage, StockMovementRef } from '@/types';
 
 export const FinanceService = {
   getTransactions: async (params?: { start_date?: string, end_date?: string }) => {
@@ -58,8 +58,20 @@ export const FinanceService = {
   return response.data;
 },
 
-voidTransaction: async (id: number) => {
-  const response = await api.patch<Transaction>(`/finance/transactions/${id}/void`);
+// The reason is written to the audit entry. The API requires one for a
+// Stock In expense.
+voidTransaction: async (id: number, reason?: string) => {
+  const response = await api.patch<Transaction>(
+    `/finance/transactions/${id}/void`,
+    reason ? { reason } : undefined,
+  );
+  return response.data;
+},
+
+// The Stock In behind a stock_in expense; null when there is none or it is
+// not linked yet.
+getStockMovement: async (id: number) => {
+  const response = await api.get<StockMovementRef | null>(`/finance/transactions/${id}/stock-movement`);
   return response.data;
 },
 

@@ -2,7 +2,7 @@
 
 import { useState, useMemo } from 'react';
 import Link from 'next/link';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { FinanceService } from '@/services/finance.service';
 import { Transaction } from '@/types';
 import { 
@@ -28,15 +28,8 @@ import {
 import { Button } from '@/components/ui/button';
 import { format } from 'date-fns';
 import { EditTransactionModal } from '@/components/finance/EditTransactionModal';
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
+import { VoidTransactionDialog } from '@/components/finance/VoidTransactionDialog';
+import { AUTO_POSTED_HINT, isAutoPosted } from '@/lib/finance-source';
 import { 
   AreaChart, 
   Area, 
@@ -66,7 +59,6 @@ const formatLKR = (amount: number) => {
 const RECENT_LIMIT = 10;
 
 export default function FinancePage() {
-  const queryClient = useQueryClient();
   const { user } = useAuthStore();
   // Same permission as the Ledger's nav entry and page guard.
   const canOpenLedger = hasPermission(user?.role as string, 'finance:read');
@@ -90,15 +82,6 @@ export default function FinancePage() {
     queryFn: FinanceService.getAging
   });
 
-  const { mutate: voidTransaction, isPending: isVoiding } = useMutation({
-    mutationFn: (id: number) => FinanceService.voidTransaction(id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['transactions'] });
-      queryClient.invalidateQueries({ queryKey: ['financeSummary'] });
-      queryClient.invalidateQueries({ queryKey: ['financeAging'] });
-      setVoidingTransaction(null);
-    },
-  });
 
   // Bucket real transactions into a time series for the trend chart —
   // this used to be Math.random(), which meant the chart lied on every render.
@@ -626,14 +609,25 @@ export default function FinancePage() {
                         <TableCell>
                           {tx.status !== 'Voided' && (
                             <div className="flex items-center gap-2">
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => setEditingTransaction(tx)}
-                                className="h-7 w-7 p-0 text-text-secondary hover:text-text-primary hover:bg-bg-subtle"
-                              >
-                                <Pencil className="h-3.5 w-3.5" />
-                              </Button>
+                              {isAutoPosted(tx) ? (
+                                // A span, not a disabled button: disabled buttons show no tooltip.
+                                <span
+                                  title={AUTO_POSTED_HINT}
+                                  aria-label={`Transaction ${tx.id} cannot be edited. ${AUTO_POSTED_HINT}`}
+                                  className="inline-flex h-7 w-7 items-center justify-center text-text-muted"
+                                >
+                                  <Pencil className="h-3.5 w-3.5 opacity-30" />
+                                </span>
+                              ) : (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => setEditingTransaction(tx)}
+                                  className="h-7 w-7 p-0 text-text-secondary hover:text-text-primary hover:bg-bg-subtle"
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
+                                </Button>
+                              )}
                               <Button
                                 variant="ghost"
                                 size="sm"
@@ -662,33 +656,10 @@ export default function FinancePage() {
         onClose={() => setEditingTransaction(null)}
       />
 
-      {/* Void Dialog */}
-      <Dialog open={!!voidingTransaction} onOpenChange={(o) => !o && setVoidingTransaction(null)}>
-        <DialogContent className="bg-surface border border-border-brand text-text-primary rounded-xl">
-          <DialogHeader>
-            <DialogTitle className="font-heading font-semibold text-lg">Void this transaction?</DialogTitle>
-            <DialogDescription className="text-text-secondary text-xs">
-              This will mark the transaction as voided. It will remain visible in the ledger for audit purposes but will no longer affect your financial totals.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="mt-4 gap-2">
-            <DialogClose
-              render={
-                  <Button className="border border-border-brand text-text-secondary hover:bg-bg-subtle rounded-lg text-xs py-1.5 px-3" />
-                   }
-                    >
-                  Cancel
-            </DialogClose>
-            <Button
-              onClick={() => voidingTransaction && voidTransaction(voidingTransaction.id)}
-              disabled={isVoiding}
-              className="bg-[#DC2626] hover:bg-[#B91C1C] text-white font-semibold rounded-lg text-xs py-1.5 px-3"
-            >
-              {isVoiding ? 'Voiding...' : 'Void transaction'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <VoidTransactionDialog
+        transaction={voidingTransaction}
+        onClose={() => setVoidingTransaction(null)}
+      />
     </div>
   );
 }

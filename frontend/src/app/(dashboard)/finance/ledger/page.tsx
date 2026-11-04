@@ -2,7 +2,6 @@
 
 import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowDownUp, Ban, CheckCircle2, ChevronLeft, ChevronRight, FileSpreadsheet,
   Loader2, Lock, Pencil, PlusCircle, Search, X,
@@ -15,25 +14,18 @@ import { LedgerFilters, LedgerRow } from '@/types';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
-} from '@/components/ui/dialog';
 import ProtectedRoute from '@/components/layout/protected-route';
 import { NewTransactionModal } from '@/components/finance/NewTransactionModal';
 import { EditTransactionModal } from '@/components/finance/EditTransactionModal';
+import { VoidTransactionDialog } from '@/components/finance/VoidTransactionDialog';
 import { formatLKR } from '@/lib/formatters';
 import { hasPermission } from '@/lib/permissions';
 import { buildCsv, downloadCsv } from '@/lib/csv';
+import { AUTO_POSTED_HINT, describeTransaction, isAutoPosted } from '@/lib/finance-source';
 import { toISODate } from '@/lib/finance-periods';
 import { cn } from '@/lib/utils';
 
 const PAGE_SIZES = [25, 50, 100];
-
-// The Description column: "Source-Program" (e.g. "Donation-Distemper outbreak"),
-// or "Source-General" when the row has no program (e.g. "Stock in-General").
-// The API builds it; the fallback covers a backend that does not send it yet.
-const describeRow = (r: LedgerRow) =>
-  r.description ?? `Manual-${r.program_id === null ? 'General' : r.program_name}`;
 
 const control =
   'h-9 rounded-md border border-border-brand bg-surface px-2 text-xs text-text-primary outline-none focus:border-accent';
@@ -87,7 +79,6 @@ export default function LedgerPage() {
 function Ledger() {
   const { user } = useAuthStore();
   const canWrite = hasPermission(user?.role as string, 'finance:write');
-  const queryClient = useQueryClient();
 
   // Links can open the Ledger pre-filtered, e.g. the Finance Officer
   // dashboard's ?status=Receivable&type=Income&sort=oldest, which replaced
@@ -124,16 +115,6 @@ function Ledger() {
   const [exporting, setExporting] = useState(false);
 
   const { mutate: settle, isPending: isSettling, variables: settlingId } = useSettleTransaction();
-  const { mutate: voidTransaction, isPending: isVoiding } = useMutation({
-    mutationFn: (id: number) => FinanceService.voidTransaction(id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['transactions'] });
-      queryClient.invalidateQueries({ queryKey: ['financeSummary'] });
-      queryClient.invalidateQueries({ queryKey: ['restrictedBalance'] });
-      setVoiding(null);
-    },
-    onError: () => toast.error('Failed to void the transaction'),
-  });
 
   const activeFilters =
     !!filters.start_date || !!filters.end_date || !!filters.transaction_type || !!filters.status ||
@@ -156,7 +137,7 @@ function Ledger() {
           ['ID', 'Date', 'Type', 'Restricted', 'Description', 'Status', 'Amount', 'Balance'],
           all.rows.map((r) => [
             r.id, r.transaction_date, r.transaction_type, r.is_restricted ? 'Yes' : 'No',
-            describeRow(r), r.status, r.amount, r.balance,
+            describeTransaction(r), r.status, r.amount, r.balance,
           ]),
         ),
       );
@@ -360,7 +341,7 @@ function Ledger() {
                             {r.is_restricted && <Lock className="h-3 w-3 text-accent" aria-label="Restricted" />}
                           </span>
                         </td>
-                        <td className="px-4 py-3 text-text-primary">{describeRow(r)}</td>
+                        <td className="px-4 py-3 text-text-primary">{describeTransaction(r)}</td>
                         <td className="px-4 py-3"><StatusBadge row={r} /></td>
                         <td
                           className={cn(
@@ -397,15 +378,26 @@ function Ledger() {
                                     {income ? 'Received' : 'Paid'}
                                   </Button>
                                 )}
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => setEditing(r)}
-                                  aria-label={`Edit transaction ${r.id}`}
-                                  className="h-7 w-7 p-0 text-text-secondary hover:text-text-primary"
-                                >
-                                  <Pencil className="h-3.5 w-3.5" />
-                                </Button>
+                                {isAutoPosted(r) ? (
+                                  // A span, not a disabled button: disabled buttons show no tooltip.
+                                  <span
+                                    title={AUTO_POSTED_HINT}
+                                    aria-label={`Transaction ${r.id} cannot be edited. ${AUTO_POSTED_HINT}`}
+                                    className="inline-flex h-7 w-7 items-center justify-center text-text-muted"
+                                  >
+                                    <Pencil className="h-3.5 w-3.5 opacity-30" />
+                                  </span>
+                                ) : (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => setEditing(r)}
+                                    aria-label={`Edit transaction ${r.id}`}
+                                    className="h-7 w-7 p-0 text-text-secondary hover:text-text-primary"
+                                  >
+                                    <Pencil className="h-3.5 w-3.5" />
+                                  </Button>
+                                )}
                                 <Button
                                   variant="ghost"
                                   size="sm"
@@ -477,31 +469,7 @@ function Ledger() {
       <NewTransactionModal open={showNew} onClose={() => setShowNew(false)} />
       <EditTransactionModal transaction={editing} onClose={() => setEditing(null)} />
 
-      <Dialog open={!!voiding} onOpenChange={(o) => !o && setVoiding(null)}>
-        <DialogContent className="bg-surface border-border-brand">
-          <DialogHeader>
-            <DialogTitle>Void transaction #{voiding?.id}?</DialogTitle>
-            <DialogDescription>
-              {voiding && (
-                <>
-                  {voiding.transaction_type} of {formatLKR(voiding.amount)} on {voiding.transaction_date} ({describeRow(voiding)}).
-                  Voiding keeps it on the ledger as a reversal. Voided transactions can&apos;t be edited or restored.
-                </>
-              )}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setVoiding(null)} disabled={isVoiding}>Cancel</Button>
-            <Button
-              onClick={() => voiding && voidTransaction(voiding.id)}
-              disabled={isVoiding}
-              className="bg-negative text-white hover:bg-negative/90"
-            >
-              {isVoiding ? 'Voiding…' : 'Void transaction'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <VoidTransactionDialog transaction={voiding} onClose={() => setVoiding(null)} />
     </div>
   );
 }
