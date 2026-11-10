@@ -14,6 +14,7 @@ class ProgramDetail(BaseModel):
     status: str = "Active"
     start_date: Optional[date] = None
     end_date: Optional[date] = None
+    # Hidden (None) from users who may not see program costs (P3).
     total_cost: Optional[float] = 0
     # NULL on programs created before locations were recorded (migration 011).
     location: Optional[str] = None
@@ -23,39 +24,78 @@ class ProgramDetail(BaseModel):
 
 # --- POST /{id}/complete: the final count, recorded as the program closes.
 # A whole number, zero allowed (a program can end having treated none);
-# strict so 12.5 or "12" is refused rather than silently coerced. ---
+# strict so 12.5 or "12" is refused rather than silently coerced.
+# end_date: the day it ended, today if left out (P6). Not in the future and
+# not before the start date (checked in the endpoint).
+# confirm_open_items: complete even though the program still holds stock or
+# has shifts after the end date (P4). ---
 class ProgramCompleteRequest(BaseModel):
     total_animals_treated: int = Field(..., ge=0, strict=True)
+    end_date: Optional[date] = None
+    confirm_open_items: bool = False
 
 
-# --- PATCH /{id}: the fields staff may edit after a program exists. Only
-# location for now; status moves through /start and /complete instead. ---
+# --- GET /{id}/open-items: what is still out when a program is completed. ---
+class ProgramHeldStock(BaseModel):
+    item_id: int
+    item_name: Optional[str] = None
+    outstanding: int
+
+
+class ProgramUpcomingShift(BaseModel):
+    shift_id: str
+    title: str
+    shift_date: date
+
+
+class ProgramOpenItems(BaseModel):
+    stock_held: List[ProgramHeldStock] = []
+    shifts_after: List[ProgramUpcomingShift] = []
+
+
+# --- GET /assignable-employees: just enough to pick a worker (P1). ---
+class AssignableEmployee(BaseModel):
+    id: int
+    first_name: str
+    last_name: str
+
+
+# --- PATCH /{id}: the fields staff may edit after a program exists. Status
+# moves through /start, /complete and /cancel instead. Name and planned start
+# date can be corrected while the program is Upcoming (P5). ---
 class ProgramUpdate(BaseModel):
+    program_name: Optional[str] = Field(None, min_length=1, max_length=255)
+    start_date: Optional[date] = None
     location: Optional[str] = Field(None, min_length=1, max_length=200)
     # Correcting the final count of a COMPLETED program (the API refuses it at
     # other stages, where it is not recorded yet).
     total_animals_treated: Optional[int] = Field(None, ge=0, strict=True)
 
-    @field_validator("location", mode="before")
+    @field_validator("location", "program_name", mode="before")
     @classmethod
     def _trim_location(cls, v):
-        return v.strip() if isinstance(v, str) else v
+        return " ".join(v.split()) if isinstance(v, str) else v
 
     @model_validator(mode="after")
     def _something_to_change(self):
-        if self.location is None and self.total_animals_treated is None:
-            raise ValueError("Nothing to update: send location and/or total_animals_treated.")
+        if all(v is None for v in (self.program_name, self.start_date, self.location,
+                                   self.total_animals_treated)):
+            raise ValueError(
+                "Nothing to update: send program_name, start_date, location or total_animals_treated."
+            )
         return self
 
 
 # --- One card on a lifecycle page (GET /api/programs?status=...): the
 # program plus the figures shown on its face. cost_per_animal is
 # total_cost / animals treated, None when no animals are recorded yet. ---
+# Revenue and profit are None for users without finance:read, and total cost
+# and cost per animal for users who may not see program costs (P3). ---
 class ProgramSummary(ProgramDetail):
     team_count: int = 0
     volunteer_count: int = 0
-    revenue: float = 0
-    profit: float = 0
+    revenue: Optional[float] = 0
+    profit: Optional[float] = 0
     cost_per_animal: Optional[float] = None
 
 

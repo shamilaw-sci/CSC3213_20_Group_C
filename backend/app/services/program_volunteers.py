@@ -1,11 +1,11 @@
 """
 Which volunteers have accepted work on a programme.
 
-volunteer_shifts has no program_id column. A shift belongs to a programme when
-its title is the programme's name, which is what the New shift form stores
-(it picks the title from a dropdown of active programmes). That link lives in
-shift_belongs_to_program alone, so replacing it with a real program_id later
-is a one-function change.
+A shift belongs to a programme through volunteer_shifts.program_id (migration
+022), which the New shift form sets. Shifts made before that, which the
+migration could not link (no programme or more than one with that name), keep
+the old rule: the shift's title is the programme's name. That link lives in
+shift_belongs_to_program alone.
 
 Everything here is plain Python over rows already fetched, so the rules are
 testable without a database and do not depend on which filters the query
@@ -22,7 +22,10 @@ def _normalise(name) -> str:
 
 
 def shift_belongs_to_program(shift: dict, program: dict) -> bool:
-    """Exact name match, ignoring case and surrounding/repeated whitespace."""
+    """By program_id when the shift has one. Otherwise an exact name match,
+    ignoring case and surrounding/repeated whitespace."""
+    if shift.get("program_id") is not None:
+        return shift.get("program_id") == program.get("id")
     program_name = _normalise(program.get("program_name"))
     return bool(program_name) and _normalise(shift.get("title")) == program_name
 
@@ -88,3 +91,25 @@ def build_program_volunteers(
         entry["shifts"].sort(key=lambda s: (str(s["shift_date"]), str(s["start_time"])))
     out.sort(key=lambda e: e["full_name"].casefold())
     return out
+
+
+def fetch_program_shifts(supabase, program_ids: list) -> list[dict]:
+    """The non-cancelled shifts that can belong to these programmes: the ones
+    linked to them by id, plus older unlinked shifts (matched by name later).
+    Before migration 022 there is no program_id column, so every shift is
+    fetched and the name rule decides."""
+    def base():
+        return supabase.table("volunteer_shifts").select("*").eq("is_cancelled", False)
+
+    try:
+        linked = []
+        if program_ids:
+            linked = base().in_("program_id", list(program_ids)).execute().data or []
+        unlinked = base().is_("program_id", "null").execute().data or []
+    except Exception as e:
+        from app.services.program_lifecycle import is_missing_shift_program_column
+        if not is_missing_shift_program_column(e):
+            raise
+        return base().execute().data or []
+    by_id = {s["id"]: s for s in linked + unlinked}
+    return list(by_id.values())

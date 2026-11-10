@@ -33,6 +33,11 @@ from app.schemas.volunteer import (
     VolunteerOut, VolunteerReview, VolunteerStatus,
 )
 from app.services import email as email_service
+from app.schemas.inventory import today_in_sri_lanka
+from app.services.program_lifecycle import (
+    ACTIVE, PROGRAM_FIXES_MIGRATION_MESSAGE, UPCOMING, is_missing_shift_program_column,
+    normalize_status,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -463,7 +468,8 @@ async def list_shifts(
     """
     query = supabase.table("volunteer_shifts").select("*")
     if not include_past:
-        query = query.gte("shift_date", datetime.now(timezone.utc).date().isoformat())
+        # Sri Lanka's date, not UTC's (X3).
+        query = query.gte("shift_date", today_in_sri_lanka().isoformat())
     shifts = query.order("shift_date", desc=False).execute().data or []
 
     if not shifts:
@@ -503,10 +509,30 @@ async def create_shift(
     supabase: Client = Depends(get_supabase),
     current_user: dict = Depends(require_permission("volunteers:assign")),
 ):
-    result = supabase.table("volunteer_shifts").insert({
-        **payload.model_dump(mode="json"),
-        "created_by": str(current_user["id"]),
-    }).execute()
+    data = payload.model_dump(mode="json")
+    if data.get("program_id") is None:
+        data.pop("program_id", None)
+    else:
+        # A shift is only planned for a programme that has not ended (P2).
+        program = (
+            supabase.table("programs").select("id, status")
+            .eq("id", data["program_id"]).execute()
+        ).data
+        if not program:
+            raise HTTPException(status_code=404, detail="Program not found")
+        if normalize_status(program[0].get("status")) not in (UPCOMING, ACTIVE):
+            raise HTTPException(
+                status_code=409, detail="Shifts can only be added to an Upcoming or Active program."
+            )
+    try:
+        result = supabase.table("volunteer_shifts").insert({
+            **data,
+            "created_by": str(current_user["id"]),
+        }).execute()
+    except Exception as e:
+        if is_missing_shift_program_column(e):
+            raise HTTPException(status_code=503, detail=PROGRAM_FIXES_MIGRATION_MESSAGE)
+        raise
     if not result.data:
         raise HTTPException(status_code=500, detail="Could not create shift")
 

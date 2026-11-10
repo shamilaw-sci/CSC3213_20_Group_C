@@ -369,3 +369,217 @@ def test_patch_rejects_an_empty_or_invalid_update(body):
     with acting_as("Admin", tables=_tables(_program(COMPLETED))):
         response = _request("PATCH", "/api/programs/7", json=body)
     assert response.status_code == 422, response.text
+
+
+# --------------------------------------------------------------------------
+# Audit fixes (P1, P3 to P7, X3)
+# --------------------------------------------------------------------------
+
+from app.services.program_lifecycle import CANCELLED  # noqa: E402
+
+
+def test_cancelled_reads_as_cancelled_and_only_upcoming_can_be_cancelled():
+    assert normalize_status("cancelled") == CANCELLED
+    assert transition_error(UPCOMING, CANCELLED) is None
+    for status in (ACTIVE, COMPLETED, CANCELLED):
+        assert transition_error(status, CANCELLED)
+    assert transition_error(CANCELLED, ACTIVE)
+
+
+def test_cancel_moves_an_upcoming_program_to_cancelled():
+    captured = {}
+    row = _program(UPCOMING)
+    with acting_as("Operations Lead", tables=_tables(row, {**row, "status": CANCELLED}),
+                   capture_update=captured):
+        response = _request("POST", "/api/programs/7/cancel")
+    assert response.status_code == 200, response.text
+    assert captured["update_data"] == {"status": CANCELLED}
+    assert response.json()["status"] == CANCELLED
+
+
+@pytest.mark.parametrize("status", [ACTIVE, COMPLETED])
+def test_only_an_upcoming_program_can_be_cancelled(status):
+    captured = {}
+    with acting_as("Admin", tables=_tables(_program(status)), capture_update=captured):
+        response = _request("POST", "/api/programs/7/cancel")
+    assert response.status_code == 409
+    assert "update_data" not in captured
+
+
+def test_a_cancelled_programs_team_cannot_change():
+    tables = {"programs": {"select": [_program(CANCELLED)]}, "employee_profile": {"select": [{"id": 3}]}}
+    with acting_as("Admin", tables=tables):
+        response = _request("POST", "/api/programs/7/team", json={"employee_id": 3})
+    assert response.status_code == 409
+
+
+def test_complete_records_an_earlier_end_date():
+    captured = {}
+    row = _program(ACTIVE, start_date="2026-01-01")
+    with acting_as("Admin", tables=_tables(row, {**row, "status": COMPLETED}), capture_update=captured):
+        response = _request("POST", "/api/programs/7/complete",
+                            json={**COUNT, "end_date": "2026-02-01"})
+    assert response.status_code == 200, response.text
+    assert captured["update_data"]["end_date"] == "2026-02-01"
+
+
+@pytest.mark.parametrize("end_date, message", [
+    ("2999-01-01", "future"),
+    ("2025-12-31", "before the start date"),
+])
+def test_complete_refuses_an_impossible_end_date(end_date, message):
+    captured = {}
+    row = _program(ACTIVE, start_date="2026-01-01")
+    with acting_as("Admin", tables=_tables(row), capture_update=captured):
+        response = _request("POST", "/api/programs/7/complete", json={**COUNT, "end_date": end_date})
+    assert response.status_code == 400
+    assert message in response.json()["detail"]
+    assert "update_data" not in captured
+
+
+def _open_tables(row, updated=None):
+    return {
+        **_tables(row, updated),
+        "inventory_transactions": {"select": [
+            {"item_id": 1, "quantity": 10, "transaction_type": "Issue",
+             "inventory_items": {"item_name": "Gauze"}},
+            {"item_id": 1, "quantity": 4, "transaction_type": "Return",
+             "inventory_items": {"item_name": "Gauze"}},
+            {"item_id": 2, "quantity": 3, "transaction_type": "Issue",
+             "inventory_items": {"item_name": "Syringes"}},
+            {"item_id": 2, "quantity": 3, "transaction_type": "Return",
+             "inventory_items": {"item_name": "Syringes"}},
+        ]},
+        "volunteer_shifts": {"select": [
+            {"id": "s-1", "title": "Saturday Clinic", "program_id": 7, "shift_date": "2999-01-01",
+             "is_cancelled": False},
+            {"id": "s-2", "title": "Saturday Clinic", "program_id": 7, "shift_date": "2020-01-01",
+             "is_cancelled": False},
+            {"id": "s-3", "title": "Saturday Clinic", "program_id": 8, "shift_date": "2999-01-01",
+             "is_cancelled": False},
+        ]},
+    }
+
+
+def test_open_items_lists_held_stock_and_later_shifts():
+    with acting_as("Operations Lead", tables=_open_tables(_program(ACTIVE))):
+        response = _request("GET", "/api/programs/7/open-items")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["stock_held"] == [{"item_id": 1, "item_name": "Gauze", "outstanding": 6}]
+    assert [s["shift_id"] for s in body["shifts_after"]] == ["s-1"]
+
+
+def test_complete_is_refused_while_stock_or_shifts_are_still_out():
+    captured = {}
+    row = _program(ACTIVE, start_date="2026-01-01")
+    with acting_as("Admin", tables=_open_tables(row), capture_update=captured):
+        response = _request("POST", "/api/programs/7/complete", json=COUNT)
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert "6 x Gauze" in detail and "1 volunteer shift" in detail
+    assert "update_data" not in captured
+
+
+def test_complete_goes_ahead_when_confirmed():
+    row = _program(ACTIVE, start_date="2026-01-01")
+    with acting_as("Admin", tables=_open_tables(row, {**row, "status": COMPLETED})):
+        response = _request("POST", "/api/programs/7/complete",
+                            json={**COUNT, "confirm_open_items": True})
+    assert response.status_code == 200, response.text
+
+
+def test_name_and_start_date_can_be_corrected_while_upcoming():
+    captured = {}
+    row = _program(UPCOMING)
+    with acting_as("Operations Lead", tables=_tables(row, {**row, "program_name": "Kandy Clinic"}),
+                   capture_update=captured):
+        response = _request("PATCH", "/api/programs/7",
+                            json={"program_name": "  Kandy   Clinic ", "start_date": "2026-12-01"})
+    assert response.status_code == 200, response.text
+    assert captured["update_data"] == {"program_name": "Kandy Clinic", "start_date": "2026-12-01"}
+
+
+@pytest.mark.parametrize("status", [ACTIVE, COMPLETED])
+@pytest.mark.parametrize("body", [{"program_name": "New"}, {"start_date": "2026-12-01"}])
+def test_name_and_start_date_are_fixed_once_started(status, body):
+    captured = {}
+    with acting_as("Admin", tables=_tables(_program(status)), capture_update=captured):
+        response = _request("PATCH", "/api/programs/7", json=body)
+    assert response.status_code == 409
+    assert "update_data" not in captured
+
+
+@pytest.mark.parametrize("name", ["", "   "])
+def test_a_program_needs_a_name(name):
+    with acting_as("Admin", tables={"programs": {"insert": [{"id": 9}]}}):
+        response = _request("POST", "/api/finance/programs",
+                            json={"program_name": name, "location": "Kandy"})
+    assert response.status_code == 422
+
+
+def _list_tables():
+    return {
+        "programs": {"select": [{**_program(ACTIVE), "id": 2}]},
+        "program_assignments": {"select": []},
+        "financial_transactions": {"select": [
+            {"program_id": 2, "amount": 8000, "transaction_type": "Income", "status": "Cash"},
+        ]},
+        "volunteer_shifts": {"select": []},
+        "volunteer_assignments": {"select": []},
+    }
+
+
+@pytest.mark.parametrize("role, money, costs", [
+    ("Finance Officer", True, True),
+    ("Operations Lead", False, True),
+    ("General Staff", False, False),
+])
+def test_program_money_is_shown_only_to_roles_that_may_see_it(role, money, costs):
+    with acting_as(role, tables=_list_tables()):
+        response = _request("GET", "/api/programs?status=Active")
+    assert response.status_code == 200, response.text
+    card = response.json()[0]
+    assert (card["revenue"] is not None) == money
+    assert (card["profit"] is not None) == money
+    assert (card["total_cost"] is not None) == costs
+    assert (card["cost_per_animal"] is not None) == costs
+
+
+@pytest.mark.parametrize("role, allowed", [
+    ("Finance Officer", True), ("Operations Lead", False), ("General Staff", False),
+])
+def test_program_financials_need_finance_read(role, allowed):
+    tables = {"programs": {"select": [{"id": 7, "total_cost": 100}]},
+              "financial_transactions": {"select": []}}
+    with acting_as(role, tables=tables):
+        response = _request("GET", "/api/programs/7/financials")
+    assert (response.status_code == 200) == allowed, response.text
+
+
+def test_program_detail_hides_cost_from_general_staff():
+    with acting_as("General Staff", tables={"programs": {"select": [_program(ACTIVE)]}}):
+        response = _request("GET", "/api/programs/7")
+    assert response.status_code == 200, response.text
+    assert response.json()["total_cost"] is None
+
+
+@pytest.mark.parametrize("role, allowed", [
+    ("Operations Lead", True), ("Admin", True), ("Director", False), ("General Staff", False),
+])
+def test_team_picker_lists_active_employees_to_program_managers(role, allowed):
+    tables = {"employee_profile": {"select": [
+        {"id": 2, "first_name": "Zara", "last_name": "Silva", "status": "Active", "basic_salary": 90000},
+        {"id": 1, "first_name": "Amal", "last_name": "Perera", "status": "Active"},
+        {"id": 3, "first_name": "Old", "last_name": "Hand", "status": "Resigned"},
+    ]}}
+    with acting_as(role, tables=tables):
+        response = _request("GET", "/api/programs/assignable-employees")
+    if not allowed:
+        assert response.status_code == 403
+        return
+    assert response.status_code == 200, response.text
+    assert response.json() == [
+        {"id": 1, "first_name": "Amal", "last_name": "Perera"},
+        {"id": 2, "first_name": "Zara", "last_name": "Silva"},
+    ]

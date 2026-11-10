@@ -57,9 +57,10 @@ export function todayISO(): string {
 /**
  * True when stock may be issued to a program with this status. Mirrors
  * normalize_status() in backend/app/services/program_lifecycle.py: the old
- * value 'In Progress' (and an empty status) count as Active.
+ * value 'In Progress' (and an empty status) count as Active. Upcoming,
+ * Completed and Cancelled programs never take stock.
  */
 export function isActiveProgram(status: string | null | undefined): boolean {
   const v = (status ?? '').trim().toLowerCase();
-  return v !== 'upcoming' && v !== 'completed';
+  return v === '' || v === 'active' || v === 'in progress';
 }

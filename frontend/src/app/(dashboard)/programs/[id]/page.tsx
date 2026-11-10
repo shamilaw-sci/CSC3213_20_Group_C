@@ -4,7 +4,6 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams, useRouter } from 'next/navigation';
 import { ProgramService } from '@/services/program.service';
-import { HRService } from '@/services/hr.service';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -15,10 +14,12 @@ import { SKILLS } from '@/services/volunteers.service';
 import { FinanceService } from '@/services/finance.service';
 import { useAuthStore } from '@/store/useAuthStore';
 import { hasPermission } from '@/lib/permissions';
+import { formatLKR } from '@/lib/formatters';
 import { toast } from 'sonner';
 import ProtectedRoute from '@/components/layout/protected-route';
 import {
-  EditAnimalsTreatedButton, EditableProgramLocation, STAGE_BADGE, STAGE_PATH, TransitionButton, asStage, daysBetween, formatDay,
+  CancelProgramButton, EditAnimalsTreatedButton, EditProgramDetailsButton, EditableProgramLocation, STAGE_BADGE, STAGE_PATH,
+  TransitionButton, asStage, daysBetween, formatDay, moneyAccess,
 } from '@/components/programs/program-lifecycle';
 import { cn, getErrorMessage } from '@/lib/utils';
 
@@ -41,20 +42,10 @@ export default function ProgramDetailsPage() {
     queryFn: () => ProgramService.getTeam(programId),
   });
 
-  const { data: financials } = useQuery({
-    queryKey: ['program-financials', programId],
-    queryFn: () => ProgramService.getFinancials(programId),
-  });
-
   const { data: volunteers, isLoading: volunteersLoading } = useQuery({
     queryKey: ['program-volunteers', programId],
     queryFn: () => ProgramService.getVolunteers(programId),
     enabled: !Number.isNaN(programId),
-  });
-
-  const { data: employees } = useQuery({
-    queryKey: ['employees'],
-    queryFn: HRService.getEmployees,
   });
 
   // The restricted-balance endpoint is gated on finance:read, which Staff do
@@ -63,10 +54,27 @@ export default function ProgramDetailsPage() {
   const { user } = useAuthStore();
   const canReadFinance = hasPermission(user?.role as string, 'finance:read');
   const canManage = hasPermission(user?.role as string, 'programs:manage');
+  // Revenue and profit need finance:read; cost needs finance:read or
+  // inventory:read. The API leaves out what the role may not see.
+  const money = moneyAccess(user?.role as string);
   const stage = asStage(program?.status);
-  // A completed program's team is a record, not a roster: the API refuses
-  // changes, so the controls are not offered.
-  const teamEditable = canManage && stage !== 'Completed';
+  // A completed or cancelled program's team is a record, not a roster: the
+  // API refuses changes, so the controls are not offered.
+  const teamEditable = canManage && (stage === 'Upcoming' || stage === 'Active');
+
+  const { data: financials } = useQuery({
+    queryKey: ['program-financials', programId],
+    queryFn: () => ProgramService.getFinancials(programId),
+    enabled: money.finances && !Number.isNaN(programId),
+  });
+
+  // Active employees to pick from. Comes from the programs API so an
+  // Operations Lead (no HR access) can build a team.
+  const { data: employees } = useQuery({
+    queryKey: ['program-assignable-employees'],
+    queryFn: ProgramService.getAssignableEmployees,
+    enabled: teamEditable,
+  });
 
   const { data: restricted } = useQuery({
     queryKey: ['restrictedBalance', programId],
@@ -131,6 +139,7 @@ export default function ProgramDetailsPage() {
                 <div className="flex items-center gap-3 flex-wrap">
                   <h1 className="text-3xl font-bold font-heading tracking-tight text-text-primary">{program.program_name}</h1>
                   <Badge variant="outline" className={cn('text-xs w-fit', STAGE_BADGE[stage])}>{stage}</Badge>
+                  {canManage && stage === 'Upcoming' && <EditProgramDetailsButton program={program} />}
                 </div>
                 <div className="mt-2">
                   <EditableProgramLocation program={program} canEdit={canManage} />
@@ -149,10 +158,14 @@ export default function ProgramDetailsPage() {
                         ` · ${daysBetween(program.start_date, program.end_date) + 1} days`}
                     </>
                   )}
+                  {stage === 'Cancelled' && 'This program was cancelled before it started.'}
                 </p>
               </div>
-              {canManage && stage !== 'Completed' && (
-                <TransitionButton program={program} stage={stage} size="default" />
+              {canManage && (stage === 'Upcoming' || stage === 'Active') && (
+                <div className="flex flex-wrap gap-2">
+                  <CancelProgramButton program={program} stage={stage} size="default" />
+                  <TransitionButton program={program} stage={stage} size="default" />
+                </div>
               )}
             </div>
 
@@ -171,12 +184,12 @@ export default function ProgramDetailsPage() {
                   action={canManage ? <EditAnimalsTreatedButton program={program} /> : undefined}
                 />
               )}
-              <StatBox label="Total Cost" value={`Rs. ${(program.total_cost ?? 0).toLocaleString()}`} />
-              {stage === 'Completed' && (
+              {money.costs && <StatBox label="Total Cost" value={formatLKR(program.total_cost ?? 0)} />}
+              {money.costs && stage === 'Completed' && (
                 <StatBox
                   label="Cost / Animal"
                   value={program.total_animals_treated
-                    ? `Rs. ${((program.total_cost ?? 0) / program.total_animals_treated).toLocaleString(undefined, { maximumFractionDigits: 2 })}`
+                    ? formatLKR((program.total_cost ?? 0) / program.total_animals_treated)
                     : '—'}
                   hint={program.total_animals_treated
                     ? undefined
@@ -184,15 +197,19 @@ export default function ProgramDetailsPage() {
                 />
               )}
               <StatBox label="Workers Assigned" value={team?.length ?? 0} />
-              <StatBox
-                label="Revenue"
-                value={financials ? `Rs. ${financials.revenue.toLocaleString()}` : '—'}
-              />
-              <StatBox
-                label="Profit"
-                value={financials ? `Rs. ${financials.profit.toLocaleString()}` : '—'}
-                valueClassName={financials && financials.profit < 0 ? 'text-red-500' : 'text-positive'}
-              />
+              {money.finances && (
+                <>
+                  <StatBox
+                    label="Revenue"
+                    value={financials ? formatLKR(financials.revenue) : '—'}
+                  />
+                  <StatBox
+                    label="Profit"
+                    value={financials ? formatLKR(financials.profit) : '—'}
+                    valueClassName={financials && financials.profit < 0 ? 'text-red-500' : 'text-positive'}
+                  />
+                </>
+              )}
             </div>
 
             {/* Restricted funds — only rendered when the program actually holds
@@ -209,15 +226,15 @@ export default function ProgramDetailsPage() {
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                     <StatBox
                       label="Raised"
-                      value={`Rs. ${restricted.raised.toLocaleString()}`}
+                      value={formatLKR(restricted.raised)}
                     />
                     <StatBox
                       label="Spent"
-                      value={`Rs. ${restricted.spent.toLocaleString()}`}
+                      value={formatLKR(restricted.spent)}
                     />
                     <StatBox
                       label="Remaining"
-                      value={`Rs. ${restricted.remaining.toLocaleString()}`}
+                      value={formatLKR(restricted.remaining)}
                       valueClassName={restricted.remaining < 0 ? 'text-red-500' : 'text-positive'}
                     />
                   </div>
@@ -310,8 +327,8 @@ export default function ProgramDetailsPage() {
             </Card>
 
             {/* Volunteers — only those who accepted, through their personal
-                link, a shift whose title is this program's name (or a direct
-                assignment to the program). Pending and declined answers and
+                link, a shift for this program (linked by program, or by title
+                for older shifts) or a direct assignment to the program. Pending and declined answers and
                 cancelled shifts are filtered out by the API. */}
             <Card className="bg-surface border border-border-brand rounded-card">
               <CardHeader>

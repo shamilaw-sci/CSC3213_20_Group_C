@@ -548,7 +548,9 @@ export interface ProgramDetail {
   status: string;
   start_date?: string | null;
   end_date?: string | null;
-  total_cost?: number;
+  // Null for roles that may not see program money (no finance:read or
+  // inventory:read).
+  total_cost?: number | null;
   // Null on programs created before locations were recorded.
   location?: string | null;
 }
