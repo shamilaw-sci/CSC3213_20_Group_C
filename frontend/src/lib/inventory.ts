@@ -4,6 +4,10 @@
 // Mirrors MAX_QUANTITY in backend/app/schemas/inventory.py.
 export const MAX_QUANTITY = 100_000;
 
+// Low-stock line for an item with no reorder level of its own. Mirrors
+// DEFAULT_REORDER_LEVEL in backend/app/api/inventory.py.
+export const DEFAULT_REORDER_LEVEL = 10;
+
 /**
  * Parse a quantity typed by the user. Returns the number, or an error message
  * to show. parseInt('2.5') quietly became 2 before; now it is refused.
@@ -48,4 +52,14 @@ export function todayISO(): string {
   const now = new Date();
   const local = new Date(now.getTime() - now.getTimezoneOffset() * 60_000);
   return local.toISOString().slice(0, 10);
+}
+
+/**
+ * True when stock may be issued to a program with this status. Mirrors
+ * normalize_status() in backend/app/services/program_lifecycle.py: the old
+ * value 'In Progress' (and an empty status) count as Active.
+ */
+export function isActiveProgram(status: string | null | undefined): boolean {
+  const v = (status ?? '').trim().toLowerCase();
+  return v !== 'upcoming' && v !== 'completed';
 }

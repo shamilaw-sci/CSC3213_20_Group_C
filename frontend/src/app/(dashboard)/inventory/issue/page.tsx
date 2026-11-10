@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useAuthStore } from '@/store/useAuthStore';
 import { hasPermission } from '@/lib/permissions';
 import { formatLKR } from '@/lib/formatters';
-import { getApiErrorMessage, parseQuantity, todayISO } from '@/lib/inventory';
+import { getApiErrorMessage, isActiveProgram, parseQuantity, todayISO } from '@/lib/inventory';
 import { cn } from '@/lib/utils';
 import ProtectedRoute from '@/components/layout/protected-route';
 import { FIELD_CLASS, LABEL_CLASS } from '@/components/inventory/stock-dialogs';
@@ -41,6 +41,11 @@ function IssueForm() {
   const [success, setSuccess] = useState('');
 
   const sortedItems = [...(items ?? [])].sort((a, b) => a.item_name.localeCompare(b.item_name));
+  // Stock is only issued to a program that is running; the API refuses the
+  // rest, so they are not offered.
+  const activePrograms = (programs ?? [])
+    .filter((p) => isActiveProgram(p.status))
+    .sort((a, b) => a.program_name.localeCompare(b.program_name));
   const selectedItem = sortedItems.find((i) => i.id === Number(itemId));
 
   // Cost preview at the item's current unit cost (the server works out the
@@ -144,11 +149,14 @@ function IssueForm() {
             <div>
               <label htmlFor="issue-program" className={LABEL_CLASS}>Program</label>
               <select id="issue-program" value={programId} onChange={(e) => setProgramId(e.target.value)} className={FIELD_CLASS}>
-                <option value="">Select a program</option>
-                {programs?.map((p) => (
+                <option value="">
+                  {programs && activePrograms.length === 0 ? 'No Active programs' : 'Select a program'}
+                </option>
+                {activePrograms.map((p) => (
                   <option key={p.id} value={p.id}>{p.program_name}</option>
                 ))}
               </select>
+              <p className="mt-1 text-[11px] text-text-muted">Only Active programs are listed.</p>
             </div>
 
             <div className="grid grid-cols-2 gap-3">

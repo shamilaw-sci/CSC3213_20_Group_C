@@ -165,7 +165,10 @@ PROTECTED_ROUTES = [
     ("PUT", f"/api/auth/users/{OTHER_USER_ID}/role"),
     ("DELETE", f"/api/auth/users/{OTHER_USER_ID}"),
     ("POST", "/api/inventory/items"),
+    ("PATCH", "/api/inventory/items/1"),
     ("POST", "/api/inventory/transactions"),
+    ("POST", "/api/inventory/transactions/1/reverse"),
+    ("PATCH", "/api/inventory/batches/1"),
     ("GET", "/api/admin/audit-logs/verify"),
     # The volunteer roster holds names, emails and phone numbers of people who
     # are not employees, so anonymous reachability here would be worse than on
@@ -246,6 +249,11 @@ PERMISSION_ROUTES = [
     ("PUT", f"/api/auth/users/{OTHER_USER_ID}/role", "admin:users"),
     ("DELETE", f"/api/auth/users/{OTHER_USER_ID}", "admin:users"),
     ("POST", "/api/inventory/items", "inventory:manage"),
+    ("PATCH", "/api/inventory/items/1", "inventory:manage"),
+    ("POST", "/api/inventory/transactions/1/reverse", "inventory:manage"),
+    ("PATCH", "/api/inventory/batches/1", "inventory:manage"),
+    ("GET", "/api/inventory/items/1/batches", "inventory:read"),
+    ("GET", "/api/inventory/batches", "inventory:read"),
     ("GET", "/api/inventory/transactions", "inventory:read"),
     # POST /api/inventory/transactions takes inventory:manage OR
     # inventory:issue, which a single-permission row cannot express; it is

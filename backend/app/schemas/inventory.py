@@ -30,6 +30,9 @@ class InventoryItemBase(BaseModel):
     # but were missing from this schema, so the API was silently ignoring them.
     expire_date: Optional[date] = None
     supplier_name: Optional[str] = None
+    # Below this many units the item counts as low stock (migration 019).
+    # None = the page's default threshold.
+    reorder_level: Optional[int] = None
 
 
 # What the client sends to create an item. The rules live here and not on the
@@ -40,12 +43,43 @@ class InventoryItemCreate(InventoryItemBase):
     current_stock: int = Field(default=0, ge=0, le=MAX_QUANTITY)
     unit_cost: float = Field(gt=0, le=100_000_000)
     supplier_name: Optional[str] = Field(default=None, max_length=255)
+    reorder_level: Optional[int] = Field(default=None, ge=0, le=MAX_QUANTITY)
 
     @field_validator("item_name", mode="before")
     @classmethod
     def _strip_name(cls, value):
         # "  " must count as empty (min_length then refuses it), and stray
         # spaces must not create a second item that only differs by whitespace.
+        return value.strip() if isinstance(value, str) else value
+
+    @field_validator("supplier_name", mode="before")
+    @classmethod
+    def _blank_supplier_is_none(cls, value):
+        if isinstance(value, str):
+            return value.strip() or None
+        return value
+
+
+# Editing an item (I6). Only the fields that are sent change; sending null
+# clears supplier or reorder level. The expiry date is not here: since
+# migration 020 it is worked out from the batches (edit a batch instead).
+# current_stock is never editable
+# (it only moves through Stock In, Stock Out and Return), and neither is
+# unit_cost (it is the last price paid, set by Stock In; since migration 021
+# each batch has its own price, edited on the batch), so a typo fix can never
+# change stock or what programs are charged.
+class InventoryItemUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    item_name: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    supplier_name: Optional[str] = Field(default=None, max_length=255)
+    reorder_level: Optional[int] = Field(default=None, ge=0, le=MAX_QUANTITY)
+
+    @field_validator("item_name", mode="before")
+    @classmethod
+    def _strip_name(cls, value):
+        if value is None:
+            raise ValueError("Item name cannot be empty")
         return value.strip() if isinstance(value, str) else value
 
     @field_validator("supplier_name", mode="before")
@@ -89,6 +123,19 @@ class InventoryTransactionCreate(InventoryTransactionBase):
     # unit_cost. Omitted, the stored unit_cost is used as before. This is what
     # was paid, not a cost the client invents: Issue and Return refuse it.
     unit_cost: Optional[float] = Field(default=None, gt=0, le=100_000_000)
+    # Stock In only: the expiry date of this batch (migration 019). The item
+    # then shows the soonest expiry among the stock on hand.
+    expire_date: Optional[date] = None
+    # Stock In only: the batch number printed on the delivery (migration
+    # 020). Left empty, the database numbers the batch itself.
+    batch_number: Optional[str] = Field(default=None, max_length=100)
+
+    @field_validator("batch_number", mode="before")
+    @classmethod
+    def _blank_batch_is_none(cls, value):
+        if isinstance(value, str):
+            return value.strip() or None
+        return value
 
     @field_validator("notes", mode="before")
     @classmethod
@@ -140,6 +187,15 @@ class TransactionProgramRef(BaseModel):
 class InventoryTransaction(InventoryTransactionBase):
     id: int
     total_cost: float = 0
+    # Stock In only: the batch's expiry date (migration 019).
+    expire_date: Optional[date] = None
+    # On a reversal: the movement it undoes.
+    reverses_id: Optional[int] = None
+    # On a movement that has been reversed: the reversal's id. Filled in by
+    # GET /transactions so the page knows not to offer Reverse again.
+    reversed_by: Optional[int] = None
+    # Stock In only: the batch it created (returned by POST /transactions).
+    batch_number: Optional[str] = None
     inventory_items: Optional[TransactionItemRef] = None
     programs: Optional[TransactionProgramRef] = None
     model_config = ConfigDict(from_attributes=True)
@@ -154,6 +210,9 @@ class LowStockItem(BaseModel):
     item_name: str
     current_stock: int
     supplier_name: Optional[str] = None
+    # The line this item was compared against: its own reorder level, or the
+    # default threshold when it has none.
+    reorder_level: int
 
 
 class ExpiringItem(BaseModel):
@@ -182,3 +241,53 @@ class CostPerAnimalResult(BaseModel):
     total_cost: float
     animals_treated: int
     cost_per_animal: float
+
+
+# Undo a mistaken movement (I4).
+class MovementReverseRequest(BaseModel):
+    reason: str = Field(min_length=3, max_length=300)
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def _strip_reason(cls, value):
+        return value.strip() if isinstance(value, str) else value
+
+
+# One batch of an item (migration 020): what one Stock In brought in, and how
+# much of it is still on the shelf. Stock Out takes from the batch that
+# expires first.
+class InventoryBatch(BaseModel):
+    id: int
+    item_id: int
+    batch_number: str
+    expire_date: Optional[date] = None
+    unit_cost: Optional[float] = None
+    quantity_received: int
+    quantity_remaining: int
+    received_date: date
+
+
+# Correcting a batch: its number, expiry date or unit price. Quantities only
+# change through movements. The price is what later Stock Outs from this
+# batch cost (migration 021); the Stock In expense already in Finance is not
+# changed by it.
+class InventoryBatchUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    batch_number: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    expire_date: Optional[date] = None
+    unit_cost: Optional[float] = Field(default=None, gt=0, le=100_000_000)
+
+    @field_validator("unit_cost", mode="before")
+    @classmethod
+    def _cost_not_null(cls, value):
+        if value is None:
+            raise ValueError("Unit price cannot be empty")
+        return value
+
+    @field_validator("batch_number", mode="before")
+    @classmethod
+    def _strip_batch(cls, value):
+        if value is None:
+            raise ValueError("Batch number cannot be empty")
+        return value.strip() if isinstance(value, str) else value
