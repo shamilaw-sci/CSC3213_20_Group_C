@@ -17,8 +17,9 @@
 
 import logging
 import secrets
-from collections import defaultdict
-from datetime import datetime, timezone
+import time
+from collections import defaultdict, deque
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import List, Optional
 
@@ -28,7 +29,7 @@ from supabase import Client
 from app.core import config
 from app.core.audit import log_audit_action
 from app.core.security import require_permission
-from app.core.supabase import get_public_supabase, get_supabase
+from app.core.supabase import get_public_supabase
 from app.schemas.donations import (
     DonationCheckout, DonationCheckoutCreate, DonationConfirmation,
     DonationOut, DonationProgram, DonationPurpose, DonationStatus,
@@ -47,17 +48,106 @@ CURRENCY = "LKR"
 
 # PayHere's checkout always asks for a payer name, email, phone and address.
 # An anonymous donor gives none, so the organisation's own contact details are
-# sent instead. They go to PayHere only; nothing about the donor is stored.
-_ORG_PAYER = {
-    "first_name": "Anonymous",
-    "last_name": "Donor",
-    "phone": "0777226301",
-    "address": "Vets For Future",
-    "city": "Colombo",
-    "country": "Sri Lanka",
-}
+# sent instead (PAYHERE_ANON_PHONE / PAYHERE_ANON_EMAIL in config, D8). They go
+# to PayHere only; nothing about the donor is stored.
+def _org_payer() -> dict:
+    return {
+        "first_name": "Anonymous",
+        "last_name": "Donor",
+        "phone": config.PAYHERE_ANON_PHONE,
+        "address": "Vets For Future",
+        "city": "Colombo",
+        "country": "Sri Lanka",
+    }
 
 NOT_SET_UP = "Online donations are not set up yet. Please try again later."
+
+# A checkout left pending this long was abandoned (D4). PayHere can still
+# confirm it later; it is only shown apart from fresh ones.
+PENDING_EXPIRES_AFTER = timedelta(hours=24)
+
+_SRI_LANKA = timezone(timedelta(hours=5, minutes=30))
+
+
+class _RateLimit:
+    """At most `limit` calls per `window` seconds from one IP address (D6).
+    In memory, per backend process: enough to stop one browser or script
+    filling the table with pending rows, without a new dependency."""
+
+    def __init__(self, limit: int, window: float):
+        self.limit, self.window = limit, window
+        self._hits: dict[str, deque] = {}
+
+    def check(self, key: str) -> bool:
+        now = time.monotonic()
+        hits = self._hits.setdefault(key, deque())
+        while hits and now - hits[0] > self.window:
+            hits.popleft()
+        if len(hits) >= self.limit:
+            return False
+        hits.append(now)
+        return True
+
+    def reset(self) -> None:
+        self._hits.clear()
+
+
+CHECKOUT_LIMIT = _RateLimit(limit=10, window=600)
+CANCEL_LIMIT = _RateLimit(limit=30, window=600)
+
+
+def _client_ip(request: Request) -> str:
+    return request.client.host if request.client else "unknown"
+
+
+def _limit_checkout(request: Request) -> None:
+    if not CHECKOUT_LIMIT.check(_client_ip(request)):
+        raise HTTPException(
+            status_code=429,
+            detail="Too many donation attempts. Please wait a few minutes and try again.",
+        )
+
+
+def _limit_cancel(request: Request) -> None:
+    if not CANCEL_LIMIT.check(_client_ip(request)):
+        raise HTTPException(status_code=429, detail="Too many requests. Please try again later.")
+
+
+def _parse_time(value) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _is_expired(row: dict, now: Optional[datetime] = None) -> bool:
+    if row.get("status") != DonationStatus.pending.value:
+        return False
+    created = _parse_time(row.get("created_at"))
+    now = now or datetime.now(timezone.utc)
+    return created is not None and now - created > PENDING_EXPIRES_AFTER
+
+
+def _sri_lanka_month(value) -> str:
+    """YYYY-MM of a timestamp in Sri Lanka time (D5), so a donation just after
+    midnight on the 1st counts in the new month."""
+    parsed = _parse_time(value)
+    if parsed is None:
+        return str(value or "")[:7]
+    return parsed.astimezone(_SRI_LANKA).strftime("%Y-%m")
+
+
+def _set_note(supabase: Client, donation_id, note: str) -> None:
+    """Record something staff must look at. Fail-soft: before migration 023
+    there is no gateway_note column, and the log line still has it."""
+    try:
+        supabase.table("donations").update({"gateway_note": note[:300]}) \
+            .eq("id", donation_id).execute()
+    except Exception as e:
+        logger.warning("Could not save the note on donation %s: %s", donation_id, e)
 
 
 def _new_order_id() -> str:
@@ -91,9 +181,11 @@ def _get_by_order(supabase: Client, order_id: str) -> dict:
 
 
 def _flatten(row: dict) -> dict:
-    """Move the joined program name onto the row itself."""
+    """Move the joined program name onto the row itself, and mark an
+    abandoned checkout as expired."""
     out = {k: v for k, v in row.items() if k != "programs"}
     out["program_name"] = (row.get("programs") or {}).get("program_name")
+    out["expired"] = _is_expired(row)
     return out
 
 
@@ -214,7 +306,8 @@ async def donation_programs(
     ]
 
 
-@router.post("/checkout", response_model=DonationCheckout)
+@router.post("/checkout", response_model=DonationCheckout,
+             dependencies=[Depends(_limit_checkout)])
 async def create_checkout(
     payload: DonationCheckoutCreate,
     supabase: Client = Depends(get_public_supabase),
@@ -258,16 +351,17 @@ async def create_checkout(
         raise HTTPException(status_code=500, detail="Could not start your donation. Please try again.")
 
     amount = payhere.format_amount(payload.amount)
+    org = _org_payer()
     if payload.is_anonymous:
-        payer = {**_ORG_PAYER, "email": config.BREVO_REPLY_TO}
+        payer = {**org, "email": config.PAYHERE_ANON_EMAIL}
     else:
         names = (payload.donor_name or "").split(None, 1)
         payer = {
-            **_ORG_PAYER,
+            **org,
             "first_name": names[0],
             "last_name": names[1] if len(names) > 1 else "-",
             "email": str(payload.donor_email),
-            "phone": payload.donor_phone or _ORG_PAYER["phone"],
+            "phone": payload.donor_phone or org["phone"],
             "address": "Not provided",
         }
 
@@ -323,6 +417,13 @@ async def payhere_notify(
                 or paid is None or paid != _money(donation["amount"])):
             logger.error("PayHere amount mismatch for order %s: %s %s",
                          order_id, form.get("payhere_amount"), form.get("payhere_currency"))
+            # Shown on the staff page (D4): someone should check PayHere.
+            _set_note(
+                supabase, donation["id"],
+                f"PayHere reported a payment of {form.get('payhere_amount')} "
+                f"{form.get('payhere_currency')}, not {_format_lkr(donation['amount'])}. "
+                "Not recorded. Check this order in PayHere.",
+            )
             return {"ok": False}
         try:
             await _record_payment(supabase, donation, paid)
@@ -338,10 +439,27 @@ async def payhere_notify(
         supabase.table("donations").update({"status": new_status}) \
             .eq("id", donation["id"]).eq("status", DonationStatus.pending.value).execute()
 
-    # 0 (pending) and -3 (chargeback) change nothing here. A chargeback needs a
-    # person to reverse the ledger row, so it is logged for finance staff.
+    # 0 (pending) changes nothing. A chargeback (-3) means the money went back
+    # to the donor. Voiding the ledger row is a finance decision, so it is
+    # flagged on the staff page (D3); once the row is voided, migration 023
+    # marks the donation refunded.
     if status_code == payhere.STATUS_CHARGEDBACK:
         logger.error("PayHere chargeback for donation %s; reverse it in the ledger", order_id)
+        ledger = donation.get("finance_transaction_id")
+        _set_note(
+            supabase, donation["id"],
+            "PayHere reported a chargeback (the donor got the money back). "
+            + (f"Void ledger #{ledger} in Finance; the donation then shows as refunded."
+               if ledger else "It was never recorded in the ledger."),
+        )
+        await log_audit_action(
+            supabase,
+            user_id=None,
+            action_type="DONATION_CHARGEBACK",
+            table_name="donations",
+            old_payload=None,
+            new_payload=_audit_safe(donation),
+        )
 
     return {"ok": True}
 
@@ -376,7 +494,8 @@ async def confirm_donation(
     return _confirmation(donation)
 
 
-@router.post("/cancel/{order_id}", response_model=DonationConfirmation)
+@router.post("/cancel/{order_id}", response_model=DonationConfirmation,
+             dependencies=[Depends(_limit_cancel)])
 async def cancel_donation(
     order_id: str,
     supabase: Client = Depends(get_public_supabase),
@@ -394,35 +513,45 @@ async def cancel_donation(
 # ===========================================================================
 # Staff: Donation details page
 # ===========================================================================
+# These read with the service client too, but only after require_permission
+# has checked finance:read (D2). Migration 023 closes the donations table to
+# direct access, so donor names, emails and phones can only be read here.
 
 @router.get("", response_model=List[DonationOut])
 async def list_donations(
     status: Optional[DonationStatus] = None,
     purpose: Optional[DonationPurpose] = None,
+    # Newest first, one page at a time (D9). The page asks for more as needed.
+    limit: int = Query(200, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
     user=Depends(require_permission("finance:read")),
-    supabase: Client = Depends(get_supabase),
+    supabase: Client = Depends(get_public_supabase),
 ):
     query = supabase.table("donations").select("*, programs(program_name)")
     if status:
         query = query.eq("status", status.value)
     if purpose:
         query = query.eq("purpose", purpose.value)
-    rows = query.order("created_at", desc=True).execute().data or []
+    rows = query.order("created_at", desc=True) \
+        .range(offset, offset + limit - 1).execute().data or []
     return [_flatten(r) for r in rows]
 
 
 @router.get("/summary", response_model=DonationSummary)
 async def donation_summary(
     user=Depends(require_permission("finance:read")),
-    supabase: Client = Depends(get_supabase),
+    supabase: Client = Depends(get_public_supabase),
 ):
-    """Analytics for the Donation details page, from paid donations only."""
-    rows = supabase.table("donations").select("*, programs(program_name)") \
-        .execute().data or []
+    """Analytics for the Donation details page, from paid donations only.
+    Only the columns the figures need (D9): no phone numbers or messages."""
+    rows = supabase.table("donations").select(
+        "id, amount, status, purpose, program_id, is_anonymous, donor_name, "
+        "donor_email, created_at, paid_at, gateway_note, programs(program_name)"
+    ).execute().data or []
     return build_summary(rows)
 
 
-def build_summary(rows: list[dict]) -> dict:
+def build_summary(rows: list[dict], now: Optional[datetime] = None) -> dict:
     """
     Pure function over donation rows, so the figures can be tested without a
     database. Only paid rows count as money raised. Named donors are grouped by
@@ -431,7 +560,9 @@ def build_summary(rows: list[dict]) -> dict:
     they are counted together and never grouped into a donor.
     """
     paid = [r for r in rows if r.get("status") == DonationStatus.paid.value]
-    pending_count = sum(1 for r in rows if r.get("status") == DonationStatus.pending.value)
+    pending = [r for r in rows if r.get("status") == DonationStatus.pending.value]
+    expired_count = sum(1 for r in pending if _is_expired(r, now))
+    refunded = [r for r in rows if r.get("status") == DonationStatus.refunded.value]
 
     zero = Decimal("0.00")
     total = sum((_money(r["amount"]) for r in paid), zero)
@@ -469,7 +600,7 @@ def build_summary(rows: list[dict]) -> dict:
 
     monthly: dict[str, dict] = defaultdict(lambda: {"total": zero, "count": 0})
     for r in paid:
-        month = str(r.get("paid_at") or r.get("created_at") or "")[:7]
+        month = _sri_lanka_month(r.get("paid_at") or r.get("created_at"))
         if month:
             monthly[month]["total"] += _money(r["amount"])
             monthly[month]["count"] += 1
@@ -488,7 +619,12 @@ def build_summary(rows: list[dict]) -> dict:
                               if r.get("purpose") == DonationPurpose.program.value), zero),
         "general_total": sum((_money(r["amount"]) for r in paid
                               if r.get("purpose") == DonationPurpose.general.value), zero),
-        "pending_count": pending_count,
+        "pending_count": len(pending) - expired_count,
+        "expired_count": expired_count,
+        "refunded_count": len(refunded),
+        "refunded_total": sum((_money(r["amount"]) for r in refunded), zero),
+        "flagged_count": sum(1 for r in rows if r.get("gateway_note")
+                             and r.get("status") != DonationStatus.refunded.value),
         "by_program": sorted(by_program.values(), key=lambda p: p["total"], reverse=True),
         "donors": sorted(donors.values(), key=lambda d: d["total"], reverse=True),
         "monthly": [

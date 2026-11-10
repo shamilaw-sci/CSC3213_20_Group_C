@@ -6,6 +6,7 @@ check the API never calls that function on the browser's word alone.
 """
 
 import hashlib
+from datetime import datetime, timezone
 from decimal import Decimal
 
 import pytest
@@ -73,6 +74,11 @@ def public_db():
         yield use
     finally:
         app.dependency_overrides.clear()
+
+
+# A fixed "now" for the summary, so a pending row's age doesn't depend on
+# the day the tests run.
+_NOW = datetime(2026, 11, 4, 12, 0, tzinfo=timezone.utc)
 
 
 def _donation_row(**over):
@@ -324,10 +330,11 @@ def test_summary_counts_paid_only_and_groups_donors_by_email():
         _donation_row(id=3, amount="4000", status="paid", is_anonymous=True,
                       donor_name=None, donor_email=None, purpose="program", program_id=5,
                       programs={"program_name": "Clinic"}, paid_at="2026-11-02T00:00:00+00:00"),
-        _donation_row(id=4, amount="9999", status="pending"),
+        _donation_row(id=4, amount="9999", status="pending",
+                      created_at="2026-11-04T09:00:00+00:00"),
         _donation_row(id=5, amount="9999", status="cancelled"),
     ]
-    s = donations_api.build_summary(rows)
+    s = donations_api.build_summary(rows, now=_NOW)
     assert s["total_raised"] == Decimal("7500.00")
     assert s["donation_count"] == 3
     assert s["anonymous_total"] == Decimal("4000.00")
@@ -340,3 +347,96 @@ def test_summary_counts_paid_only_and_groups_donors_by_email():
     assert s["by_program"][0]["program_name"] == "Clinic"
     assert s["pending_count"] == 1
     assert [m["month"] for m in s["monthly"]] == ["2026-10", "2026-11"]
+
+
+# --------------------------------------------------------------------------
+# Audit fixes D3-D9
+# --------------------------------------------------------------------------
+
+def test_summary_keeps_refunded_and_expired_apart():
+    rows = [
+        _donation_row(id=1, amount="1000", status="paid", paid_at="2026-11-01T00:00:00+00:00"),
+        _donation_row(id=2, amount="3000", status="refunded", paid_at="2026-11-01T00:00:00+00:00"),
+        # Pending for 3 days: abandoned.
+        _donation_row(id=3, status="pending", created_at="2026-11-01T12:00:00+00:00"),
+        # Pending for 2 hours: still in progress.
+        _donation_row(id=4, status="pending", created_at="2026-11-04T10:00:00+00:00"),
+        _donation_row(id=5, status="paid", amount="500", gateway_note="PayHere reported a chargeback",
+                      paid_at="2026-11-02T00:00:00+00:00"),
+    ]
+    s = donations_api.build_summary(rows, now=_NOW)
+    assert s["total_raised"] == Decimal("1500.00")      # refunded money is not raised
+    assert s["refunded_count"] == 1 and s["refunded_total"] == Decimal("3000.00")
+    assert s["pending_count"] == 1 and s["expired_count"] == 1
+    assert s["flagged_count"] == 1
+
+
+def test_months_follow_sri_lanka_time():
+    # 31 Oct 19:00 UTC is 1 Nov 00:30 in Sri Lanka.
+    rows = [_donation_row(id=1, status="paid", amount="1000", paid_at="2026-10-31T19:00:00+00:00")]
+    s = donations_api.build_summary(rows, now=_NOW)
+    assert [m["month"] for m in s["monthly"]] == ["2026-11"]
+
+
+def test_list_marks_old_pending_rows_as_expired():
+    old = donations_api._flatten(_donation_row(created_at="2020-01-01T00:00:00+00:00"))
+    fresh = donations_api._flatten(_donation_row(
+        created_at=datetime.now(timezone.utc).isoformat()))
+    paid = donations_api._flatten(_donation_row(status="paid", created_at="2020-01-01T00:00:00+00:00"))
+    assert old["expired"] and not fresh["expired"] and not paid["expired"]
+
+
+def test_checkout_is_rate_limited_per_ip(public_db, payhere_keys):
+    public_db({"donations": {"insert": [_donation_row()]}})
+    body = {"amount": 1000, "purpose": "general", "is_anonymous": True}
+    codes = [client.post("/api/donations/checkout", json=body).status_code for _ in range(11)]
+    assert codes[:10] == [200] * 10
+    assert codes[10] == 429
+
+
+def test_anonymous_payer_details_come_from_config(public_db, payhere_keys, monkeypatch):
+    monkeypatch.setattr(config, "PAYHERE_ANON_PHONE", "0110000000")
+    monkeypatch.setattr(config, "PAYHERE_ANON_EMAIL", "donations@example.org")
+    public_db({"donations": {"insert": [_donation_row()]}})
+    r = client.post("/api/donations/checkout",
+                    json={"amount": 1000, "purpose": "general", "is_anonymous": True})
+    fields = r.json()["fields"]
+    assert fields["phone"] == "0110000000" and fields["email"] == "donations@example.org"
+
+
+@pytest.fixture
+def notes(monkeypatch):
+    saved = []
+    monkeypatch.setattr(donations_api, "_set_note",
+                        lambda supabase, donation_id, note: saved.append((donation_id, note)))
+    return saved
+
+
+def test_wrong_amount_is_flagged_for_staff(public_db, payhere_keys, notes):
+    public_db({"donations": [_donation_row()]})
+    client.post("/api/donations/payhere/notify", data=_signed_notification(amount="100.00"))
+    assert len(notes) == 1 and "100.00" in notes[0][1]
+
+
+def test_chargeback_is_flagged_for_staff(public_db, payhere_keys, notes):
+    db = public_db({"donations": [_donation_row(status="paid", finance_transaction_id=45,
+                                                paid_at="2026-11-03T10:00:00+00:00")]})
+    r = client.post("/api/donations/payhere/notify", data=_signed_notification(status_code="-3"))
+    assert r.status_code == 200
+    assert len(notes) == 1 and "ledger #45" in notes[0][1]
+    assert db.rpc_calls == []   # nothing is posted or reversed automatically
+
+
+@pytest.mark.parametrize("env,app_url,expected", [
+    (None, "http://localhost:3000", True),
+    (None, "https://vff.example.org", False),   # a real deployment is live by default
+    ("true", "https://vff.example.org", True),  # an explicit setting always wins
+    ("false", "http://localhost:3000", False),
+])
+def test_sandbox_default_depends_on_where_the_app_runs(monkeypatch, env, app_url, expected):
+    if env is None:
+        monkeypatch.delenv("PAYHERE_SANDBOX", raising=False)
+    else:
+        monkeypatch.setenv("PAYHERE_SANDBOX", env)
+    monkeypatch.setenv("PUBLIC_APP_URL", app_url)
+    assert config._payhere_sandbox_default() is expected

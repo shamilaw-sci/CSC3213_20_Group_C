@@ -2,7 +2,8 @@
 import api from '@/lib/api-client';
 
 export type DonationPurpose = 'program' | 'general';
-export type DonationStatus = 'pending' | 'paid' | 'failed' | 'cancelled';
+// refunded: was paid, then its ledger row was voided in Finance (migration 023).
+export type DonationStatus = 'pending' | 'paid' | 'failed' | 'cancelled' | 'refunded';
 
 // Mirrors the amount CHECK in db/migrations/015_donations.sql and
 // MIN_DONATION / MAX_DONATION in app/schemas/donations.py.
@@ -62,6 +63,11 @@ export interface Donation {
   thank_you_sent_at?: string | null;
   created_at: string;
   paid_at?: string | null;
+  refunded_at?: string | null;
+  // Something PayHere reported that staff should look at (chargeback, wrong amount).
+  gateway_note?: string | null;
+  // Pending for over a day: the donor left PayHere without paying.
+  expired?: boolean;
 }
 
 export interface DonorContribution {
@@ -86,6 +92,10 @@ export interface DonationSummary {
   program_total: string;
   general_total: string;
   pending_count: number;
+  expired_count?: number;
+  refunded_count?: number;
+  refunded_total?: string;
+  flagged_count?: number;
   by_program: { program_id: number; program_name: string; total: string; count: number }[];
   donors: DonorContribution[];
   monthly: { month: string; total: string; count: number }[];
@@ -154,7 +164,10 @@ export const DonationsService = {
   },
 
   // ---- staff (finance:read) ----
-  list: async (params?: { status?: DonationStatus; purpose?: DonationPurpose }) => {
+  // Newest first, `limit` at a time (the API's default is 200).
+  list: async (params?: {
+    status?: DonationStatus; purpose?: DonationPurpose; limit?: number; offset?: number;
+  }) => {
     const response = await api.get<Donation[]>('/donations', { params });
     return response.data;
   },
