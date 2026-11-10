@@ -228,3 +228,80 @@ async def send_donation_thank_you(
             footer_note="Please keep this email as your donation receipt.",
         ),
     )
+
+
+_SHIFT_NOTICE = {
+    "cancelled": (
+        "Shift cancelled: {title}",
+        "<p>The following shift has been <strong>cancelled</strong>. You don&rsquo;t "
+        "need to come. Thank you for being ready to help.</p>",
+    ),
+    "changed": (
+        "Shift changed: {title}",
+        "<p>The details of a shift you&rsquo;re assigned to have changed. Here "
+        "is how it looks now:</p>",
+    ),
+    "removed": (
+        "You're no longer on: {title}",
+        "<p>You&rsquo;ve been taken off the following shift. You don&rsquo;t "
+        "need to come. Thank you for offering your time.</p>",
+    ),
+}
+
+
+async def send_shift_notice(
+    kind: str,
+    to_email: str,
+    full_name: str,
+    access_token: str,
+    assignment_title: str,
+    when: Optional[str] = None,
+    location: Optional[str] = None,
+) -> bool:
+    """Tell a volunteer that a shift they are on was cancelled ("cancelled"),
+    had its date, time or place changed ("changed"), or that they were taken
+    off it ("removed"). Fail-soft like every other sender here."""
+    subject, intro = _SHIFT_NOTICE[kind]
+    link = volunteer_link(access_token)
+    first_name = html.escape(full_name.split()[0] if full_name.split() else full_name)
+
+    details = f"<p><strong>{html.escape(assignment_title)}</strong>"
+    if when:
+        details += f"<br>{html.escape(when)}"
+    if location:
+        details += f"<br>{html.escape(location)}"
+    details += "</p>"
+
+    extra = (
+        "<p>If you can no longer make it, please let us know.</p>"
+        if kind == "changed" else ""
+    )
+    return await _send(
+        to_email,
+        full_name,
+        subject.format(title=assignment_title),
+        _shell(
+            f"Hello {first_name},",
+            intro + details + extra + _button(link, "View my assignments"),
+        ),
+    )
+
+
+async def send_volunteer_new_link(
+    to_email: str, full_name: str, access_token: str
+) -> bool:
+    """Sent when staff reset a volunteer's personal link (V7). The old link
+    stops working at once."""
+    link = volunteer_link(access_token)
+    first_name = html.escape(full_name.split()[0] if full_name.split() else full_name)
+    return await _send(
+        to_email,
+        full_name,
+        "Your new Vets For Future volunteer link",
+        _shell(
+            f"Hello {first_name},",
+            "<p>We&rsquo;ve given you a new personal link for your volunteer "
+            "assignments. Your old link no longer works.</p>"
+            + _button(link, "View my assignments"),
+        ),
+    )

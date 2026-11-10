@@ -36,6 +36,14 @@ function formatWhen(a: MyAssignment): string | null {
     : `${date}, ${hhmm(a.start_time)}`;
 }
 
+/** A shift whose day has gone. It can no longer be answered (the API refuses). */
+function isPast(a: MyAssignment): boolean {
+  if (!a.shift_date) return false;
+  const now = new Date();
+  const today = new Date(now.getTime() - now.getTimezoneOffset() * 60_000).toISOString().slice(0, 10);
+  return a.shift_date < today;
+}
+
 export default function MyAssignmentsPage() {
   const params = useParams<{ token: string }>();
   const token = params?.token ?? '';
@@ -108,7 +116,7 @@ export default function MyAssignmentsPage() {
   }
 
   const awaiting = data.assignments.filter(
-    (a) => a.response === 'pending' && !a.is_cancelled
+    (a) => a.response === 'pending' && !a.is_cancelled && !isPast(a)
   ).length;
 
   return (
@@ -177,10 +185,12 @@ export default function MyAssignmentsPage() {
                     <Badge className="bg-emerald-600 text-white shrink-0">Going</Badge>
                   ) : a.response === 'declined' ? (
                     <Badge variant="outline" className="shrink-0">Can&apos;t make it</Badge>
+                  ) : isPast(a) ? (
+                    <Badge variant="outline" className="shrink-0">Past</Badge>
                   ) : null}
                 </div>
 
-                {!a.is_cancelled && (
+                {!a.is_cancelled && !isPast(a) && (
                   <>
                     {decliningId === a.id ? (
                       <div className="space-y-2 pt-1">

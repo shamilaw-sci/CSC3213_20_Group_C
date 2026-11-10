@@ -14,11 +14,13 @@ whatever .eq() filters the query happened to send.
 
 import os
 import sys
+from datetime import timedelta
 
 import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+from app.schemas.inventory import today_in_sri_lanka
 from app.services.program_volunteers import (
     build_program_volunteers, shift_belongs_to_program,
 )
@@ -185,7 +187,9 @@ def test_an_unlinked_shift_still_matches_by_name():
     assert shift_belongs_to_program({**_shift("s-1"), "program_id": None}, PROGRAM)
 
 
-SHIFT_BODY = {"title": PROGRAM["program_name"], "shift_date": "2026-12-05",
+# Always in the future: a new shift can't be dated in the past (V9).
+_NEXT_MONTH = (today_in_sri_lanka() + timedelta(days=30)).isoformat()
+SHIFT_BODY = {"title": PROGRAM["program_name"], "shift_date": _NEXT_MONTH,
               "start_time": "09:00", "end_time": "13:00", "program_id": 7}
 CREATED = {**_shift("00000000-0000-0000-0000-0000000000aa"), "program_id": 7, "volunteers_needed": 1, "description": None,
            "created_by": None, "created_at": "2026-11-10T00:00:00+00:00"}
