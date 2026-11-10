@@ -77,6 +77,8 @@ export interface Shift {
   created_by?: string | null;
   created_at: string;
   confirmation: ShiftConfirmation;
+  // Only on create: the date is outside the programme's dates.
+  warning?: string | null;
 }
 
 export interface ShiftCreatePayload {
@@ -101,6 +103,8 @@ export interface Assignment {
   responded_at?: string | null;
   assigned_by?: string | null;
   assigned_at: string;
+  // Only on create: the shift already has as many volunteers as it needs.
+  warning?: string | null;
 }
 
 export interface MyAssignment {
@@ -163,6 +167,12 @@ export const VolunteersService = {
     payload: { status: 'approved' | 'rejected' | 'inactive'; staff_notes?: string }
   ) => {
     const response = await api.patch<Volunteer>(`/volunteers/${id}/review`, payload);
+    return response.data;
+  },
+
+  // New personal link for an approved volunteer; the old one stops working.
+  resetLink: async (id: string) => {
+    const response = await api.post<Volunteer>(`/volunteers/${id}/reset-link`);
     return response.data;
   },
 

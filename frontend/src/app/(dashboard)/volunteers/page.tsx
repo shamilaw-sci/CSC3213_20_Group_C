@@ -18,8 +18,11 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from '@/components/ui/dialog';
 import { toast } from 'sonner';
-import { Copy, Check, X, Link2, AlertTriangle } from 'lucide-react';
+import { Copy, Check, X, Link2, AlertTriangle, RotateCcw, Loader2 } from 'lucide-react';
 import { cn, getErrorMessage } from '@/lib/utils';
 
 const LABEL = Object.fromEntries(
@@ -30,8 +33,34 @@ const STATUS_TABS: { value: VolunteerStatus; label: string; description: string 
   { value: 'pending', label: 'Pending', description: 'New applications waiting for a decision.' },
   { value: 'approved', label: 'Approved', description: 'Active volunteers who can be assigned to shifts.' },
   { value: 'rejected', label: 'Rejected', description: 'Applications that were turned down. They may apply again.' },
-  { value: 'inactive', label: 'Inactive', description: 'Volunteers who have been deactivated.' },
+  { value: 'inactive', label: 'Inactive', description: 'Volunteers who have been deactivated. Reactivating gives them a new personal link.' },
 ];
+
+// Actions that need a second click (V10). Approve stays one click.
+type ConfirmKind = 'rejected' | 'inactive' | 'reactivate' | 'reset';
+
+const CONFIRM: Record<ConfirmKind, { title: string; body: string; button: string }> = {
+  rejected: {
+    title: 'Reject this application?',
+    body: 'They will not be able to take shifts. They can apply again later.',
+    button: 'Reject',
+  },
+  inactive: {
+    title: 'Deactivate this volunteer?',
+    body: 'Their personal link stops working, and they are taken off shifts from today on and off anything they have not answered yet. Past shifts stay on record.',
+    button: 'Deactivate',
+  },
+  reactivate: {
+    title: 'Reactivate this volunteer?',
+    body: 'They become an approved volunteer again with a new personal link. The welcome email with the new link is sent if email is configured.',
+    button: 'Reactivate',
+  },
+  reset: {
+    title: 'Reset this personal link?',
+    body: 'The old link stops working at once. The new link is emailed to them if email is configured, and you can copy it here.',
+    button: 'Reset link',
+  },
+};
 
 function relativeDays(iso?: string | null): string {
   if (!iso) return 'Never shared';
@@ -52,6 +81,7 @@ export default function VolunteersRosterPage() {
 
   const [tab, setTab] = useState<VolunteerStatus>('pending');
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [confirm, setConfirm] = useState<{ v: Volunteer; kind: ConfirmKind } | null>(null);
   const queryClient = useQueryClient();
 
   // One fetch of every status rather than one per tab, so the summary cards
@@ -79,10 +109,29 @@ export default function VolunteersRosterPage() {
           ? 'Approved — welcome email sent if email is configured.'
           : v.status === 'rejected' ? 'Application rejected.' : 'Volunteer deactivated.'
       );
+      setConfirm(null);
       queryClient.invalidateQueries({ queryKey: ['volunteers'] });
     },
     onError: (err) => toast.error(getErrorMessage(err) || "Couldn't update this volunteer."),
   });
+
+  const resetLink = useMutation({
+    mutationFn: (id: string) => VolunteersService.resetLink(id),
+    onSuccess: () => {
+      toast.success('New link made — emailed to them if email is configured.');
+      setConfirm(null);
+      queryClient.invalidateQueries({ queryKey: ['volunteers'] });
+    },
+    onError: (err) => toast.error(getErrorMessage(err) || "Couldn't reset the link."),
+  });
+
+  function runConfirmed() {
+    if (!confirm) return;
+    const { v, kind } = confirm;
+    if (kind === 'reset') resetLink.mutate(v.id);
+    else review.mutate({ id: v.id, status: kind === 'reactivate' ? 'approved' : kind });
+  }
+  const confirmBusy = review.isPending || resetLink.isPending;
 
   const markShared = useMutation({
     mutationFn: (id: string) => VolunteersService.markLinkShared(id),
@@ -257,6 +306,15 @@ export default function VolunteersRosterPage() {
                                 : <AlertTriangle className="w-3 h-3" />}
                               {relativeDays(v.link_shared_at)}
                             </div>
+                            {canApprove && (
+                              <button
+                                type="button"
+                                onClick={() => setConfirm({ v, kind: 'reset' })}
+                                className="text-[11px] text-text-secondary hover:text-accent flex items-center gap-1"
+                              >
+                                <RotateCcw className="w-3 h-3" /> Reset link
+                              </button>
+                            )}
                           </div>
                         ) : (
                           <span className="text-xs text-text-muted">—</span>
@@ -280,7 +338,7 @@ export default function VolunteersRosterPage() {
                               size="sm"
                               variant="outline"
                               disabled={review.isPending}
-                              onClick={() => review.mutate({ id: v.id, status: 'rejected' })}
+                              onClick={() => setConfirm({ v, kind: 'rejected' })}
                               className="gap-1"
                             >
                               <X className="w-3.5 h-3.5" /> Reject
@@ -292,9 +350,19 @@ export default function VolunteersRosterPage() {
                             size="sm"
                             variant="outline"
                             disabled={review.isPending}
-                            onClick={() => review.mutate({ id: v.id, status: 'inactive' })}
+                            onClick={() => setConfirm({ v, kind: 'inactive' })}
                           >
                             Deactivate
+                          </Button>
+                        )}
+                        {tab === 'inactive' && canApprove && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={review.isPending}
+                            onClick={() => setConfirm({ v, kind: 'reactivate' })}
+                          >
+                            Reactivate
                           </Button>
                         )}
                         {!canApprove && tab !== 'approved' && (
@@ -309,6 +377,33 @@ export default function VolunteersRosterPage() {
           )}
         </CardContent>
       </Card>
+
+      <Dialog open={!!confirm} onOpenChange={(open) => { if (!open && !confirmBusy) setConfirm(null); }}>
+        <DialogContent>
+          {confirm && (
+            <>
+              <DialogHeader>
+                <DialogTitle>{CONFIRM[confirm.kind].title}</DialogTitle>
+                <DialogDescription>
+                  <strong className="text-text-primary">{confirm.v.full_name}</strong> — {CONFIRM[confirm.kind].body}
+                </DialogDescription>
+              </DialogHeader>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setConfirm(null)} disabled={confirmBusy}>
+                  Cancel
+                </Button>
+                <Button
+                  onClick={runConfirmed}
+                  disabled={confirmBusy}
+                  className={confirm.kind === 'reactivate' ? undefined : 'bg-red-600 hover:bg-red-600/90 text-white'}
+                >
+                  {confirmBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : CONFIRM[confirm.kind].button}
+                </Button>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

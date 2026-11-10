@@ -1,6 +1,6 @@
 # backend/app/schemas/volunteer.py
 
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 from datetime import datetime, date, time
 from enum import Enum
 from uuid import UUID
@@ -100,12 +100,12 @@ class VolunteerOut(BaseModel):
 
 
 class VolunteerReview(BaseModel):
-    """Approve or reject a pending application, or deactivate an approved one.
+    """Approve or reject a pending application, deactivate an approved
+    volunteer, or reactivate an inactive one (V2). Every other change is
+    refused by the endpoint; see _REVIEW_TRANSITIONS in api/volunteers.py.
 
     'pending' is not a reachable target: an application starts there and review
-    is a one-way door out of it. Re-opening a decided application is not a
-    workflow anyone asked for, and allowing it would mean an approved
-    volunteer's live link could silently go dormant.
+    is a one-way door out of it. A rejected applicant can apply again instead.
     """
     status: Literal[
         VolunteerStatus.approved,
@@ -161,6 +161,9 @@ class ShiftOut(ShiftBase):
     is_cancelled: bool
     created_by: Optional[UUID] = None
     created_at: datetime
+    # Set on create when the date falls outside the programme's dates (V9).
+    # A note for the user, not stored.
+    warning: Optional[str] = None
 
 
 class ShiftConfirmation(BaseModel):
@@ -196,26 +199,23 @@ class AssignmentCreate(BaseModel):
     """Exactly one target, mirroring the num_nonnulls CHECK on the table.
 
     Validated here as well as in the database so the caller gets a 422 naming
-    the problem rather than a 500 carrying a raw constraint violation.
+    the problem rather than a 500 carrying a raw constraint violation. A model
+    validator, not a field validator (V3): a field validator does not run when
+    its field is left out, so a body with no program_id skipped the check.
     """
     volunteer_id: UUID
     shift_id: Optional[UUID] = None
     rescue_case_id: Optional[UUID] = None
     program_id: Optional[int] = None
 
-    @field_validator("program_id")
-    @classmethod
-    def _exactly_one_target(cls, v, info):
-        targets = [
-            info.data.get("shift_id"),
-            info.data.get("rescue_case_id"),
-            v,
-        ]
+    @model_validator(mode="after")
+    def _exactly_one_target(self):
+        targets = [self.shift_id, self.rescue_case_id, self.program_id]
         if sum(t is not None for t in targets) != 1:
             raise ValueError(
                 "exactly one of shift_id, rescue_case_id or program_id is required"
             )
-        return v
+        return self
 
 
 class AssignmentOut(BaseModel):
@@ -229,6 +229,9 @@ class AssignmentOut(BaseModel):
     responded_at: Optional[datetime] = None
     assigned_by: Optional[UUID] = None
     assigned_at: datetime
+    # Set on create when the shift already has as many volunteers as it needs
+    # (V4: warn, don't block). A note for the user, not stored.
+    warning: Optional[str] = None
 
     @property
     def assignment_type(self) -> AssignmentType:

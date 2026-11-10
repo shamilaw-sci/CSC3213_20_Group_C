@@ -15,6 +15,7 @@
 # valid volunteer token. Scoping to one volunteer is an application-layer
 # invariant enforced here, by filtering on access_token.
 
+import asyncio
 import logging
 import secrets
 from datetime import datetime, timezone
@@ -35,8 +36,8 @@ from app.schemas.volunteer import (
 from app.services import email as email_service
 from app.schemas.inventory import today_in_sri_lanka
 from app.services.program_lifecycle import (
-    ACTIVE, PROGRAM_FIXES_MIGRATION_MESSAGE, UPCOMING, is_missing_shift_program_column,
-    normalize_status,
+    ACTIVE, CANCELLED, COMPLETED, PROGRAM_FIXES_MIGRATION_MESSAGE, UPCOMING,
+    is_missing_shift_program_column, normalize_status,
 )
 
 logger = logging.getLogger(__name__)
@@ -54,6 +55,18 @@ _REVIEW_ACTION = {
     VolunteerStatus.rejected: "VOLUNTEER_REJECT",
     VolunteerStatus.inactive: "VOLUNTEER_DEACTIVATE",
 }
+
+# The only status changes review allows (V2). Anything else is a 409: a
+# rejected applicant applies again instead, and approving someone already
+# approved would only re-send the welcome email.
+_REVIEW_TRANSITIONS = {
+    VolunteerStatus.pending.value: {VolunteerStatus.approved.value, VolunteerStatus.rejected.value},
+    VolunteerStatus.approved.value: {VolunteerStatus.inactive.value},
+    VolunteerStatus.inactive.value: {VolunteerStatus.approved.value},
+}
+
+# Who still hears about a shift: everyone who has not said no.
+_OPEN_RESPONSES = (AssignmentResponse.pending.value, AssignmentResponse.accepted.value)
 
 
 def _audit_safe(row: dict) -> dict:
@@ -79,6 +92,80 @@ def _format_when(shift: dict) -> Optional[str]:
         if shift.get("end_time"):
             when += f"–{str(shift['end_time'])[:5]}"
     return when
+
+
+def _is_past(shift: dict) -> bool:
+    """True when the shift's day is before today in Sri Lanka."""
+    return str(shift.get("shift_date") or "") < today_in_sri_lanka().isoformat()
+
+
+def _program_has_ended(supabase: Client, program_id) -> bool:
+    rows = (
+        supabase.table("programs").select("id, status").eq("id", program_id).execute()
+    ).data or []
+    return bool(rows) and normalize_status(rows[0].get("status")) in (COMPLETED, CANCELLED)
+
+
+async def _notify_shift_volunteers(supabase: Client, shift: dict, kind: str) -> None:
+    """Email everyone still on a shift (pending or accepted) that it was
+    cancelled or changed (V5). Fail-soft: the change has already happened."""
+    rows = (
+        supabase.table("volunteer_assignments")
+        .select("volunteer_id, response")
+        .eq("shift_id", shift["id"])
+        .execute()
+    ).data or []
+    ids = [r["volunteer_id"] for r in rows if r.get("response") in _OPEN_RESPONSES]
+    if not ids:
+        return
+    people = (
+        supabase.table("volunteers").select("*").in_("id", ids).execute()
+    ).data or []
+    sends = [
+        email_service.send_shift_notice(
+            kind, v["email"], v["full_name"], v["access_token"],
+            shift.get("title") or "Shift", _format_when(shift), shift.get("location"),
+        )
+        for v in people if v.get("status") == VolunteerStatus.approved.value
+    ]
+    if sends:
+        await asyncio.gather(*sends, return_exceptions=True)
+
+
+async def _clear_open_assignments(supabase: Client, volunteer_id: str, user_id) -> int:
+    """When a volunteer is deactivated or rejected, take them off shifts from
+    today on and off assignments they never answered (V6), so they stop
+    counting as "awaiting". Past shifts and accepted programme or rescue work
+    stay as history. Each removal gets its own audit entry."""
+    rows = (
+        supabase.table("volunteer_assignments")
+        .select("*, volunteer_shifts(shift_date)")
+        .eq("volunteer_id", volunteer_id)
+        .execute()
+    ).data or []
+    drop = []
+    for row in rows:
+        shift = row.pop("volunteer_shifts", None) or {}
+        if row.get("shift_id"):
+            if not _is_past(shift):
+                drop.append(row)
+        elif row.get("response") == AssignmentResponse.pending.value:
+            drop.append(row)
+    if not drop:
+        return 0
+    supabase.table("volunteer_assignments").delete().in_(
+        "id", [r["id"] for r in drop]
+    ).execute()
+    for row in drop:
+        await log_audit_action(
+            supabase,
+            user_id=user_id,
+            action_type="VOLUNTEER_UNASSIGN",
+            table_name="volunteer_assignments",
+            old_payload=row,
+            new_payload=None,
+        )
+    return len(drop)
 
 
 # ===========================================================================
@@ -285,6 +372,21 @@ async def respond_to_assignment(
         raise HTTPException(status_code=404, detail="Assignment not found")
 
     before = existing.data[0]
+
+    # Nothing to answer on a shift that was cancelled or has already happened,
+    # or on a programme that has ended (V4).
+    if before.get("shift_id"):
+        shift = (
+            supabase.table("volunteer_shifts").select("*")
+            .eq("id", before["shift_id"]).execute()
+        ).data or []
+        if shift and shift[0].get("is_cancelled"):
+            raise HTTPException(status_code=409, detail="This shift was cancelled.")
+        if shift and _is_past(shift[0]):
+            raise HTTPException(status_code=409, detail="This shift has already taken place.")
+    elif before.get("program_id") and _program_has_ended(supabase, before["program_id"]):
+        raise HTTPException(status_code=409, detail="This programme has already ended.")
+
     update = {
         "response": payload.response.value,
         "responded_at": datetime.now(timezone.utc).isoformat(),
@@ -356,7 +458,8 @@ async def review_volunteer(
     supabase: Client = Depends(get_supabase),
     current_user: dict = Depends(require_permission("volunteers:approve")),
 ):
-    """Approve, reject or deactivate. Approval sends the welcome email."""
+    """Approve, reject, deactivate or reactivate. Approval sends the welcome
+    email. Only the changes in _REVIEW_TRANSITIONS are allowed (V2)."""
     existing = (
         supabase.table("volunteers").select("*").eq("id", volunteer_id).execute()
     )
@@ -364,17 +467,41 @@ async def review_volunteer(
         raise HTTPException(status_code=404, detail="Volunteer not found")
     before = existing.data[0]
 
+    current = str(before.get("status") or "")
+    target = payload.status.value
+    if target not in _REVIEW_TRANSITIONS.get(current, set()):
+        raise HTTPException(
+            status_code=409,
+            detail=f"A volunteer who is {current or 'unknown'} can't be changed to {target}.",
+        )
+    reactivating = current == VolunteerStatus.inactive.value
+
     update = {
-        "status": payload.status.value,
+        "status": target,
         "reviewed_at": datetime.now(timezone.utc).isoformat(),
         "reviewed_by": str(current_user["id"]),
     }
     if payload.staff_notes is not None:
         update["staff_notes"] = payload.staff_notes
+    if reactivating:
+        # A fresh link on the way back in (V7): the old one may have been
+        # passed around while they were inactive.
+        update["access_token"] = secrets.token_urlsafe(_TOKEN_BYTES)
+        update["link_shared_at"] = None
 
-    result = (
-        supabase.table("volunteers").update(update).eq("id", volunteer_id).execute()
-    )
+    try:
+        result = (
+            supabase.table("volunteers").update(update).eq("id", volunteer_id).execute()
+        )
+    except Exception as e:
+        # The unique index on email covers pending and approved rows, so a
+        # person who applied again while inactive can't also be reactivated.
+        if "23505" in str(e) or "duplicate key" in str(e).lower():
+            raise HTTPException(
+                status_code=409,
+                detail="This person has a newer application. Review that one instead.",
+            )
+        raise
     if not result.data:
         raise HTTPException(status_code=404, detail="Volunteer not found")
     after = result.data[0]
@@ -382,11 +509,14 @@ async def review_volunteer(
     await log_audit_action(
         supabase,
         user_id=current_user["id"],
-        action_type=_REVIEW_ACTION[payload.status],
+        action_type="VOLUNTEER_REACTIVATE" if reactivating else _REVIEW_ACTION[payload.status],
         table_name="volunteers",
         old_payload=_audit_safe(before),
         new_payload=_audit_safe(after),
     )
+
+    if target in (VolunteerStatus.inactive.value, VolunteerStatus.rejected.value):
+        await _clear_open_assignments(supabase, volunteer_id, current_user["id"])
 
     # Fail-soft: the approval above is the act, and it has already happened.
     # A Brevo outage must not turn an approved volunteer into a 500.
@@ -446,6 +576,51 @@ async def mark_link_shared(
     )
 
     return result.data[0]
+
+
+@router.post("/{volunteer_id}/reset-link", response_model=VolunteerOut)
+async def reset_volunteer_link(
+    volunteer_id: str,
+    supabase: Client = Depends(get_supabase),
+    current_user: dict = Depends(require_permission("volunteers:approve")),
+):
+    """Give an approved volunteer a new personal link (V7), for when the old
+    one leaked. The old link stops working at once, and the new one is
+    emailed to them (fail-soft)."""
+    existing = (
+        supabase.table("volunteers").select("*").eq("id", volunteer_id).execute()
+    )
+    if not existing.data:
+        raise HTTPException(status_code=404, detail="Volunteer not found")
+    if existing.data[0].get("status") != VolunteerStatus.approved.value:
+        raise HTTPException(
+            status_code=409, detail="Only an approved volunteer has a link to reset."
+        )
+
+    result = (
+        supabase.table("volunteers")
+        .update({"access_token": secrets.token_urlsafe(_TOKEN_BYTES), "link_shared_at": None})
+        .eq("id", volunteer_id)
+        .execute()
+    )
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Volunteer not found")
+    after = result.data[0]
+
+    # Never the token itself; see _audit_safe.
+    await log_audit_action(
+        supabase,
+        user_id=current_user["id"],
+        action_type="VOLUNTEER_LINK_RESET",
+        table_name="volunteers",
+        old_payload={"id": volunteer_id},
+        new_payload={"id": volunteer_id, "link_reset": True},
+    )
+
+    await email_service.send_volunteer_new_link(
+        after["email"], after["full_name"], after["access_token"]
+    )
+    return after
 
 
 # ===========================================================================
@@ -510,12 +685,17 @@ async def create_shift(
     current_user: dict = Depends(require_permission("volunteers:assign")),
 ):
     data = payload.model_dump(mode="json")
+    data.pop("warning", None)
+    # Sri Lanka's date (V9).
+    if payload.shift_date < today_in_sri_lanka():
+        raise HTTPException(status_code=400, detail="A shift can't be dated in the past.")
+    warning = None
     if data.get("program_id") is None:
         data.pop("program_id", None)
     else:
         # A shift is only planned for a programme that has not ended (P2).
         program = (
-            supabase.table("programs").select("id, status")
+            supabase.table("programs").select("id, status, start_date, end_date")
             .eq("id", data["program_id"]).execute()
         ).data
         if not program:
@@ -524,6 +704,13 @@ async def create_shift(
             raise HTTPException(
                 status_code=409, detail="Shifts can only be added to an Upcoming or Active program."
             )
+        # Warn, don't block: a planned start date can move (V9).
+        start = program[0].get("start_date")
+        end = program[0].get("end_date")
+        if start and data["shift_date"] < str(start):
+            warning = f"This shift is before the program starts ({start})."
+        elif end and data["shift_date"] > str(end):
+            warning = f"This shift is after the program ends ({end})."
     try:
         result = supabase.table("volunteer_shifts").insert({
             **data,
@@ -544,7 +731,7 @@ async def create_shift(
         old_payload=None,
         new_payload=result.data[0],
     )
-    return result.data[0]
+    return {**result.data[0], "warning": warning}
 
 
 @router.patch("/shifts/{shift_id}", response_model=ShiftOut)
@@ -571,6 +758,8 @@ async def update_shift(
     end = update.get("end_time", before["end_time"])
     if str(end) <= str(start):
         raise HTTPException(400, "A shift must end after it starts")
+    if "shift_date" in update and update["shift_date"] < today_in_sri_lanka().isoformat():
+        raise HTTPException(400, "A shift can't be moved into the past")
 
     result = (
         supabase.table("volunteer_shifts").update(update).eq("id", shift_id).execute()
@@ -590,7 +779,19 @@ async def update_shift(
         old_payload=before,
         new_payload=result.data[0],
     )
-    return result.data[0]
+
+    # Tell the volunteers still on it (V5). Only for a live shift: nobody needs
+    # an email about changes to one that was already cancelled.
+    after = result.data[0]
+    if not before.get("is_cancelled"):
+        if cancelled:
+            await _notify_shift_volunteers(supabase, after, "cancelled")
+        elif any(
+            str(before.get(f)) != str(after.get(f))
+            for f in ("shift_date", "start_time", "end_time", "location")
+        ):
+            await _notify_shift_volunteers(supabase, after, "changed")
+    return after
 
 
 # ===========================================================================
@@ -632,6 +833,36 @@ async def create_assignment(
     if volunteer["status"] != VolunteerStatus.approved.value:
         raise HTTPException(400, "Only approved volunteers can be assigned")
 
+    # The target must still be open (V4). Too many volunteers on a shift is a
+    # warning, not a refusal: some people may drop out.
+    warning = None
+    shift_row = None
+    if payload.shift_id:
+        found = (
+            supabase.table("volunteer_shifts").select("*")
+            .eq("id", str(payload.shift_id)).execute()
+        ).data
+        if not found:
+            raise HTTPException(status_code=404, detail="Shift not found")
+        shift_row = found[0]
+        if shift_row.get("is_cancelled"):
+            raise HTTPException(status_code=409, detail="This shift was cancelled.")
+        if _is_past(shift_row):
+            raise HTTPException(status_code=409, detail="This shift has already taken place.")
+        on_shift = (
+            supabase.table("volunteer_assignments").select("id, response")
+            .eq("shift_id", str(payload.shift_id)).execute()
+        ).data or []
+        taken = sum(1 for a in on_shift if a.get("response") in _OPEN_RESPONSES)
+        needed = int(shift_row.get("volunteers_needed") or 0)
+        if needed and taken >= needed:
+            warning = (
+                f"This shift needs {needed} volunteer{'s' if needed != 1 else ''} "
+                f"and now has {taken + 1} assigned."
+            )
+    elif payload.program_id is not None and _program_has_ended(supabase, payload.program_id):
+        raise HTTPException(status_code=409, detail="This programme has already ended.")
+
     row = payload.model_dump(mode="json", exclude_none=True)
     row["assigned_by"] = str(current_user["id"])
 
@@ -664,14 +895,10 @@ async def create_assignment(
     # whether the notification does.
     title, when, location = "a new assignment", None, None
     if created.get("shift_id"):
-        shift = (
-            supabase.table("volunteer_shifts").select("*")
-            .eq("id", created["shift_id"]).execute()
-        ).data
-        if shift:
-            title = shift[0]["title"]
-            when = _format_when(shift[0])
-            location = shift[0].get("location")
+        if shift_row:
+            title = shift_row["title"]
+            when = _format_when(shift_row)
+            location = shift_row.get("location")
     elif created.get("program_id"):
         program = (
             supabase.table("programs").select("program_name")
@@ -692,7 +919,7 @@ async def create_assignment(
         title, when, location,
     )
 
-    return created
+    return {**created, "warning": warning}
 
 
 @router.delete("/assignments/{assignment_id}")
@@ -718,4 +945,24 @@ async def delete_assignment(
         old_payload=existing.data[0],
         new_payload=None,
     )
+
+    # Tell them they are off a live, upcoming shift they hadn't turned down
+    # (V5). Fail-soft.
+    removed = existing.data[0]
+    if removed.get("shift_id") and removed.get("response") in _OPEN_RESPONSES:
+        shift = (
+            supabase.table("volunteer_shifts").select("*")
+            .eq("id", removed["shift_id"]).execute()
+        ).data or []
+        person = (
+            supabase.table("volunteers").select("*")
+            .eq("id", removed["volunteer_id"]).execute()
+        ).data or []
+        if (shift and person and not shift[0].get("is_cancelled") and not _is_past(shift[0])
+                and person[0].get("status") == VolunteerStatus.approved.value):
+            await email_service.send_shift_notice(
+                "removed", person[0]["email"], person[0]["full_name"],
+                person[0]["access_token"], shift[0].get("title") or "Shift",
+                _format_when(shift[0]), shift[0].get("location"),
+            )
     return {"status": "removed"}

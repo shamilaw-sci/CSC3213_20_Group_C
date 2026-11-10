@@ -30,6 +30,7 @@ import {
   Loader2, Plus, MapPin, Users, Clock, AlertTriangle, Trash2,
 } from 'lucide-react';
 import { cn, getErrorMessage } from '@/lib/utils';
+import { todayISO } from '@/lib/inventory';
 
 /** Days until a shift, from today. Negative means it is in the past. */
 function daysUntil(shiftDate: string): number {
@@ -104,10 +105,16 @@ async function assignMany(shiftId: string, volunteerIds: string[]) {
     volunteerIds.map((id) => VolunteersService.assign({ volunteer_id: id, shift_id: shiftId }))
   );
   const failed = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+  // The API warns (but still assigns) when a shift goes over the number needed.
+  const warnings = results
+    .filter((r): r is PromiseFulfilledResult<Assignment> => r.status === 'fulfilled')
+    .map((r) => r.value.warning)
+    .filter((w): w is string => !!w);
   return {
     assigned: results.length - failed.length,
     failed: failed.length,
     firstError: failed[0]?.reason as unknown,
+    warning: warnings[warnings.length - 1],
   };
 }
 
@@ -220,10 +227,14 @@ function NewShiftDialog({
       });
       // Assigning at creation is optional. The shift exists either way, and
       // anyone left out can still be added later through Manage.
-      if (selected.size === 0) return { assigned: 0, failed: 0, firstError: undefined };
-      return assignMany(shift.id, [...selected]);
+      if (selected.size === 0) {
+        return { assigned: 0, failed: 0, firstError: undefined, warning: undefined, shiftWarning: shift.warning };
+      }
+      return { ...(await assignMany(shift.id, [...selected])), shiftWarning: shift.warning };
     },
-    onSuccess: ({ assigned, failed, firstError }) => {
+    onSuccess: ({ assigned, failed, firstError, warning, shiftWarning }) => {
+      if (shiftWarning) toast.warning(shiftWarning);
+      if (warning) toast.warning(warning);
       if (failed > 0) {
         toast.warning(
           `Shift created, but ${failed} volunteer${failed === 1 ? '' : 's'} could not be assigned` +
@@ -243,7 +254,8 @@ function NewShiftDialog({
     onError: (err) => toast.error(getErrorMessage(err) || "Couldn't create the shift."),
   });
 
-  const valid = form.title.trim() && form.shift_date && form.end_time > form.start_time;
+  const valid = form.title.trim() && form.shift_date && form.shift_date >= todayISO()
+    && form.end_time > form.start_time;
 
   return (
     <>
@@ -293,7 +305,7 @@ function NewShiftDialog({
           <div className="grid grid-cols-3 gap-2">
             <div className="space-y-1">
               <label className="text-xs text-text-secondary">Date</label>
-              <Input type="date" value={form.shift_date}
+              <Input type="date" value={form.shift_date} min={todayISO()}
                 onChange={(e) => setForm({ ...form, shift_date: e.target.value })} />
             </div>
             <div className="space-y-1">
@@ -309,6 +321,9 @@ function NewShiftDialog({
           </div>
           {form.start_time && form.end_time && form.end_time <= form.start_time && (
             <p className="text-xs text-red-600">A shift must end after it starts.</p>
+          )}
+          {form.shift_date && form.shift_date < todayISO() && (
+            <p className="text-xs text-red-600">A shift can&apos;t be in the past.</p>
           )}
           <div className="space-y-1">
             <label className="text-xs text-text-secondary">Volunteers needed</label>
@@ -361,7 +376,8 @@ function AssignPanel({
 
   const assign = useMutation({
     mutationFn: (volunteerIds: string[]) => assignMany(shift.id, volunteerIds),
-    onSuccess: ({ assigned, failed, firstError }) => {
+    onSuccess: ({ assigned, failed, firstError, warning }) => {
+      if (warning) toast.warning(warning);
       if (failed > 0) {
         toast.error(
           `${failed} could not be assigned` +
@@ -381,7 +397,7 @@ function AssignPanel({
 
   const unassign = useMutation({
     mutationFn: (id: string) => VolunteersService.unassign(id),
-    onSuccess: () => { toast.success('Assignment removed.'); refresh(); },
+    onSuccess: () => { toast.success('Assignment removed. They are emailed if email is configured.'); refresh(); },
     onError: (err) => toast.error(getErrorMessage(err) || "Couldn't remove that assignment."),
   });
 
@@ -476,7 +492,7 @@ export default function VolunteerShiftsPage() {
   const cancel = useMutation({
     mutationFn: (id: string) => VolunteersService.updateShift(id, { is_cancelled: true }),
     onSuccess: () => {
-      toast.success('Shift cancelled.');
+      toast.success('Shift cancelled. Its volunteers are emailed if email is configured.');
       queryClient.invalidateQueries({ queryKey: ['volunteer-shifts'] });
     },
     onError: (err) => toast.error(getErrorMessage(err) || "Couldn't cancel the shift."),
