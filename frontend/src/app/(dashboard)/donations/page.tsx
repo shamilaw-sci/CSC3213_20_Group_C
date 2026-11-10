@@ -12,7 +12,7 @@ import { toast } from 'sonner';
 import {
   Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
-import { Download, EyeOff, Lock, RefreshCw, Search } from 'lucide-react';
+import { AlertTriangle, Download, EyeOff, Lock, RefreshCw, Search } from 'lucide-react';
 import ProtectedRoute from '@/components/layout/protected-route';
 import {
   DonationsService,
@@ -37,6 +37,7 @@ const STATUS_STYLE: Record<DonationStatus, string> = {
   pending: 'bg-amber-500/10 text-amber-600 border-amber-500/20',
   failed: 'bg-red-500/10 text-negative border-red-500/20',
   cancelled: 'bg-bg-subtle text-text-secondary border-border-brand',
+  refunded: 'bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20',
 };
 
 const STATUS_LABEL: Record<DonationStatus, string> = {
@@ -44,7 +45,17 @@ const STATUS_LABEL: Record<DonationStatus, string> = {
   pending: 'Awaiting payment',
   failed: 'Failed',
   cancelled: 'Cancelled',
+  refunded: 'Refunded',
 };
+
+// The list filter also offers "expired": pending rows over a day old.
+type StatusFilter = DonationStatus | 'expired' | '';
+
+const PAGE_SIZE = 200;
+
+function statusLabel(d: Donation): string {
+  return d.expired ? 'Expired (never paid)' : STATUS_LABEL[d.status];
+}
 
 const control =
   'h-9 rounded-md border border-border-brand bg-surface px-2 text-sm text-text-primary';
@@ -74,7 +85,9 @@ export default function DonationDetailsPage() {
 }
 
 function DonationDetails() {
-  const [status, setStatus] = useState<DonationStatus | ''>('');
+  const [status, setStatus] = useState<StatusFilter>('');
+  // How many of the newest donations to load. "Load more" adds a page.
+  const [limit, setLimit] = useState(PAGE_SIZE);
   const [purpose, setPurpose] = useState<DonationPurpose | ''>('');
   const [q, setQ] = useState('');
   const queryClient = useQueryClient();
@@ -97,15 +110,20 @@ function DonationDetails() {
     queryKey: ['donations', 'summary'],
     queryFn: DonationsService.summary,
   });
-  const { data: donations = [], isLoading: listLoading } = useQuery({
-    queryKey: ['donations', 'list'],
-    queryFn: () => DonationsService.list(),
+  const { data: donations = [], isLoading: listLoading, isFetching: listFetching } = useQuery({
+    queryKey: ['donations', 'list', limit],
+    queryFn: () => DonationsService.list({ limit }),
+    placeholderData: (previous) => previous,
   });
+  const mayHaveMore = donations.length >= limit;
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
     return donations.filter((d) =>
-      (!status || d.status === status) &&
+      (!status
+        || (status === 'expired' ? !!d.expired
+          : status === 'pending' ? d.status === 'pending' && !d.expired
+          : d.status === status)) &&
       (!purpose || d.purpose === purpose) &&
       (!needle || [donorLabel(d), d.donor_email, d.program_name, d.gateway_ref]
         .some((v) => (v || '').toLowerCase().includes(needle)))
@@ -132,7 +150,7 @@ function DonationDetails() {
         d.purpose === 'program' ? 'Specific program' : 'General',
         d.program_name,
         Number(d.amount),
-        STATUS_LABEL[d.status],
+        statusLabel(d),
         d.finance_transaction_id,
       ])
     );
@@ -337,7 +355,17 @@ function DonationDetails() {
                 {summary && summary.pending_count > 0
                   ? `${summary.pending_count} awaiting payment: started on the website but not yet confirmed by PayHere, so not in the ledger.`
                   : 'Paid donations link to their ledger transaction.'}
+                {summary && (summary.expired_count ?? 0) > 0 &&
+                  ` ${summary.expired_count} expired: left PayHere without paying more than a day ago.`}
+                {summary && (summary.refunded_count ?? 0) > 0 &&
+                  ` ${summary.refunded_count} refunded (${money(summary.refunded_total)}): their ledger row was voided.`}
               </CardDescription>
+              {summary && (summary.flagged_count ?? 0) > 0 && (
+                <p className="mt-2 inline-flex items-center gap-1.5 rounded-md border border-red-500/30 bg-red-500/10 px-2 py-1 text-xs text-negative">
+                  <AlertTriangle className="w-3.5 h-3.5" />
+                  {summary.flagged_count} donation{summary.flagged_count === 1 ? ' needs' : 's need'} checking: see the red notes below.
+                </p>
+              )}
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <div className="relative">
@@ -352,15 +380,17 @@ function DonationDetails() {
               </div>
               <select
                 value={status}
-                onChange={(e) => setStatus(e.target.value as DonationStatus | '')}
+                onChange={(e) => setStatus(e.target.value as StatusFilter)}
                 aria-label="Status"
                 className={control}
               >
                 <option value="">All statuses</option>
                 <option value="paid">Paid</option>
                 <option value="pending">Awaiting payment</option>
+                <option value="expired">Expired (never paid)</option>
                 <option value="failed">Failed</option>
                 <option value="cancelled">Cancelled</option>
+                <option value="refunded">Refunded</option>
               </select>
               <select
                 value={purpose}
@@ -431,9 +461,18 @@ function DonationDetails() {
                     </TableCell>
                     <TableCell className="text-right font-mono font-semibold align-top">{money(d.amount)}</TableCell>
                     <TableCell className="align-top">
-                      <Badge variant="outline" className={cn('font-medium', STATUS_STYLE[d.status])}>
-                        {STATUS_LABEL[d.status]}
+                      <Badge
+                        variant="outline"
+                        className={cn('font-medium', d.expired ? STATUS_STYLE.cancelled : STATUS_STYLE[d.status])}
+                      >
+                        {statusLabel(d)}
                       </Badge>
+                      {d.gateway_note && d.status !== 'refunded' && (
+                        <div className="mt-1 max-w-[240px] flex items-start gap-1 text-xs text-negative">
+                          <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" />
+                          <span>{d.gateway_note}</span>
+                        </div>
+                      )}
                       {d.status === 'pending' && d.gateway_ref && (
                         <Button
                           variant="ghost"
@@ -457,6 +496,18 @@ function DonationDetails() {
                 ))}
               </TableBody>
             </Table>
+          )}
+          {mayHaveMore && (
+            <div className="flex items-center justify-center gap-3 border-t border-border-brand p-4 text-xs text-text-secondary">
+              Showing the newest {donations.length} donations. Search and filters apply to these.
+              <Button
+                variant="outline" size="sm"
+                disabled={listFetching}
+                onClick={() => setLimit((n) => n + PAGE_SIZE)}
+              >
+                {listFetching ? 'Loading...' : 'Load more'}
+              </Button>
+            </div>
           )}
         </CardContent>
       </Card>

@@ -25,3 +25,13 @@ def _no_live_board_broadcast(monkeypatch):
 @pytest.fixture
 def board_pings(_no_live_board_broadcast):
     return _no_live_board_broadcast
+
+
+@pytest.fixture(autouse=True)
+def _fresh_donation_rate_limits():
+    """The donate routes allow a few calls per IP (D6), and every test client
+    has the same IP, so each test starts with the counters at zero."""
+    from app.api import donations
+    donations.CHECKOUT_LIMIT.reset()
+    donations.CANCEL_LIMIT.reset()
+    yield

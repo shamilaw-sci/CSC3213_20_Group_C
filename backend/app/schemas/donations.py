@@ -18,6 +18,8 @@ class DonationStatus(str, Enum):
     paid = "paid"
     failed = "failed"
     cancelled = "cancelled"
+    # Was paid, then its ledger row was voided in Finance (migration 023, D3).
+    refunded = "refunded"
 
 
 # Mirrors the amount CHECK in db/migrations/015_donations.sql, so a bad amount
@@ -120,6 +122,13 @@ class DonationOut(BaseModel):
     thank_you_sent_at: Optional[datetime] = None
     created_at: datetime
     paid_at: Optional[datetime] = None
+    refunded_at: Optional[datetime] = None
+    # Something PayHere reported that needs a person: a chargeback or a
+    # payment for the wrong amount (D3, D4).
+    gateway_note: Optional[str] = None
+    # Pending for over a day: the donor almost certainly left PayHere without
+    # paying. Worked out when read, not stored (D4).
+    expired: bool = False
 
 
 class DonorContribution(BaseModel):
@@ -159,7 +168,13 @@ class DonationSummary(BaseModel):
     anonymous_count: int
     program_total: Decimal
     general_total: Decimal
+    # Pending for less than a day; older ones count as expired (D4).
     pending_count: int
+    expired_count: int = 0
+    refunded_count: int = 0
+    refunded_total: Decimal = Decimal("0.00")
+    # Donations with a PayHere problem staff should look at.
+    flagged_count: int = 0
     by_program: list[ProgramDonationTotal]
     donors: list[DonorContribution]
     monthly: list[MonthlyDonationTotal]

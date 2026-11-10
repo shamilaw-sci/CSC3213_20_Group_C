@@ -1,4 +1,5 @@
 # backend/app/core/config.py
+import logging
 import os
 from dotenv import load_dotenv
 
@@ -60,9 +61,22 @@ PUBLIC_APP_URL: str = os.environ.get("PUBLIC_APP_URL", "http://localhost:3000").
 # page says online donations are not set up, and the rest of the API runs as
 # normal.
 #
-# Sandbox by default. Sandbox accounts (sandbox.payhere.lk) are free and need
-# no bank details. Set PAYHERE_SANDBOX=false only with a live merchant account.
-PAYHERE_SANDBOX: bool = os.environ.get("PAYHERE_SANDBOX", "true").strip().lower() != "false"
+# Sandbox accounts (sandbox.payhere.lk) are free and need no bank details.
+# PAYHERE_SANDBOX=true / false always wins. When it is not set, the app is in
+# sandbox only while it runs on localhost (D7): a real deployment that forgets
+# the setting must not quietly take test payments, where AUTHORIZED also
+# counts as paid.
+def _payhere_sandbox_default() -> bool:
+    raw = (os.environ.get("PAYHERE_SANDBOX") or "").strip().lower()
+    if raw in ("true", "1", "yes"):
+        return True
+    if raw in ("false", "0", "no"):
+        return False
+    app_url = os.environ.get("PUBLIC_APP_URL", "http://localhost:3000").lower()
+    return "localhost" in app_url or "127.0.0.1" in app_url
+
+
+PAYHERE_SANDBOX: bool = _payhere_sandbox_default()
 PAYHERE_BASE_URL: str = (
     "https://sandbox.payhere.lk" if PAYHERE_SANDBOX else "https://www.payhere.lk"
 )
@@ -82,3 +96,14 @@ PAYHERE_APP_SECRET: str | None = os.environ.get("PAYHERE_APP_SECRET") or None
 # through the thank-you page instead. Set it to a public URL (a deployment or an
 # ngrok tunnel to port 8000) to get the notification as well.
 PUBLIC_API_URL: str = os.environ.get("PUBLIC_API_URL", "http://localhost:8000").rstrip("/")
+
+# PayHere's checkout always asks for a phone number and email. An anonymous
+# donor gives none, so these organisation details are sent instead (D8).
+# PayHere's receipt for an anonymous donation therefore goes to this email.
+PAYHERE_ANON_PHONE: str = os.environ.get("PAYHERE_ANON_PHONE", "0777226301")
+PAYHERE_ANON_EMAIL: str = os.environ.get("PAYHERE_ANON_EMAIL") or BREVO_REPLY_TO
+
+logging.getLogger(__name__).info(
+    "PayHere mode: %s (set PAYHERE_SANDBOX to change it)",
+    "SANDBOX, test payments only" if PAYHERE_SANDBOX else "LIVE",
+)
