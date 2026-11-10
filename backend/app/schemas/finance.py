@@ -19,11 +19,18 @@ class ProgramCreate(ProgramBase):
     # Where it takes place. Required for every new program; trimmed, and a
     # blank or whitespace-only value is refused (422).
     location: str = Field(..., min_length=1, max_length=200)
+    # A new program needs a real name: trimmed, and blank is refused (P7).
+    program_name: str = Field(..., min_length=1, max_length=255)
 
     @field_validator("location", mode="before")
     @classmethod
     def _trim_location(cls, v):
         return v.strip() if isinstance(v, str) else v
+
+    @field_validator("program_name", mode="before")
+    @classmethod
+    def _trim_name(cls, v):
+        return " ".join(v.split()) if isinstance(v, str) else v
 
 class Program(ProgramBase):
     id: int

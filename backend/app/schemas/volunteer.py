@@ -128,6 +128,9 @@ class ShiftBase(BaseModel):
     start_time: time
     end_time: time
     volunteers_needed: int = Field(default=1, ge=1, le=200)
+    # The programme this shift is for (migration 022). Older shifts have none
+    # and are matched to a programme by title.
+    program_id: Optional[int] = None
 
     @field_validator("end_time")
     @classmethod

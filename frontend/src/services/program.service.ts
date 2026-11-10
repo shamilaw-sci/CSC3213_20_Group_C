@@ -22,17 +22,32 @@ export interface ProgramVolunteer {
   shifts: ProgramVolunteerShift[];
 }
 
-// Program lifecycle. Mirrors app/services/program_lifecycle.py: programs only
-// move Upcoming -> Active -> Completed, one step at a time.
-export type ProgramStage = 'Upcoming' | 'Active' | 'Completed';
+// Program lifecycle. Mirrors app/services/program_lifecycle.py: programs move
+// Upcoming -> Active -> Completed, one step at a time. An Upcoming program
+// can also be Cancelled (it never ran).
+export type ProgramStage = 'Upcoming' | 'Active' | 'Completed' | 'Cancelled';
 
 /** One card on a lifecycle page. Mirrors ProgramSummary in app/schemas/programs.py. */
 export interface ProgramSummary extends ProgramDetail {
   team_count: number;
   volunteer_count: number;
-  revenue: number;
-  profit: number;
+  // Null when the viewer has no finance:read.
+  revenue: number | null;
+  profit: number | null;
   cost_per_animal: number | null;
+}
+
+/** What a program still holds when it is about to be completed. */
+export interface ProgramOpenItems {
+  stock_held: { item_id: number; item_name?: string | null; outstanding: number }[];
+  shifts_after: { shift_id: string; title: string; shift_date: string }[];
+}
+
+/** An Active employee who can be put on a program team. */
+export interface AssignableEmployee {
+  id: number;
+  first_name: string;
+  last_name: string;
 }
 
 export const ProgramService = {
@@ -47,6 +62,12 @@ export const ProgramService = {
       ...data,
       total_animals_treated: 0,
     });
+    return response.data;
+  },
+
+  // Rename or move the planned start date. Only while Upcoming.
+  updateDetails: async (programId: number, data: { program_name?: string; start_date?: string }) => {
+    const response = await api.patch<ProgramDetail>(`/programs/${programId}`, data);
     return response.data;
   },
 
@@ -70,11 +91,40 @@ export const ProgramService = {
   },
 
   // The final animal count is required: it is stored with the status change
-  // and drives the Completed page's cost per animal.
-  complete: async (programId: number, totalAnimalsTreated: number) => {
+  // and drives the Completed page's cost per animal. The end date defaults to
+  // today. The API refuses (409) while the program still holds stock or has
+  // shifts after the end date, unless confirmOpenItems is true.
+  complete: async (
+    programId: number,
+    totalAnimalsTreated: number,
+    opts: { endDate?: string; confirmOpenItems?: boolean } = {},
+  ) => {
     const response = await api.post<ProgramDetail>(`/programs/${programId}/complete`, {
       total_animals_treated: totalAnimalsTreated,
+      end_date: opts.endDate || undefined,
+      confirm_open_items: opts.confirmOpenItems ?? false,
     });
+    return response.data;
+  },
+
+  // Stock still held and shifts after `endDate`, shown before completing.
+  getOpenItems: async (programId: number, endDate?: string) => {
+    const response = await api.get<ProgramOpenItems>(`/programs/${programId}/open-items`, {
+      params: endDate ? { end_date: endDate } : undefined,
+    });
+    return response.data;
+  },
+
+  // Only an Upcoming program can be cancelled.
+  cancel: async (programId: number) => {
+    const response = await api.post<ProgramDetail>(`/programs/${programId}/cancel`);
+    return response.data;
+  },
+
+  // Employees an Operations Lead can add to a team (programs:manage), without
+  // needing HR access.
+  getAssignableEmployees: async () => {
+    const response = await api.get<AssignableEmployee[]>('/programs/assignable-employees');
     return response.data;
   },
 

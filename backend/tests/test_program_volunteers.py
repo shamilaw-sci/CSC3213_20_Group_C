@@ -1,7 +1,8 @@
 """GET /api/programs/{id}/volunteers: who accepted work on a program.
 
-A shift belongs to a program when its title is the program's name (trimmed,
-case-insensitive); volunteer_shifts has no program_id yet. Only ACCEPTED
+A shift belongs to a program by volunteer_shifts.program_id (migration 022);
+an older shift with no program_id belongs when its title is the program's name
+(trimmed, case-insensitive). Only ACCEPTED
 assignments on non-cancelled shifts of THIS program, or accepted direct
 program assignments, may appear.
 
@@ -13,6 +14,8 @@ whatever .eq() filters the query happened to send.
 
 import os
 import sys
+
+import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -165,3 +168,58 @@ def test_endpoint_requires_programs_read():
     with acting_as("HR Officer", tables=_tables()):
         response = _request("GET", "/api/programs/7/volunteers")
     assert response.status_code == 403
+
+
+# --------------------------------------------------------------------------
+# Linked by program_id (migration 022, P2)
+# --------------------------------------------------------------------------
+
+def test_a_linked_shift_belongs_by_id_whatever_its_title():
+    renamed = {**_shift("s-1", title="Old name"), "program_id": 7}
+    other = {**_shift("s-2"), "program_id": 8}  # same title, other program
+    assert shift_belongs_to_program(renamed, PROGRAM)
+    assert not shift_belongs_to_program(other, PROGRAM)
+
+
+def test_an_unlinked_shift_still_matches_by_name():
+    assert shift_belongs_to_program({**_shift("s-1"), "program_id": None}, PROGRAM)
+
+
+SHIFT_BODY = {"title": PROGRAM["program_name"], "shift_date": "2026-12-05",
+              "start_time": "09:00", "end_time": "13:00", "program_id": 7}
+CREATED = {**_shift("00000000-0000-0000-0000-0000000000aa"), "program_id": 7, "volunteers_needed": 1, "description": None,
+           "created_by": None, "created_at": "2026-11-10T00:00:00+00:00"}
+
+
+def test_new_shift_is_linked_to_its_program():
+    from tests.test_restricted_funds import _CapturingSupabase
+    from app.core.supabase import get_supabase
+    from app.main import app
+
+    supabase = _CapturingSupabase({
+        "programs": {"select": [{"id": 7, "status": "Active"}]},
+        "volunteer_shifts": {"insert": [CREATED]},
+        "system_audit_logs": {"insert": [{"id": 1}]},
+    })
+    with acting_as("Operations Lead"):
+        app.dependency_overrides[get_supabase] = lambda: supabase
+        response = _request("POST", "/api/volunteers/shifts", json=SHIFT_BODY)
+    assert response.status_code == 200, response.text
+    inserted = [d for t, d in supabase.inserts if t == "volunteer_shifts"]
+    assert inserted and inserted[0]["program_id"] == 7
+    assert response.json()["program_id"] == 7
+
+
+@pytest.mark.parametrize("status", ["Completed", "Cancelled"])
+def test_no_new_shifts_for_an_ended_program(status):
+    tables = {"programs": {"select": [{"id": 7, "status": status}]},
+              "volunteer_shifts": {"insert": [CREATED]}}
+    with acting_as("Operations Lead", tables=tables):
+        response = _request("POST", "/api/volunteers/shifts", json=SHIFT_BODY)
+    assert response.status_code == 409
+
+
+def test_new_shift_for_an_unknown_program_is_404():
+    with acting_as("Operations Lead", tables={"programs": {"select": []}}):
+        response = _request("POST", "/api/volunteers/shifts", json=SHIFT_BODY)
+    assert response.status_code == 404

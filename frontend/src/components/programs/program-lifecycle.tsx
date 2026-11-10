@@ -1,14 +1,14 @@
 'use client';
 
 // The three program lifecycle pages (Upcoming / Active / Completed) share this
-// one component. Each stage decides its own KPIs, card face and card action;
+// one component. Cancelled programs are listed under the Upcoming page. Each stage decides its own KPIs, card face and card action;
 // clicking anywhere else on a card opens the full details at /programs/[id].
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  CalendarClock, PlayCircle, CheckCircle2, Plus, Loader2, Search, Dog, MapPin, Pencil,
+  CalendarClock, PlayCircle, CheckCircle2, Plus, Loader2, Search, Dog, MapPin, Pencil, Ban, AlertTriangle,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -16,6 +16,7 @@ import { ProgramService, type ProgramStage, type ProgramSummary } from '@/servic
 import { useAuthStore } from '@/store/useAuthStore';
 import { hasPermission } from '@/lib/permissions';
 import { formatLKR } from '@/lib/formatters';
+import { todayISO } from '@/lib/inventory';
 import { cn, getErrorMessage } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -36,18 +37,30 @@ export const STAGE_PATH: Record<ProgramStage, string> = {
   Upcoming: '/programs/upcoming',
   Active: '/programs/active',
   Completed: '/programs/completed',
+  Cancelled: '/programs/upcoming',
 };
 
 export const STAGE_BADGE: Record<ProgramStage, string> = {
   Upcoming: 'bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/30',
   Active: 'bg-green-500/10 text-positive border-green-500/30',
   Completed: 'bg-bg-subtle text-text-secondary border-border-brand',
+  Cancelled: 'bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/30',
 };
+
+/** Who may see which program money. Mirrors app/api/programs.py:
+ *  revenue and profit need finance:read; total cost and cost per animal
+ *  need finance:read or inventory:read. */
+export function moneyAccess(role?: string | null) {
+  const r = role || '';
+  const finances = hasPermission(r, 'finance:read');
+  return { finances, costs: finances || hasPermission(r, 'inventory:read') };
+}
 
 export function asStage(status?: string | null): ProgramStage {
   const s = (status || '').trim().toLowerCase();
   if (s === 'upcoming') return 'Upcoming';
   if (s === 'completed') return 'Completed';
+  if (s === 'cancelled') return 'Cancelled';
   return 'Active';
 }
 
@@ -89,17 +102,17 @@ const TRANSITION = {
     label: 'Mark as Completed',
     icon: CheckCircle2,
     title: 'Mark this program as completed?',
-    body: 'Its end date is set to today and it moves to Completed Programs. Its team can no longer change. This cannot be undone.',
+    body: 'It moves to Completed Programs. Its team can no longer change. This cannot be undone.',
     done: 'Program completed — it is now under Completed Programs.',
-    run: (id: number, animals: number) => ProgramService.complete(id, animals),
   },
 } as const;
 
-/** The forward move for a program in `stage`. Renders nothing when Completed. */
+/** The forward move for a program in `stage`. Renders nothing when Completed
+ *  or Cancelled. */
 export function TransitionButton({
   program, stage, size = 'sm', className, onDone,
 }: {
-  program: { id: number; program_name: string };
+  program: { id: number; program_name: string; start_date?: string | null };
   stage: ProgramStage;
   size?: 'sm' | 'default';
   className?: string;
@@ -109,17 +122,38 @@ export function TransitionButton({
   // Completing asks for the final animal count. Kept as text so the field can
   // be empty; only a whole number of 0 or more enables the confirm button.
   const [animals, setAnimals] = useState('');
+  // Completing also asks for the end date (default today) and, when the
+  // program still holds stock or has later shifts, an explicit "complete
+  // anyway".
+  const [endDate, setEndDate] = useState('');
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const queryClient = useQueryClient();
-  const config = stage === 'Completed' ? null : TRANSITION[stage];
+  const config = stage === 'Upcoming' || stage === 'Active' ? TRANSITION[stage] : null;
   const needsCount = stage === 'Active';
   const countValid = /^\d+$/.test(animals.trim());
+  const today = todayISO();
+  const minEnd = program.start_date || undefined;
+  const endValid = !needsCount || (!!endDate && endDate <= today && (!minEnd || endDate >= minEnd));
+
+  const { data: openItems, isFetching: checkingOpen } = useQuery({
+    queryKey: ['program-open-items', program.id, endDate],
+    queryFn: () => ProgramService.getOpenItems(program.id, endDate),
+    enabled: open && needsCount && endValid,
+  });
+  const hasOpenItems = !!openItems && (openItems.stock_held.length > 0 || openItems.shifts_after.length > 0);
+
+  const reset = () => { setAnimals(''); setEndDate(''); setConfirmOpen(false); };
 
   const mutation = useMutation({
-    mutationFn: () => config!.run(program.id, Number(animals.trim())),
+    mutationFn: () => (stage === 'Upcoming'
+      ? ProgramService.start(program.id)
+      : ProgramService.complete(program.id, Number(animals.trim()), {
+        endDate, confirmOpenItems: confirmOpen,
+      })),
     onSuccess: () => {
       toast.success(config!.done);
       setOpen(false);
-      setAnimals('');
+      reset();
       queryClient.invalidateQueries({ queryKey: ['programs-stage'] });
       queryClient.invalidateQueries({ queryKey: ['programs'] });
       queryClient.invalidateQueries({ queryKey: ['program', program.id] });
@@ -144,7 +178,7 @@ export function TransitionButton({
       <Button
         size={size}
         className={cn('gap-1.5 bg-accent text-white hover:bg-accent/90 font-semibold', className)}
-        onClick={() => setOpen(true)}
+        onClick={() => { reset(); setEndDate(today); setOpen(true); }}
       >
         <Icon className="h-4 w-4" /> {config.label}
       </Button>
@@ -177,6 +211,65 @@ export function TransitionButton({
               )}
             </div>
           )}
+          {needsCount && (
+            <div className="space-y-1">
+              <label htmlFor={`end-${program.id}`} className="text-sm font-medium text-text-primary">
+                End date
+              </label>
+              <Input
+                id={`end-${program.id}`}
+                type="date"
+                value={endDate}
+                min={minEnd}
+                max={today}
+                onChange={(e) => { setEndDate(e.target.value); setConfirmOpen(false); }}
+              />
+              {endDate && !endValid && (
+                <p className="text-xs text-negative">
+                  The end date can&apos;t be in the future{minEnd ? ` or before the start date (${formatDay(minEnd)})` : ''}.
+                </p>
+              )}
+            </div>
+          )}
+          {needsCount && hasOpenItems && openItems && (
+            <div className="space-y-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-text-primary">
+              <p className="flex items-center gap-1.5 font-semibold">
+                <AlertTriangle className="h-4 w-4 text-amber-600" /> This program still has open items
+              </p>
+              {openItems.stock_held.length > 0 && (
+                <div>
+                  <p className="text-text-secondary">Stock not returned yet:</p>
+                  <ul className="list-disc pl-5">
+                    {openItems.stock_held.map((s) => (
+                      <li key={s.item_id}>{s.outstanding} × {s.item_name || `Item #${s.item_id}`}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {openItems.shifts_after.length > 0 && (
+                <div>
+                  <p className="text-text-secondary">Volunteer shifts after the end date:</p>
+                  <ul className="list-disc pl-5">
+                    {openItems.shifts_after.map((s) => (
+                      <li key={s.shift_id}>{s.title} · {formatDay(s.shift_date)}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              <p className="text-text-secondary">
+                Return the stock and cancel the shifts first, or tick the box to complete anyway.
+              </p>
+              <label className="flex items-center gap-2 font-medium">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 accent-accent"
+                  checked={confirmOpen}
+                  onChange={(e) => setConfirmOpen(e.target.checked)}
+                />
+                Complete anyway
+              </label>
+            </div>
+          )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)} disabled={mutation.isPending}>
               Cancel
@@ -184,7 +277,10 @@ export function TransitionButton({
             <Button
               className="bg-accent text-white hover:bg-accent/90"
               onClick={() => mutation.mutate()}
-              disabled={mutation.isPending || (needsCount && !countValid)}
+              disabled={
+                mutation.isPending
+                || (needsCount && (!countValid || !endValid || checkingOpen || (hasOpenItems && !confirmOpen)))
+              }
             >
               {mutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : config.label}
             </Button>
@@ -192,6 +288,137 @@ export function TransitionButton({
         </DialogContent>
       </Dialog>
     </span>
+  );
+}
+
+/** Cancel an Upcoming program (it never ran). Renders nothing otherwise. */
+export function CancelProgramButton({
+  program, stage, size = 'sm',
+}: {
+  program: { id: number; program_name: string };
+  stage: ProgramStage;
+  size?: 'sm' | 'default';
+}) {
+  const [open, setOpen] = useState(false);
+  const queryClient = useQueryClient();
+  const mutation = useMutation({
+    mutationFn: () => ProgramService.cancel(program.id),
+    onSuccess: () => {
+      toast.success('Program cancelled.');
+      setOpen(false);
+      queryClient.invalidateQueries({ queryKey: ['programs-stage'] });
+      queryClient.invalidateQueries({ queryKey: ['programs'] });
+      queryClient.invalidateQueries({ queryKey: ['program', program.id] });
+    },
+    onError: (err) => toast.error(getErrorMessage(err) || 'Could not cancel the program.'),
+  });
+  if (stage !== 'Upcoming') return null;
+
+  return (
+    <span className="contents" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+      <Button
+        variant="outline" size={size}
+        className="gap-1.5 text-red-600 hover:text-red-600 border-red-500/40 hover:bg-red-500/10"
+        onClick={() => setOpen(true)}
+      >
+        <Ban className="h-4 w-4" /> Cancel Program
+      </Button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Cancel this program?</DialogTitle>
+            <DialogDescription>
+              <strong className="text-text-primary">{program.program_name}</strong> — it will not run. It is
+              kept as a record under Cancelled Programs and can no longer be started or changed. This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOpen(false)} disabled={mutation.isPending}>
+              Keep it
+            </Button>
+            <Button
+              className="bg-red-600 text-white hover:bg-red-600/90"
+              onClick={() => mutation.mutate()}
+              disabled={mutation.isPending}
+            >
+              {mutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Cancel Program'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </span>
+  );
+}
+
+/** Rename an Upcoming program or move its planned start date. */
+export function EditProgramDetailsButton({
+  program,
+}: { program: { id: number; program_name: string; start_date?: string | null } }) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState('');
+  const [startDate, setStartDate] = useState('');
+  const queryClient = useQueryClient();
+
+  const save = useMutation({
+    mutationFn: () => {
+      const data: { program_name?: string; start_date?: string } = {};
+      if (name.trim() !== program.program_name) data.program_name = name.trim();
+      if (startDate && startDate !== (program.start_date ?? '')) data.start_date = startDate;
+      return ProgramService.updateDetails(program.id, data);
+    },
+    onSuccess: () => {
+      toast.success('Program details saved.');
+      setOpen(false);
+      queryClient.invalidateQueries({ queryKey: ['program', program.id] });
+      queryClient.invalidateQueries({ queryKey: ['programs-stage'] });
+      queryClient.invalidateQueries({ queryKey: ['programs'] });
+    },
+    onError: (err) => toast.error(getErrorMessage(err) || 'Could not save the program details.'),
+  });
+
+  const changed = name.trim() !== program.program_name
+    || (!!startDate && startDate !== (program.start_date ?? ''));
+
+  return (
+    <>
+      <Button
+        variant="ghost" size="sm"
+        className="h-7 px-2 text-xs text-accent hover:text-accent gap-1"
+        onClick={() => { setName(program.program_name); setStartDate(program.start_date ?? ''); setOpen(true); }}
+      >
+        <Pencil className="h-3 w-3" /> Edit details
+      </Button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Program details</DialogTitle>
+            <DialogDescription>The name and planned start date can change until the program starts.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <label className="text-xs font-semibold uppercase tracking-wider text-text-secondary">Program name</label>
+              <Input value={name} onChange={(e) => setName(e.target.value)} maxLength={255} autoFocus />
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs font-semibold uppercase tracking-wider text-text-secondary">Planned start date</label>
+              <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOpen(false)} disabled={save.isPending}>
+              Cancel
+            </Button>
+            <Button
+              className="bg-accent text-white hover:bg-accent/90"
+              disabled={!name.trim() || !changed || save.isPending}
+              onClick={() => save.mutate()}
+            >
+              {save.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Save'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
@@ -305,9 +532,21 @@ const PAGE: Record<ProgramStage, { title: string; description: string; empty: st
     description: 'Finished programs with their final dates, costs and results.',
     empty: 'No completed programs yet.',
   },
+  Cancelled: {
+    title: 'Cancelled Programs',
+    description: 'Programs that were planned but never ran.',
+    empty: 'No cancelled programs.',
+  },
 };
 
-function Kpis({ stage, programs, loading }: { stage: ProgramStage; programs: ProgramSummary[]; loading: boolean }) {
+function Kpis({
+  stage, programs, loading, money,
+}: {
+  stage: ProgramStage;
+  programs: ProgramSummary[];
+  loading: boolean;
+  money: { finances: boolean; costs: boolean };
+}) {
   const v = (x: string | number) => (loading ? '—' : x);
   const sum = (f: (p: ProgramSummary) => number) => programs.reduce((n, p) => n + f(p), 0);
   const animals = sum((p) => p.total_animals_treated || 0);
@@ -315,7 +554,7 @@ function Kpis({ stage, programs, loading }: { stage: ProgramStage; programs: Pro
 
   if (stage === 'Upcoming') {
     const scheduled = programs.filter((p) => p.start_date).map((p) => p.start_date!).sort();
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayISO();
     const next = scheduled.find((d) => d >= today);
     return (
       <>
@@ -331,7 +570,9 @@ function Kpis({ stage, programs, loading }: { stage: ProgramStage; programs: Pro
       <>
         <KPICard title="Active Programs" value={v(programs.length)} />
         <KPICard title="Animals Treated" value={v(animals.toLocaleString())} />
-        <KPICard title="Total Cost" value={v(formatLKR(cost))} />
+        {money.costs
+          ? <KPICard title="Total Cost" value={v(formatLKR(cost))} />
+          : <KPICard title="Team Members" value={v(sum((p) => p.team_count))} />}
         <KPICard title="Volunteers Engaged" value={v(sum((p) => p.volunteer_count))} />
       </>
     );
@@ -341,12 +582,18 @@ function Kpis({ stage, programs, loading }: { stage: ProgramStage; programs: Pro
     <>
       <KPICard title="Completed Programs" value={v(programs.length)} />
       <KPICard title="Animals Treated" value={v(animals.toLocaleString())} />
-      <KPICard title="Total Cost" value={v(formatLKR(cost))} />
-      <KPICard
-        title="Net Profit"
-        value={v(formatLKR(profit))}
-        className={!loading && profit < 0 ? 'border-red-500/40 dark:border-red-500/40' : undefined}
-      />
+      {money.costs
+        ? <KPICard title="Total Cost" value={v(formatLKR(cost))} />
+        : <KPICard title="Team Members" value={v(sum((p) => p.team_count))} />}
+      {money.finances ? (
+        <KPICard
+          title="Net Profit"
+          value={v(formatLKR(profit))}
+          className={!loading && profit < 0 ? 'border-red-500/40 dark:border-red-500/40' : undefined}
+        />
+      ) : (
+        <KPICard title="Volunteers Engaged" value={v(sum((p) => p.volunteer_count))} />
+      )}
     </>
   );
 }
@@ -495,24 +742,34 @@ const STAGE_ACCENT: Record<ProgramStage, string> = {
   Upcoming: 'bg-sky-500',
   Active: 'bg-green-500',
   Completed: 'bg-slate-400 dark:bg-slate-500',
+  Cancelled: 'bg-red-400 dark:bg-red-500',
 };
 
 const STAGE_ICON: Record<ProgramStage, typeof CalendarClock> = {
   Upcoming: CalendarClock,
   Active: Dog,
   Completed: CheckCircle2,
+  Cancelled: Ban,
 };
 
 export function ProgramLifecyclePage({ stage }: { stage: ProgramStage }) {
   const router = useRouter();
   const { user } = useAuthStore();
   const canManage = hasPermission(user?.role || '', 'programs:manage');
+  const money = moneyAccess(user?.role);
   const [search, setSearch] = useState('');
   const page = PAGE[stage];
 
   const { data: programs = [], isLoading, isError } = useQuery({
     queryKey: ['programs-stage', stage],
     queryFn: () => ProgramService.listByStage(stage),
+  });
+
+  // Cancelled programs are kept as a record, listed under Upcoming.
+  const { data: cancelled = [] } = useQuery({
+    queryKey: ['programs-stage', 'Cancelled'],
+    queryFn: () => ProgramService.listByStage('Cancelled'),
+    enabled: stage === 'Upcoming',
   });
 
   const needle = search.trim().toLowerCase();
@@ -533,7 +790,7 @@ export function ProgramLifecyclePage({ stage }: { stage: ProgramStage }) {
         </div>
 
         <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
-          <Kpis stage={stage} programs={programs} loading={isLoading} />
+          <Kpis stage={stage} programs={programs} loading={isLoading} money={money} />
         </div>
 
         <div className="relative max-w-md">
@@ -594,7 +851,7 @@ export function ProgramLifecyclePage({ stage }: { stage: ProgramStage }) {
                 </div>
 
                 <div className="mt-auto flex items-center justify-end gap-2 pt-3 border-t border-border-brand">
-                  {canManage && stage !== 'Completed' ? (
+                  {canManage && (stage === 'Upcoming' || stage === 'Active') ? (
                     <TransitionButton program={p} stage={stage} />
                   ) : (
                     <span className="text-[11px] font-semibold text-accent opacity-70 group-hover:opacity-100 transition-opacity">
@@ -606,6 +863,28 @@ export function ProgramLifecyclePage({ stage }: { stage: ProgramStage }) {
               );
             })}
           </div>
+        )}
+
+        {stage === 'Upcoming' && cancelled.length > 0 && (
+          <details className="group/cancelled rounded-card border border-border-brand bg-surface p-4">
+            <summary className="cursor-pointer text-sm font-semibold text-text-secondary">
+              Cancelled Programs ({cancelled.length})
+            </summary>
+            <ul className="mt-3 divide-y divide-border-brand">
+              {cancelled.map((p) => (
+                <li key={p.id}>
+                  <button
+                    type="button"
+                    onClick={() => router.push(`/programs/${p.id}`)}
+                    className="flex w-full items-center justify-between gap-3 py-2 text-left text-sm hover:text-accent"
+                  >
+                    <span className="truncate">{p.program_name}</span>
+                    <Badge variant="outline" className={cn('text-[10px] shrink-0', STAGE_BADGE.Cancelled)}>Cancelled</Badge>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </details>
         )}
       </div>
     </ProtectedRoute>

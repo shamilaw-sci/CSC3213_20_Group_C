@@ -209,10 +209,14 @@ function NewShiftDialog({
 
   const create = useMutation({
     mutationFn: async () => {
+      // Link the shift to its programme by id, so renaming the programme
+      // later does not lose its volunteers.
+      const program = activePrograms.find((p) => p.program_name === form.title);
       const shift = await VolunteersService.createShift({
         ...form,
         description: form.description || undefined,
         location: form.location || undefined,
+        program_id: program?.id,
       });
       // Assigning at creation is optional. The shift exists either way, and
       // anyone left out can still be added later through Manage.
@@ -252,8 +256,8 @@ function NewShiftDialog({
         <div className="space-y-3">
           <div className="space-y-1">
             <label className="text-xs text-text-secondary">Programme</label>
-            {/* The shift's title is the programme's name: volunteer_shifts has
-                no programme column, so the name is what gets stored. The value
+            {/* The shift's title is the programme's name, and the shift is
+                also linked to the programme by id when it is saved. The value
                 is the name itself, so Base UI's Select.Value (which renders the
                 raw value, not the label) still shows the right text. */}
             <Select

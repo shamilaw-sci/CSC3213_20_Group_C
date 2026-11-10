@@ -71,6 +71,9 @@ export interface Shift {
   end_time: string;
   volunteers_needed: number;
   is_cancelled: boolean;
+  // The programme this shift is for. Null on shifts made before the link
+  // existed; those are matched to a programme by title.
+  program_id?: number | null;
   created_by?: string | null;
   created_at: string;
   confirmation: ShiftConfirmation;
@@ -84,6 +87,7 @@ export interface ShiftCreatePayload {
   start_time: string;
   end_time: string;
   volunteers_needed: number;
+  program_id?: number;
 }
 
 export interface Assignment {
