@@ -74,6 +74,18 @@ class _Query:
         self.filters.append(lambda r: r.get(col) is not None and str(r.get(col)) <= str(value))
         return self
 
+    def gte(self, col, value):
+        self.filters.append(lambda r: r.get(col) is not None and str(r.get(col)) >= str(value))
+        return self
+
+    def gt(self, col, value):
+        self.filters.append(lambda r: r.get(col) is not None and r.get(col) > value)
+        return self
+
+    def in_(self, col, values):
+        self.filters.append(lambda r: r.get(col) in values)
+        return self
+
     def ilike(self, col, pattern):
         plain = pattern.replace("\\%", "%").replace("\\_", "_").replace("\\\\", "\\").lower()
         self.filters.append(lambda r: str(r.get(col, "")).lower() == plain)
@@ -109,6 +121,9 @@ class _Query:
         db = self.db
         if self.table_name in db.fail_on_insert and self.op == "insert":
             raise APIError({"message": "insert rejected", "code": "23503"})
+        failure = db.fail_with.get((self.table_name, self.op))
+        if failure is not None:
+            raise failure
         if self.op == "insert":
             rows = self.payload if isinstance(self.payload, list) else [self.payload]
             out = []
@@ -148,6 +163,10 @@ class _FakeDB:
         }
         self._ids = {}
         self.fail_on_insert = set()
+        # (table, "select" | "insert" | "update") -> APIError to raise.
+        self.fail_with = {}
+        # Database functions that answer by name, e.g. inventory_refresh_expiry.
+        self.rpc_handlers = {}
         # Callables run just before the next update executes, to simulate a
         # concurrent request landing between our read and our write.
         self.before_update = []
@@ -171,6 +190,8 @@ class _FakeDB:
 
         class _Rpc:
             def execute(self_inner):
+                if name in db.rpc_handlers:
+                    return _Result(db.rpc_handlers[name](params))
                 if db.rpc_error is not None:
                     raise db.rpc_error
                 if db.rpc_result is not None:
@@ -623,3 +644,498 @@ def test_stock_in_price_is_validated(act, db, price):
     r = client.post("/api/inventory/transactions", json=_stock_in(unit_cost=price))
     assert r.status_code == 422
     assert db.stock(1) == 10
+
+
+# --------------------------------------------------------------------------
+# Inventory fixes, 2026-11-10 (audit I1, I3 to I9; migration 019)
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize("status", ["Upcoming", "Completed"])
+def test_stock_is_only_issued_to_an_active_program(act, db, status):
+    """I1. Same for the Stock page and the Issue page."""
+    db.tables["programs"][0]["status"] = status
+    for role in ("Operations Lead", "General Staff"):
+        act(role)
+        r = client.post("/api/inventory/transactions", json=_tx(quantity=1))
+        assert r.status_code == 400, (role, r.text)
+        assert "Active program" in r.json()["detail"]
+    assert db.stock(1) == 10 and db.movements() == []
+
+
+def test_legacy_in_progress_status_counts_as_active(act, db):
+    db.tables["programs"][0]["status"] = "In Progress"
+    act()
+    assert client.post("/api/inventory/transactions", json=_tx(quantity=1)).status_code == 200
+
+
+def test_leftovers_can_come_back_from_a_completed_program(act, db):
+    db.tables["programs"][0]["status"] = "Completed"
+    db.tables["inventory_transactions"] = [
+        {"id": 1, "item_id": 1, "program_id": 7, "quantity": 5, "transaction_type": "Issue", "total_cost": 7500},
+    ]
+    act("General Staff")
+    r = client.post("/api/inventory/transactions", json=_tx(transaction_type="Return", quantity=2))
+    assert r.status_code == 200, r.text
+    assert db.stock(1) == 12
+
+
+def test_return_is_costed_at_what_the_program_paid(act, db):
+    """I3. Issued 4 at 1000 each; the stored price is now 1500. A return of 1
+    gives back 1000, and returning the rest gives back exactly what is left."""
+    db.tables["inventory_transactions"] = [
+        {"id": 1, "item_id": 1, "program_id": 7, "quantity": 3, "transaction_type": "Issue", "total_cost": 3000},
+        {"id": 2, "item_id": 1, "program_id": 7, "quantity": 1, "transaction_type": "Issue", "total_cost": 1000},
+    ]
+    act()
+    r = client.post("/api/inventory/transactions", json=_tx(transaction_type="Return", quantity=1))
+    assert r.status_code == 200, r.text
+    assert db.movements()[-1]["total_cost"] == 1000
+    r = client.post("/api/inventory/transactions", json=_tx(transaction_type="Return", quantity=3))
+    assert r.status_code == 200, r.text
+    assert db.movements()[-1]["total_cost"] == 3000
+
+
+def test_stock_in_sends_the_batch_expiry(act, db):
+    """I7."""
+    db.rpc_result = {
+        "transaction_id": 57, "item_id": 1, "program_id": None, "quantity": 4, "transaction_type": "Restock",
+        "transaction_date": TODAY, "notes": None, "total_cost": 6000, "expire_date": "2027-03-01",
+        "stock_before": 10, "stock_after": 14,
+    }
+    act()
+    r = client.post("/api/inventory/transactions", json=_stock_in(expire_date="2027-03-01"))
+    assert r.status_code == 200, r.text
+    assert db.rpc_calls[-1][1]["p_expire_date"] == "2027-03-01"
+    assert r.json()["expire_date"] == "2027-03-01"
+
+
+def test_batch_expiry_without_migration_019_says_what_to_apply(act, db):
+    act()
+    r = client.post("/api/inventory/transactions", json=_stock_in(expire_date="2027-03-01"))
+    assert r.status_code == 503
+    assert "019" in r.json()["detail"]
+    assert db.stock(1) == 10 and db.movements() == []
+
+
+def test_stock_in_without_expiry_sends_none(act, db):
+    act()
+    r = client.post("/api/inventory/transactions", json=_stock_in())
+    assert r.status_code == 200, r.text
+    assert "p_expire_date" not in db.rpc_calls[-1][1]
+
+
+@pytest.mark.parametrize("body, message", [
+    (_tx(expire_date="2027-03-01"), "only entered for Stock In"),
+    (_tx(transaction_type="Restock", program_id=None, expire_date="2026-10-01"), "already expired"),
+])
+def test_batch_expiry_rules(act, db, body, message):
+    act()
+    r = client.post("/api/inventory/transactions", json=body)
+    assert r.status_code == 400
+    assert message in r.json()["detail"]
+
+
+def test_low_stock_uses_each_items_reorder_level(act, db):
+    """I8. Item 1 has 10 units and a reorder level of 20; item 2 has 5 units
+    and no level, so the default (10) applies; item 3 has 5 units and a level
+    of 2."""
+    db.tables["inventory_items"][0]["reorder_level"] = 20
+    db.tables["inventory_items"] += [
+        {"id": 2, "item_name": "Gauze", "current_stock": 5, "unit_cost": 1, "reorder_level": None},
+        {"id": 3, "item_name": "Syringes", "current_stock": 5, "unit_cost": 1, "reorder_level": 2},
+    ]
+    act()
+    r = client.get("/api/inventory/alerts/low-stock")
+    assert r.status_code == 200, r.text
+    assert [(i["id"], i["reorder_level"]) for i in r.json()] == [(2, 10), (1, 20)]
+
+
+def test_expiring_list_skips_items_with_no_stock(act, db):
+    db.tables["inventory_items"][0]["expire_date"] = "2026-11-05"
+    db.tables["inventory_items"].append(
+        {"id": 2, "item_name": "Gauze", "current_stock": 0, "unit_cost": 1, "expire_date": "2026-11-05"}
+    )
+    act()
+    r = client.get("/api/inventory/alerts/expiring")
+    assert r.status_code == 200, r.text
+    assert [i["id"] for i in r.json()] == [1]
+
+
+def test_item_can_be_corrected_but_not_its_stock_or_cost(act, db):
+    """I6."""
+    act()
+    r = client.patch("/api/inventory/items/1", json={
+        "item_name": " Rabies Vaccine (10 ml) ", "supplier_name": "ABC Pharma", "reorder_level": 15,
+    })
+    assert r.status_code == 200, r.text
+    item = db.tables["inventory_items"][0]
+    assert item["item_name"] == "Rabies Vaccine (10 ml)"
+    assert item["reorder_level"] == 15 and item["current_stock"] == 10
+    audit = db.tables["system_audit_logs"][-1]
+    assert audit["action_type"] == "INVENTORY_ITEM_UPDATE"
+    assert audit["old_payload"]["item_name"] == "Rabies Vaccine"
+
+    # Expiry now comes from the item's batches (020), so it is edited there.
+    for forbidden in ({"current_stock": 99}, {"unit_cost": 1}, {"expire_date": "2027-01-31"}):
+        r = client.patch("/api/inventory/items/1", json=forbidden)
+        assert r.status_code == 422, forbidden
+    assert db.stock(1) == 10
+
+
+def test_item_edit_refuses_a_name_another_item_has(act, db):
+    db.tables["inventory_items"].append({"id": 2, "item_name": "Gauze", "current_stock": 0, "unit_cost": 1})
+    act()
+    r = client.patch("/api/inventory/items/1", json={"item_name": "gauze"})
+    assert r.status_code == 409
+    # Its own name in another case is fine.
+    r = client.patch("/api/inventory/items/1", json={"item_name": "RABIES VACCINE"})
+    assert r.status_code == 200, r.text
+
+
+@pytest.mark.parametrize("body", [{}, {"item_name": None}, {"item_name": "  "}])
+def test_item_edit_needs_a_real_change(act, db, body):
+    act()
+    assert client.patch("/api/inventory/items/1", json=body).status_code in (400, 422)
+
+
+def test_unknown_item_edit_is_404(act, db):
+    act()
+    assert client.patch("/api/inventory/items/99", json={"reorder_level": 3}).status_code == 404
+
+
+def test_reverse_calls_the_database_function_and_is_audited(act, db):
+    """I4."""
+    db.rpc_result = {
+        "transaction_id": 60, "item_id": 1, "program_id": None, "quantity": 4, "transaction_type": "Issue",
+        "transaction_date": TODAY, "notes": "Reversal of movement #57: wrong count", "total_cost": 6000,
+        "reverses_id": 57, "stock_before": 14, "stock_after": 10, "ledger_voided": 1,
+    }
+    act()
+    r = client.post("/api/inventory/transactions/57/reverse", json={"reason": "wrong count"})
+    assert r.status_code == 200, r.text
+    assert r.json()["reverses_id"] == 57 and r.json()["id"] == 60
+    assert db.rpc_calls[-1] == ("inventory_reverse_movement", {"p_transaction_id": 57, "p_reason": "wrong count"})
+    audit = db.tables["system_audit_logs"][-1]
+    assert audit["action_type"] == "INVENTORY_REVERSAL"
+    assert audit["new_payload"]["ledger_rows_voided"] == 1
+
+
+def test_reverse_needs_a_reason(act, db):
+    act()
+    assert client.post("/api/inventory/transactions/57/reverse", json={"reason": "  "}).status_code == 422
+
+
+def test_reverse_refusal_is_passed_on(act, db):
+    db.rpc_error = APIError({"message": "This movement has already been reversed.", "code": "P0001"})
+    act()
+    r = client.post("/api/inventory/transactions/57/reverse", json={"reason": "again"})
+    assert r.status_code == 400
+    assert r.json()["detail"] == "This movement has already been reversed."
+
+
+def test_reverse_without_migration_019_says_what_to_apply(act, db):
+    act()
+    r = client.post("/api/inventory/transactions/57/reverse", json={"reason": "wrong count"})
+    assert r.status_code == 503
+    assert "019" in r.json()["detail"]
+
+
+@pytest.mark.parametrize("role, allowed", [
+    ("Admin", True), ("Director", True), ("Finance Officer", True), ("Operations Lead", True),
+    ("General Staff", False), ("HR Officer", False),
+])
+def test_who_may_reverse_or_edit(act, db, role, allowed):
+    act(role)
+    r = client.post("/api/inventory/transactions/57/reverse", json={"reason": "wrong count"})
+    assert (r.status_code != 403) == allowed, (role, r.status_code)
+    r = client.patch("/api/inventory/items/1", json={"reorder_level": 3})
+    assert (r.status_code != 403) == allowed, (role, r.status_code)
+
+
+def test_movement_list_marks_reversed_rows(act, db):
+    db.tables["inventory_transactions"] = [
+        {"id": 1, "item_id": 1, "program_id": None, "quantity": 4, "transaction_type": "Restock",
+         "transaction_date": TODAY, "total_cost": 6000, "reverses_id": None},
+        {"id": 2, "item_id": 1, "program_id": None, "quantity": 4, "transaction_type": "Issue",
+         "transaction_date": TODAY, "total_cost": 6000, "reverses_id": 1},
+    ]
+    act()
+    r = client.get("/api/inventory/transactions")
+    assert r.status_code == 200, r.text
+    by_id = {t["id"]: t for t in r.json()}
+    assert by_id[1]["reversed_by"] == 2
+    assert by_id[2]["reverses_id"] == 1 and by_id[2]["reversed_by"] is None
+
+
+# --------------------------------------------------------------------------
+# Migration 020: batches, price restore on reversal, month view
+# --------------------------------------------------------------------------
+
+def _missing_table(table):
+    return APIError({"message": f"Could not find the table 'public.{table}' in the schema cache",
+                     "code": "PGRST205"})
+
+
+def _duplicate_name():
+    return APIError({"message": 'duplicate key value violates unique constraint "inventory_items_name_unique"',
+                     "code": "23505"})
+
+
+def test_stock_in_sends_the_batch_number(act, db):
+    """O4."""
+    db.rpc_result = {
+        "transaction_id": 58, "item_id": 1, "program_id": None, "quantity": 4, "transaction_type": "Restock",
+        "transaction_date": TODAY, "notes": None, "total_cost": 6000, "batch_number": "LOT-77",
+        "stock_before": 10, "stock_after": 14,
+    }
+    act()
+    r = client.post("/api/inventory/transactions", json=_stock_in(batch_number="  LOT-77 "))
+    assert r.status_code == 200, r.text
+    assert db.rpc_calls[-1][1]["p_batch_number"] == "LOT-77"
+    assert r.json()["batch_number"] == "LOT-77"
+
+
+def test_stock_in_without_a_batch_number_lets_the_database_number_it(act, db):
+    act()
+    r = client.post("/api/inventory/transactions", json=_stock_in(batch_number="   "))
+    assert r.status_code == 200, r.text
+    assert "p_batch_number" not in db.rpc_calls[-1][1]
+
+
+def test_batch_number_is_only_for_stock_in(act, db):
+    act()
+    r = client.post("/api/inventory/transactions", json=_tx(batch_number="LOT-77"))
+    assert r.status_code == 400
+    assert "only entered for Stock In" in r.json()["detail"]
+    assert db.rpc_calls == [] and db.stock(1) == 10
+
+
+def test_batch_number_without_migration_020_says_what_to_apply(act, db):
+    act()
+    r = client.post("/api/inventory/transactions", json=_stock_in(batch_number="LOT-77"))
+    assert r.status_code == 503
+    assert "020" in r.json()["detail"]
+    assert db.stock(1) == 10 and db.movements() == []
+
+
+def test_item_batches_are_listed_soonest_expiry_first(act, db):
+    db.tables["inventory_batches"] = [
+        {"id": 1, "item_id": 1, "batch_number": "OPENING", "expire_date": None, "unit_cost": 1500,
+         "quantity_received": 4, "quantity_remaining": 4, "received_date": "2026-01-01"},
+        {"id": 2, "item_id": 1, "batch_number": "B", "expire_date": "2027-05-01", "unit_cost": 1500,
+         "quantity_received": 3, "quantity_remaining": 3, "received_date": "2026-10-01"},
+        {"id": 3, "item_id": 1, "batch_number": "A", "expire_date": "2027-01-01", "unit_cost": 1500,
+         "quantity_received": 5, "quantity_remaining": 3, "received_date": "2026-10-02"},
+        {"id": 4, "item_id": 1, "batch_number": "USED UP", "expire_date": "2026-12-01", "unit_cost": 1500,
+         "quantity_received": 2, "quantity_remaining": 0, "received_date": "2026-09-01"},
+        {"id": 5, "item_id": 2, "batch_number": "OTHER ITEM", "expire_date": "2026-12-01", "unit_cost": 1,
+         "quantity_received": 2, "quantity_remaining": 2, "received_date": "2026-09-01"},
+    ]
+    act()
+    r = client.get("/api/inventory/items/1/batches")
+    assert r.status_code == 200, r.text
+    assert [b["batch_number"] for b in r.json()] == ["A", "B", "OPENING"]
+
+
+def test_item_batches_are_empty_before_migration_020(act, db):
+    db.fail_with[("inventory_batches", "select")] = _missing_table("inventory_batches")
+    act()
+    r = client.get("/api/inventory/items/1/batches")
+    assert r.status_code == 200, r.text
+    assert r.json() == []
+
+
+def test_batches_of_an_unknown_item_is_404(act, db):
+    act()
+    assert client.get("/api/inventory/items/99/batches").status_code == 404
+
+
+def test_batch_number_and_expiry_can_be_corrected(act, db):
+    db.tables["inventory_batches"] = [
+        {"id": 3, "item_id": 1, "batch_number": "20261002-12", "expire_date": None, "unit_cost": 1500,
+         "quantity_received": 5, "quantity_remaining": 3, "received_date": "2026-10-02"},
+    ]
+    refreshed = []
+    db.rpc_handlers["inventory_refresh_expiry"] = lambda p: refreshed.append(p) or []
+    act()
+    r = client.patch("/api/inventory/batches/3", json={"batch_number": " LOT-9 ", "expire_date": "2027-02-01"})
+    assert r.status_code == 200, r.text
+    batch = db.tables["inventory_batches"][0]
+    assert batch["batch_number"] == "LOT-9" and batch["expire_date"] == "2027-02-01"
+    assert batch["quantity_remaining"] == 3
+    assert refreshed == [{"p_item_id": 1}]
+    audit = db.tables["system_audit_logs"][-1]
+    assert audit["action_type"] == "INVENTORY_BATCH_UPDATE"
+    assert audit["old_payload"]["batch_number"] == "20261002-12"
+
+
+@pytest.mark.parametrize("body", [
+    {}, {"batch_number": None}, {"batch_number": "  "}, {"quantity_remaining": 99},
+    {"unit_cost": None}, {"unit_cost": 0}, {"unit_cost": -5}, {"item_id": 2},
+])
+def test_batch_edit_only_changes_number_or_expiry(act, db, body):
+    db.tables["inventory_batches"] = [
+        {"id": 3, "item_id": 1, "batch_number": "A", "expire_date": None, "unit_cost": 1500,
+         "quantity_received": 5, "quantity_remaining": 3, "received_date": "2026-10-02"},
+    ]
+    act()
+    assert client.patch("/api/inventory/batches/3", json=body).status_code in (400, 422)
+    assert db.tables["inventory_batches"][0]["batch_number"] == "A"
+
+
+def test_unknown_batch_edit_is_404(act, db):
+    act()
+    assert client.patch("/api/inventory/batches/99", json={"batch_number": "X"}).status_code == 404
+
+
+def test_batch_edit_without_migration_020_says_what_to_apply(act, db):
+    db.fail_with[("inventory_batches", "select")] = _missing_table("inventory_batches")
+    act()
+    r = client.patch("/api/inventory/batches/3", json={"batch_number": "X"})
+    assert r.status_code == 503
+    assert "020" in r.json()["detail"]
+
+
+@pytest.mark.parametrize("role, read, manage", [
+    ("Admin", True, True), ("Operations Lead", True, True), ("Finance Officer", True, True),
+    ("General Staff", False, False), ("HR Officer", False, False),
+])
+def test_who_may_see_or_correct_batches(act, db, role, read, manage):
+    act(role)
+    assert (client.get("/api/inventory/items/1/batches").status_code != 403) == read, role
+    assert (client.patch("/api/inventory/batches/3", json={"batch_number": "X"}).status_code != 403) == manage, role
+
+
+def test_reversal_records_the_price_put_back(act, db):
+    """O3."""
+    db.rpc_result = {
+        "transaction_id": 61, "item_id": 1, "program_id": None, "quantity": 4, "transaction_type": "Issue",
+        "transaction_date": TODAY, "notes": "Reversal of movement #58: wrong price", "total_cost": 8000,
+        "reverses_id": 58, "stock_before": 14, "stock_after": 10, "ledger_voided": 1,
+        "unit_cost_restored": 1500,
+    }
+    act()
+    r = client.post("/api/inventory/transactions/58/reverse", json={"reason": "wrong price"})
+    assert r.status_code == 200, r.text
+    assert "unit_cost_restored" not in r.json()
+    assert db.tables["system_audit_logs"][-1]["new_payload"]["unit_cost_restored"] == 1500
+
+
+def test_movements_can_be_listed_for_one_month(act, db):
+    """O6/O7."""
+    db.tables["inventory_transactions"] = [
+        {"id": i, "item_id": 1, "program_id": None, "quantity": 1, "transaction_type": "Restock",
+         "transaction_date": d, "total_cost": 1500, "reverses_id": None}
+        for i, d in enumerate(["2026-09-30", "2026-10-01", "2026-10-15", "2026-10-31", "2026-11-01"], 1)
+    ]
+    act()
+    r = client.get("/api/inventory/transactions", params={"start_date": "2026-10-01", "end_date": "2026-10-31"})
+    assert r.status_code == 200, r.text
+    assert sorted(t["id"] for t in r.json()) == [2, 3, 4]
+
+
+def test_month_filter_needs_start_before_end(act, db):
+    act()
+    r = client.get("/api/inventory/transactions", params={"start_date": "2026-11-01", "end_date": "2026-10-01"})
+    assert r.status_code == 400
+
+
+def test_two_people_adding_the_same_name_at_once_get_a_clear_message(act, db):
+    """O5: the name check passes for both, then the unique index stops the second."""
+    db.fail_with[("inventory_items", "insert")] = _duplicate_name()
+    act()
+    r = client.post("/api/inventory/items", json={"item_name": "Gauze", "unit_cost": 10})
+    assert r.status_code == 409
+    assert "already exists" in r.json()["detail"]
+
+
+def test_renaming_to_a_name_just_taken_gets_a_clear_message(act, db):
+    db.fail_with[("inventory_items", "update")] = _duplicate_name()
+    act()
+    r = client.patch("/api/inventory/items/1", json={"item_name": "Gauze"})
+    assert r.status_code == 409
+    assert "already exists" in r.json()["detail"]
+
+
+def test_movement_list_shows_each_stock_ins_batch_number(act, db):
+    db.tables["inventory_transactions"] = [
+        {"id": 1, "item_id": 1, "program_id": None, "quantity": 4, "transaction_type": "Restock",
+         "transaction_date": TODAY, "total_cost": 6000, "reverses_id": None},
+        {"id": 2, "item_id": 1, "program_id": 7, "quantity": 1, "transaction_type": "Issue",
+         "transaction_date": TODAY, "total_cost": 1500, "reverses_id": None},
+    ]
+    db.tables["inventory_batches"] = [{"id": 9, "item_id": 1, "stock_in_id": 1, "batch_number": "LOT-77"}]
+    act()
+    r = client.get("/api/inventory/transactions")
+    assert r.status_code == 200, r.text
+    by_id = {t["id"]: t for t in r.json()}
+    assert by_id[1]["batch_number"] == "LOT-77" and by_id[2]["batch_number"] is None
+
+
+def test_movement_list_works_before_migration_020(act, db):
+    db.tables["inventory_transactions"] = [
+        {"id": 1, "item_id": 1, "program_id": None, "quantity": 4, "transaction_type": "Restock",
+         "transaction_date": TODAY, "total_cost": 6000, "reverses_id": None},
+    ]
+    db.fail_with[("inventory_batches", "select")] = _missing_table("inventory_batches")
+    act()
+    r = client.get("/api/inventory/transactions")
+    assert r.status_code == 200, r.text
+    assert r.json()[0]["batch_number"] is None
+
+
+# --------------------------------------------------------------------------
+# Migration 021: batch prices
+# --------------------------------------------------------------------------
+
+def _two_chain_batches(db):
+    db.tables["inventory_batches"] = [
+        {"id": 1, "item_id": 1, "batch_number": "OLD", "expire_date": None, "unit_cost": 50,
+         "quantity_received": 10, "quantity_remaining": 10, "received_date": "2026-11-01"},
+        {"id": 2, "item_id": 1, "batch_number": "NEW", "expire_date": None, "unit_cost": 100,
+         "quantity_received": 50, "quantity_remaining": 50, "received_date": "2026-11-05"},
+    ]
+    db.rpc_handlers["inventory_refresh_expiry"] = lambda p: []
+
+
+def test_newest_batch_price_also_becomes_the_items_price(act, db):
+    _two_chain_batches(db)
+    act()
+    r = client.patch("/api/inventory/batches/2", json={"unit_cost": 90})
+    assert r.status_code == 200, r.text
+    assert db.tables["inventory_batches"][1]["unit_cost"] == 90
+    assert db.tables["inventory_items"][0]["unit_cost"] == 90
+    audit = db.tables["system_audit_logs"][-1]
+    assert audit["old_payload"]["unit_cost"] == 100 and audit["new_payload"]["unit_cost"] == 90
+
+
+def test_older_batch_price_leaves_the_items_price(act, db):
+    _two_chain_batches(db)
+    act()
+    r = client.patch("/api/inventory/batches/1", json={"unit_cost": 55})
+    assert r.status_code == 200, r.text
+    assert db.tables["inventory_batches"][0]["unit_cost"] == 55
+    assert db.tables["inventory_items"][0]["unit_cost"] == 1500.0
+
+
+def test_all_batches_are_listed_by_item_in_stock_out_order(act, db):
+    _two_chain_batches(db)
+    db.tables["inventory_batches"] += [
+        {"id": 3, "item_id": 1, "batch_number": "EXPIRES", "expire_date": "2027-01-01", "unit_cost": 70,
+         "quantity_received": 5, "quantity_remaining": 5, "received_date": "2026-11-06"},
+        {"id": 4, "item_id": 1, "batch_number": "EMPTY", "expire_date": None, "unit_cost": 70,
+         "quantity_received": 5, "quantity_remaining": 0, "received_date": "2026-10-01"},
+        {"id": 5, "item_id": 2, "batch_number": "GAUZE", "expire_date": None, "unit_cost": 1,
+         "quantity_received": 5, "quantity_remaining": 5, "received_date": "2026-10-01"},
+    ]
+    act()
+    r = client.get("/api/inventory/batches")
+    assert r.status_code == 200, r.text
+    assert [b["batch_number"] for b in r.json()] == ["EXPIRES", "OLD", "NEW", "GAUZE"]
+
+
+def test_all_batches_are_empty_before_migration_020(act, db):
+    db.fail_with[("inventory_batches", "select")] = _missing_table("inventory_batches")
+    act()
+    r = client.get("/api/inventory/batches")
+    assert r.status_code == 200 and r.json() == []

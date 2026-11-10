@@ -309,9 +309,33 @@ export interface Transaction {
 // What the client sends to record a movement. unit_cost is Stock In only:
 // the price paid per unit, which costs the movement (and the finance
 // expense) and becomes the item's stored cost. Never a total.
-export type InventoryTransactionCreate = Omit<InventoryTransaction, 'id' | 'total_cost'> & {
+export type InventoryTransactionCreate = Omit<
+  InventoryTransaction,
+  'id' | 'total_cost' | 'reverses_id' | 'reversed_by' | 'inventory_items' | 'programs'
+> & {
   unit_cost?: number;
 };
+
+// One delivery of an item (migration 020). Stock Out takes from the batch
+// that expires first. Matches InventoryBatch in backend/app/schemas/inventory.py.
+export interface InventoryBatch {
+  id: number;
+  item_id: number;
+  batch_number: string;
+  expire_date?: string | null;
+  unit_cost: number;
+  quantity_received: number;
+  quantity_remaining: number;
+  received_date?: string | null;
+}
+
+// PATCH /inventory/batches/{id}. Quantities change only through movements.
+// A new unit price changes what later Stock Outs from the batch cost.
+export interface InventoryBatchUpdate {
+  batch_number?: string;
+  expire_date?: string | null;
+  unit_cost?: number;
+}
 
 // The Stock In behind a stock_in expense: what to correct in Inventory if
 // the expense is voided. Matches StockMovementRef in backend/app/schemas/finance.py.
@@ -346,6 +370,16 @@ export interface InventoryItem {
   unit_cost: number;
   expire_date?: string | null;   // ISO date string e.g. "2026-12-31", optional since not every item has one
   supplier_name?: string | null;
+  // Low stock below this many units. null = the default (10). Migration 019.
+  reorder_level?: number | null;
+}
+
+// PATCH /inventory/items/{id}. Stock and unit cost are not editable, and
+// expiry comes from the item's batches (edit the batch instead).
+export interface InventoryItemUpdate {
+  item_name?: string;
+  supplier_name?: string | null;
+  reorder_level?: number | null;
 }
 
 export interface InventoryTransaction {
@@ -358,6 +392,14 @@ export interface InventoryTransaction {
   total_cost: number; // calculated by the DB (quantity * unit_cost at the time), never sent by the client
   // Free-text reason. Required by the API for a Stock Out with no program (a stock adjustment).
   notes?: string | null;
+  // Stock In only: expiry date of the batch received.
+  expire_date?: string | null;
+  // Stock In only: the batch's number. Left empty, one is made up (migration 020).
+  batch_number?: string | null;
+  // On a reversal: the movement it undoes.
+  reverses_id?: number | null;
+  // On a reversed movement: the reversal's id.
+  reversed_by?: number | null;
   inventory_items?: {
     item_name: string;
   };
@@ -372,6 +414,8 @@ export interface LowStockItem {
   item_name: string;
   current_stock: number;
   supplier_name?: string | null;
+  // The line it was compared with: its own reorder level, or the default.
+  reorder_level: number;
 }
 
 // Response shape for GET /inventory/alerts/expiring

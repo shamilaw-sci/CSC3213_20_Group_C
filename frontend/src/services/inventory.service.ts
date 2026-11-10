@@ -1,6 +1,9 @@
 import api from '@/lib/api-client';
 import {
+  InventoryBatch,
+  InventoryBatchUpdate,
   InventoryItem,
+  InventoryItemUpdate,
   InventoryTransaction,
   InventoryTransactionCreate,
   LowStockItem,
@@ -30,9 +33,46 @@ export const InventoryService = {
     return response.data;
   },
 
-  getTransactions: async (item_id?: number) => {
-    const params = item_id ? { item_id } : {};
+  // Correct an item's name, supplier or reorder level.
+  updateItem: async (id: number, changes: InventoryItemUpdate) => {
+    const response = await api.patch<InventoryItem>(`/inventory/items/${id}`, changes);
+    return response.data;
+  },
+
+  // `limit` asks for only the newest movements instead of the whole history.
+  // `startDate`/`endDate` (YYYY-MM-DD, inclusive) ask for one period.
+  getTransactions: async (item_id?: number, limit?: number, startDate?: string, endDate?: string) => {
+    const params: Record<string, number | string> = {};
+    if (item_id) params.item_id = item_id;
+    if (limit) params.limit = limit;
+    if (startDate) params.start_date = startDate;
+    if (endDate) params.end_date = endDate;
     const response = await api.get<InventoryTransaction[]>('/inventory/transactions', { params });
+    return response.data;
+  },
+
+  // Undo a mistaken movement by recording the opposite one. Reversing a
+  // Stock In also voids its expense in Finance.
+  reverseTransaction: async (id: number, reason: string) => {
+    const response = await api.post<InventoryTransaction>(`/inventory/transactions/${id}/reverse`, { reason });
+    return response.data;
+  },
+
+  // Every item's batches with stock left, in Stock Out order.
+  getBatches: async () => {
+    const response = await api.get<InventoryBatch[]>('/inventory/batches');
+    return response.data;
+  },
+
+  // An item's batches with stock left, soonest expiry first.
+  getItemBatches: async (itemId: number) => {
+    const response = await api.get<InventoryBatch[]>(`/inventory/items/${itemId}/batches`);
+    return response.data;
+  },
+
+  // Correct a batch's number or expiry date.
+  updateBatch: async (id: number, changes: InventoryBatchUpdate) => {
+    const response = await api.patch<InventoryBatch>(`/inventory/batches/${id}`, changes);
     return response.data;
   },
 

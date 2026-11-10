@@ -9,16 +9,21 @@ from app.core.audit import log_audit_action
 from app.schemas.inventory import (
     InventoryItem,
     InventoryItemCreate,
+    InventoryItemUpdate,
+    InventoryBatch,
+    InventoryBatchUpdate,
     InventoryTransaction,
     InventoryTransactionCreate,
     LowStockItem,
     ExpiringItem,
+    MovementReverseRequest,
     OutstandingByProgram,
     CostPerAnimalResult,
     today_in_sri_lanka,
 )
+from app.services.program_lifecycle import ACTIVE, normalize_status
 from typing import List, Optional
-from datetime import timedelta
+from datetime import date, timedelta
 from supabase import Client
 
 logger = logging.getLogger(__name__)
@@ -41,6 +46,24 @@ _CAN_MOVE_STOCK = require_any_permission('inventory:manage', 'inventory:issue')
 # does the whole movement in one locked, all-or-nothing step. Until that
 # migration is applied the API falls back to the compare-and-set path below.
 _MOVEMENT_RPC = "inventory_apply_movement"
+# Undo a movement (I4), from migration 019. No fallback: without the function
+# the API says which migration to apply.
+_REVERSE_RPC = "inventory_reverse_movement"
+
+# Shown when a feature needs db/migrations/020_inventory_batches.sql.
+_MIGRATION_020_MESSAGE = (
+    "This needs the inventory batches update. Run "
+    "backend/db/migrations/020_inventory_batches.sql in Supabase, then try again."
+)
+
+# Shown when a feature needs db/migrations/019_inventory_fixes.sql.
+_MIGRATION_019_MESSAGE = (
+    "This needs the inventory database update. Run "
+    "backend/db/migrations/019_inventory_fixes.sql in Supabase, then try again."
+)
+
+# Low stock line for an item with no reorder level of its own.
+DEFAULT_REORDER_LEVEL = 10
 
 # How many times a stock update is retried when another request changed the
 # same item between our read and our write.
@@ -98,8 +121,22 @@ async def create_item(
         )
     insert_data = item.model_dump(mode="json")
     insert_data["current_stock"] = 0
+    # Only sent when set, so adding an item works before migration 019.
+    if insert_data.get("reorder_level") is None:
+        insert_data.pop("reorder_level", None)
 
-    response = supabase.table("inventory_items").insert(insert_data).execute()
+    try:
+        response = supabase.table("inventory_items").insert(insert_data).execute()
+    except APIError as e:
+        if _is_missing_019_column(e):
+            raise HTTPException(status_code=503, detail=_MIGRATION_019_MESSAGE)
+        # Someone added the same name at the same moment (unique index, 012).
+        if _is_duplicate_name(e):
+            raise HTTPException(
+                status_code=409,
+                detail=f"An item named '{item.item_name}' already exists. Use Stock In to add to it.",
+            )
+        raise
     if not response.data:
         raise HTTPException(status_code=400, detail="Failed to create item")
 
@@ -117,9 +154,86 @@ async def create_item(
     return new_item
 
 
+@router.patch("/items/{item_id}", response_model=InventoryItem)
+async def update_item(
+    item_id: int,
+    changes: InventoryItemUpdate,
+    # The same people who add items (Stock page roles).
+    current_user: dict = Depends(require_permission('inventory:manage')),
+    supabase: Client = Depends(get_supabase),
+):
+    """Correct an item's name, supplier or reorder level (I6). Stock, unit
+    cost and expiry are not editable here; see InventoryItemUpdate."""
+    data = changes.model_dump(mode="json", exclude_unset=True)
+    if not data:
+        raise HTTPException(status_code=400, detail="Nothing to change.")
+
+    existing = (
+        supabase.table("inventory_items").select("*").eq("id", item_id).limit(1).execute()
+    )
+    if not existing.data:
+        raise HTTPException(status_code=404, detail="Item not found")
+    before = existing.data[0]
+
+    if "item_name" in data:
+        clash = (
+            supabase.table("inventory_items")
+            .select("id, item_name")
+            .ilike("item_name", _escape_like(data["item_name"]))
+            .execute()
+        )
+        if any(row["id"] != item_id for row in (clash.data or [])):
+            raise HTTPException(status_code=409, detail=f"An item named '{data['item_name']}' already exists.")
+
+    try:
+        response = supabase.table("inventory_items").update(data).eq("id", item_id).execute()
+    except APIError as e:
+        if _is_missing_019_column(e):
+            raise HTTPException(status_code=503, detail=_MIGRATION_019_MESSAGE)
+        # O5: two renames to the same name at the same moment. The check
+        # above passed for both; the unique index (012) stops the second.
+        if _is_duplicate_name(e):
+            raise HTTPException(status_code=409, detail=f"An item named '{data['item_name']}' already exists.")
+        raise
+    if not response.data:
+        raise HTTPException(status_code=404, detail="Item not found")
+    after = response.data[0]
+
+    await log_audit_action(
+        supabase,
+        user_id=current_user["id"],
+        action_type="INVENTORY_ITEM_UPDATE",
+        table_name="inventory_items",
+        old_payload={k: before.get(k) for k in data},
+        new_payload={"id": item_id, **{k: after.get(k) for k in data}},
+    )
+    return after
+
+
 # ===================================================================
 # HELPERS
 # ===================================================================
+
+def _is_duplicate_name(error: Exception) -> bool:
+    """True when the write broke the unique item-name index (Postgres 23505)."""
+    text = f"{getattr(error, 'code', '')} {getattr(error, 'message', '')} {error}"
+    return "23505" in text or "inventory_items_name_unique" in text
+
+
+def _is_missing_table(error: Exception, table: str) -> bool:
+    """True when PostgREST does not know the table yet (migration not applied)."""
+    text = f"{getattr(error, 'code', '')} {getattr(error, 'message', '')} {error}"
+    return table in text and ("PGRST205" in text or "42P01" in text or "Could not find the table" in text)
+
+
+def _is_missing_019_column(error: Exception) -> bool:
+    """True when PostgREST refused a write because a column added by
+    migration 019 does not exist yet (PGRST204 'Could not find the ... column')."""
+    text = str(error).lower()
+    return ("pgrst204" in text or "column" in text) and any(
+        name in text for name in ("reorder_level", "expire_date", "reverses_id")
+    )
+
 
 def _map_transaction_row(row: dict) -> dict:
     """
@@ -199,11 +313,12 @@ def _get_program(supabase: Client, program_id: int) -> dict:
 
 
 def _outstanding_by_program(supabase: Client, item_id: int, program_id: Optional[int] = None) -> dict:
-    """{program_id: {"issued", "returned", "program_name"}} for one item,
-    counting only movements tied to a program."""
+    """{program_id: {"issued", "returned", "held_cost", "program_name"}} for
+    one item, counting only movements tied to a program. held_cost is what
+    the program paid for what it still holds (issue costs less return costs)."""
     query = (
         supabase.table("inventory_transactions")
-        .select("program_id, quantity, transaction_type, programs(program_name)")
+        .select("program_id, quantity, transaction_type, total_cost, programs(program_name)")
         .eq("item_id", item_id)
     )
     query = query.eq("program_id", program_id) if program_id is not None else query.not_.is_("program_id", "null")
@@ -216,13 +331,33 @@ def _outstanding_by_program(supabase: Client, item_id: int, program_id: Optional
             continue
         entry = totals.setdefault(
             pid,
-            {"issued": 0, "returned": 0, "program_name": (row.get("programs") or {}).get("program_name")},
+            {"issued": 0, "returned": 0, "held_cost": 0.0,
+             "program_name": (row.get("programs") or {}).get("program_name")},
         )
+        cost = float(row.get("total_cost") or 0)
         if row.get("transaction_type") == "Issue":
             entry["issued"] += int(row.get("quantity") or 0)
+            entry["held_cost"] += cost
         elif row.get("transaction_type") == "Return":
             entry["returned"] += int(row.get("quantity") or 0)
+            entry["held_cost"] -= cost
     return totals
+
+
+def _return_cost(held: Optional[dict], quantity: int) -> float:
+    """What a Return of `quantity` gives back to the program (I3): its share
+    of what the program paid for the stock it still holds, not today's price.
+    Returning everything gives back exactly what is left, so no rounding is
+    left on the program. Same rule as inventory_apply_movement() in 019."""
+    if not held:
+        return 0.0
+    count = held["issued"] - held["returned"]
+    if count <= 0:
+        return 0.0
+    value = max(held["held_cost"], 0.0)
+    if quantity >= count:
+        return round(value, 2)
+    return round(quantity * value / count, 2)
 
 
 # ===================================================================
@@ -236,18 +371,66 @@ async def get_transactions(
     # so existing callers are unaffected.
     limit: Optional[int] = Query(default=None, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
+    # Optional date range (inclusive). The Stock page asks for one month.
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
     current_user: dict = Depends(require_permission('inventory:read')),
     supabase: Client = Depends(get_supabase),
 ):
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(status_code=400, detail="start_date must be on or before end_date")
     query = supabase.table("inventory_transactions").select("*, inventory_items(item_name), programs(program_name)")
     if item_id:
         query = query.eq("item_id", item_id)
+    if start_date:
+        query = query.gte("transaction_date", start_date.isoformat())
+    if end_date:
+        query = query.lte("transaction_date", end_date.isoformat())
     query = query.order("transaction_date", desc=True)
     if limit is not None:
         query = query.range(offset, offset + limit - 1)
     response = query.execute()
+    rows = [_map_transaction_row(row) for row in (response.data or [])]
 
-    return [_map_transaction_row(row) for row in (response.data or [])]
+    # Mark the movements on this page that have been reversed, so the page
+    # does not offer Reverse twice. Skipped quietly before migration 019.
+    ids = [row["id"] for row in rows if row.get("id") is not None]
+    if ids:
+        try:
+            reversals = (
+                supabase.table("inventory_transactions")
+                .select("*")
+                .in_("reverses_id", ids)
+                .execute()
+            )
+            by_original = {
+                r["reverses_id"]: _map_transaction_row(r)["id"] for r in (reversals.data or [])
+            }
+            for row in rows:
+                if row["id"] in by_original:
+                    row["reversed_by"] = by_original[row["id"]]
+        except APIError as e:
+            if not _is_missing_019_column(e):
+                raise
+
+    # Show each Stock In's batch number. Skipped quietly before migration 020.
+    restock_ids = [row["id"] for row in rows if row.get("transaction_type") == "Restock" and row.get("id") is not None]
+    if restock_ids:
+        try:
+            batches = (
+                supabase.table("inventory_batches")
+                .select("stock_in_id, batch_number")
+                .in_("stock_in_id", restock_ids)
+                .execute()
+            )
+            number_by_stock_in = {b["stock_in_id"]: b["batch_number"] for b in (batches.data or [])}
+            for row in rows:
+                if row["id"] in number_by_stock_in:
+                    row["batch_number"] = number_by_stock_in[row["id"]]
+        except APIError as e:
+            if not _is_missing_table(e, "inventory_batches"):
+                raise
+    return rows
 
 
 @router.get("/items/{item_id}/outstanding", response_model=List[OutstandingByProgram])
@@ -299,6 +482,9 @@ def _record_movement(
     transaction_date: str,
     notes: Optional[str],
     unit_cost: Optional[float] = None,
+    expire_date: Optional[str] = None,
+    return_cost: Optional[float] = None,
+    batch_number: Optional[str] = None,
 ) -> tuple[dict, int, int]:
     """
     Move the stock and write the movement row as one step. Returns
@@ -306,6 +492,9 @@ def _record_movement(
 
     unit_cost is a Stock In's new price paid: it costs the movement and
     becomes the item's stored unit_cost. None means the stored cost.
+    expire_date is a Stock In batch's expiry (needs migration 019).
+    return_cost is a Return's cost worked out by the API, used only on the
+    fallback path (the database function works it out itself).
 
     Preferred path: the inventory_apply_movement() database function, which
     locks the item row, checks every rule and writes both rows in a single
@@ -327,6 +516,11 @@ def _record_movement(
     # 017 still takes the locked path for every other movement.
     if unit_cost is not None:
         params["p_unit_cost"] = unit_cost
+    # Likewise only sent when given, so 017's function still takes the rest.
+    if expire_date is not None:
+        params["p_expire_date"] = expire_date
+    if batch_number is not None:
+        params["p_batch_number"] = batch_number
     try:
         result = supabase.rpc(_MOVEMENT_RPC, params).execute()
         row = result.data[0] if isinstance(result.data, list) else result.data
@@ -343,10 +537,15 @@ def _record_movement(
             status = 404 if getattr(e, "code", None) == "P0002" else 400
             raise HTTPException(status_code=status, detail=e.message or "The movement was not saved.")
         logger.warning(
-            "%s() not found with these parameters; apply db/migrations/012_inventory_integrity.sql "
-            "and 017_stock_in_price.sql",
+            "%s() not found with these parameters; apply db/migrations/012_inventory_integrity.sql, "
+            "017_stock_in_price.sql and 019_inventory_fixes.sql",
             _MOVEMENT_RPC,
         )
+        # A batch number needs 020's function, a batch expiry 019's column.
+        if batch_number is not None:
+            raise HTTPException(status_code=503, detail=_MIGRATION_020_MESSAGE)
+        if expire_date is not None:
+            raise HTTPException(status_code=503, detail=_MIGRATION_019_MESSAGE)
 
     item = _get_item(supabase, item_id)
     delta = -quantity if tx_type == "Issue" else quantity
@@ -360,10 +559,11 @@ def _record_movement(
         "transaction_type": tx_type,
         "transaction_date": transaction_date,
         "notes": notes,
-        # Cost at the price paid on a Stock In, else today's unit cost. Worked
-        # out here, never sent as a total by the client. Some movements were
-        # saved with 0 before.
-        "total_cost": round(quantity * cost_each, 2),
+        # Cost at the price paid on a Stock In, a Return at what the program
+        # paid (I3), else today's unit cost. Worked out here, never sent as a
+        # total by the client. Some movements were saved with 0 before.
+        "total_cost": return_cost if (tx_type == "Return" and return_cost is not None)
+        else round(quantity * cost_each, 2),
     }
 
     failure: Optional[str] = None
@@ -423,6 +623,14 @@ async def create_transaction(
     # costed at the stored unit cost (programs.total_cost relies on that).
     if transaction.unit_cost is not None and tx_type != "Restock":
         raise HTTPException(status_code=400, detail="A unit price is only entered for Stock In.")
+    # Expiry belongs to the batch that arrives.
+    if transaction.expire_date is not None:
+        if tx_type != "Restock":
+            raise HTTPException(status_code=400, detail="An expiry date is only entered for Stock In.")
+        if transaction.expire_date < transaction.transaction_date:
+            raise HTTPException(status_code=400, detail="This batch has already expired. Check the expiry date.")
+    if transaction.batch_number is not None and tx_type != "Restock":
+        raise HTTPException(status_code=400, detail="A batch number is only entered for Stock In.")
 
     # --- Rules (decided 2026-11-01) ------------------------------------
     # Issue/Returns pages (inventory:issue without manage) record only
@@ -449,8 +657,19 @@ async def create_transaction(
     # too gives the same clear messages on the fallback path.
     item = _get_item(supabase, transaction.item_id)
     if program_id is not None:
-        _get_program(supabase, program_id)
+        program = _get_program(supabase, program_id)
+        # I1: stock goes out only to a program that is running. Returns are
+        # allowed from any program, so leftovers come back after it ends.
+        if tx_type == "Issue" and normalize_status(program.get("status")) != ACTIVE:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Stock can only be issued to an Active program. "
+                    f"'{program.get('program_name')}' is {normalize_status(program.get('status'))}."
+                ),
+            )
 
+    return_cost = None
     if tx_type == "Return":
         held = _outstanding_by_program(supabase, transaction.item_id, program_id).get(program_id)
         outstanding = (held["issued"] - held["returned"]) if held else 0
@@ -462,6 +681,7 @@ async def create_transaction(
                     f"{max(outstanding, 0)} of '{item['item_name']}' (issued minus already returned)."
                 ),
             )
+        return_cost = _return_cost(held, transaction.quantity)
 
     # Stock In at a new price: the movement is costed at what was paid and the
     # item keeps it as its stored cost (last price paid). The stored price
@@ -480,6 +700,9 @@ async def create_transaction(
         transaction_date=transaction.transaction_date.isoformat(),
         notes=transaction.notes,
         unit_cost=new_cost,
+        expire_date=transaction.expire_date.isoformat() if transaction.expire_date else None,
+        return_cost=return_cost,
+        batch_number=transaction.batch_number,
     )
     created = _map_transaction_row(created_row)
 
@@ -504,24 +727,193 @@ async def create_transaction(
     return created
 
 
+@router.post("/transactions/{transaction_id}/reverse", response_model=InventoryTransaction)
+async def reverse_transaction(
+    transaction_id: int,
+    body: MovementReverseRequest,
+    # Undoing a movement is a Stock page action. Issue-only users (General
+    # Staff) ask someone on the Stock page, as they do for adjustments.
+    current_user: dict = Depends(require_permission('inventory:manage')),
+    supabase: Client = Depends(get_supabase),
+):
+    """
+    Undo a mistaken movement (I4) by recording the opposite one, dated today
+    and at the same cost. The original stays in the history. Reversing a
+    Stock In also voids the expense it posted to the ledger, so stock and
+    money are corrected together. All of it happens in one database step
+    (inventory_reverse_movement() in migration 019).
+    """
+    try:
+        result = supabase.rpc(
+            _REVERSE_RPC, {"p_transaction_id": transaction_id, "p_reason": body.reason}
+        ).execute()
+    except APIError as e:
+        if _rpc_missing(e):
+            raise HTTPException(status_code=503, detail=_MIGRATION_019_MESSAGE)
+        status = 404 if getattr(e, "code", None) == "P0002" else 400
+        raise HTTPException(status_code=status, detail=e.message or "The reversal was not saved.")
+
+    row = result.data[0] if isinstance(result.data, list) else result.data
+    if not row:
+        raise HTTPException(status_code=400, detail="The reversal was not saved.")
+    before = int(row.pop("stock_before", 0) or 0)
+    after = int(row.pop("stock_after", 0) or 0)
+    ledger_voided = int(row.pop("ledger_voided", 0) or 0)
+    # O3 (020): the price put back when the latest Stock In was undone.
+    price_restored = row.pop("unit_cost_restored", None)
+    created = _map_transaction_row(row)
+
+    await log_audit_action(
+        supabase,
+        user_id=current_user["id"],
+        action_type="INVENTORY_REVERSAL",
+        table_name="inventory_transactions",
+        old_payload={"reversed_transaction_id": transaction_id, "item_id": created.get("item_id"),
+                     "current_stock": before},
+        new_payload={**created, "current_stock": after, "reason": body.reason,
+                     "ledger_rows_voided": ledger_voided, "unit_cost_restored": price_restored},
+    )
+    return created
+
+
+# ===================================================================
+# BATCHES  (migration 020)
+# ===================================================================
+
+def _batch_order(batch: dict):
+    """The order Stock Out takes batches in: soonest expiry first, no expiry
+    last, then the oldest."""
+    return (batch.get("expire_date") is None, str(batch.get("expire_date") or ""),
+            str(batch.get("received_date") or ""), batch["id"])
+
+
+@router.get("/batches", response_model=List[InventoryBatch])
+async def get_batches(
+    # The Stock page lists every item's batches with their prices.
+    current_user: dict = Depends(require_permission('inventory:read')),
+    supabase: Client = Depends(get_supabase),
+):
+    """Every batch with stock left, grouped by item in Stock Out order.
+    Empty before migration 020."""
+    try:
+        response = supabase.table("inventory_batches").select("*").gt("quantity_remaining", 0).execute()
+    except APIError as e:
+        if _is_missing_table(e, "inventory_batches"):
+            return []
+        raise
+    return sorted(response.data or [], key=lambda b: (b["item_id"], *_batch_order(b)))
+
+
+@router.get("/items/{item_id}/batches", response_model=List[InventoryBatch])
+async def get_item_batches(
+    item_id: int,
+    # Shown in the Stock page's Edit Item dialog.
+    current_user: dict = Depends(require_permission('inventory:read')),
+    supabase: Client = Depends(get_supabase),
+):
+    """An item's batches with stock left, soonest expiry first (the order
+    Stock Out takes them in). Empty before migration 020."""
+    _get_item(supabase, item_id)
+    try:
+        response = (
+            supabase.table("inventory_batches")
+            .select("*")
+            .eq("item_id", item_id)
+            .gt("quantity_remaining", 0)
+            .execute()
+        )
+    except APIError as e:
+        if _is_missing_table(e, "inventory_batches"):
+            return []
+        raise
+    return sorted(response.data or [], key=_batch_order)
+
+
+@router.patch("/batches/{batch_id}", response_model=InventoryBatch)
+async def update_batch(
+    batch_id: int,
+    changes: InventoryBatchUpdate,
+    current_user: dict = Depends(require_permission('inventory:manage')),
+    supabase: Client = Depends(get_supabase),
+):
+    """Correct a batch's number, expiry date or unit price. The item's expiry
+    is then worked out again from its batches. A new price on the item's
+    newest batch also becomes the item's stored price (what Stock In
+    suggests next time)."""
+    data = changes.model_dump(mode="json", exclude_unset=True)
+    if not data:
+        raise HTTPException(status_code=400, detail="Nothing to change.")
+    try:
+        existing = supabase.table("inventory_batches").select("*").eq("id", batch_id).limit(1).execute()
+    except APIError as e:
+        if _is_missing_table(e, "inventory_batches"):
+            raise HTTPException(status_code=503, detail=_MIGRATION_020_MESSAGE)
+        raise
+    if not existing.data:
+        raise HTTPException(status_code=404, detail="Batch not found")
+    before = existing.data[0]
+
+    response = supabase.table("inventory_batches").update(data).eq("id", batch_id).execute()
+    if not response.data:
+        raise HTTPException(status_code=404, detail="Batch not found")
+    after = response.data[0]
+    supabase.rpc("inventory_refresh_expiry", {"p_item_id": before["item_id"]}).execute()
+
+    if "unit_cost" in data:
+        newest = (
+            supabase.table("inventory_batches")
+            .select("id, received_date")
+            .eq("item_id", before["item_id"])
+            .execute()
+        )
+        newest_id = max(
+            (newest.data or [after]), key=lambda b: (str(b.get("received_date") or ""), b["id"])
+        )["id"]
+        if newest_id == batch_id:
+            supabase.table("inventory_items").update({"unit_cost": data["unit_cost"]}).eq(
+                "id", before["item_id"]
+            ).execute()
+
+    await log_audit_action(
+        supabase,
+        user_id=current_user["id"],
+        action_type="INVENTORY_BATCH_UPDATE",
+        table_name="inventory_batches",
+        old_payload={"id": batch_id, "item_id": before["item_id"], **{k: before.get(k) for k in data}},
+        new_payload={"id": batch_id, "item_id": before["item_id"], **{k: after.get(k) for k in data}},
+    )
+    return after
+
+
 # ===================================================================
 # ALERTS  (write-up Section 7 & 8)
 # ===================================================================
 
 @router.get("/alerts/low-stock", response_model=List[LowStockItem])
 async def get_low_stock_items(
-    threshold: int = Query(default=10, ge=0, le=100_000),
+    # The line for items with no reorder level of their own (I8).
+    threshold: int = Query(default=DEFAULT_REORDER_LEVEL, ge=0, le=100_000),
     user=Depends(_ANY_INVENTORY),
     supabase: Client = Depends(get_supabase),
 ):
-    response = (
-        supabase.table("inventory_items")
-        .select("id, item_name, current_stock, supplier_name")
-        .lt("current_stock", threshold)
-        .order("current_stock", desc=False)
-        .execute()
-    )
-    return response.data or []
+    # Each item is compared with its own reorder level. PostgREST cannot
+    # compare two columns, so the (small) item list is filtered here. "*"
+    # keeps this working before migration 019 adds reorder_level.
+    response = supabase.table("inventory_items").select("*").execute()
+    low = []
+    for item in response.data or []:
+        level = item.get("reorder_level")
+        level = threshold if level is None else int(level)
+        stock = int(item.get("current_stock") or 0)
+        if stock < level:
+            low.append({
+                "id": item["id"],
+                "item_name": item["item_name"],
+                "current_stock": stock,
+                "supplier_name": item.get("supplier_name"),
+                "reorder_level": level,
+            })
+    return sorted(low, key=lambda i: (i["current_stock"], i["item_name"].lower()))
 
 
 @router.get("/alerts/expiring", response_model=List[ExpiringItem])
@@ -538,6 +930,9 @@ async def get_expiring_items(
         supabase.table("inventory_items")
         .select("id, item_name, expire_date, current_stock")
         .not_.is_("expire_date", "null")
+        # Only stock still on the shelf. An empty item's old date is not a
+        # warning anyone can act on.
+        .gt("current_stock", 0)
         .lte("expire_date", str(cutoff))
         .order("expire_date", desc=False)
         .execute()

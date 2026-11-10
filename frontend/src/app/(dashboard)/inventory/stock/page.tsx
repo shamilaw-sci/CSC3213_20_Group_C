@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { format, parseISO } from 'date-fns';
 import {
@@ -9,16 +9,21 @@ import {
   ArrowUpCircle,
   CalendarClock,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   Package,
+  Pencil,
   Plus,
   RotateCcw,
   Search,
+  Undo2,
   type LucideIcon,
 } from 'lucide-react';
 
 import {
+  useAllBatches,
   useInventoryItems,
-  useInventoryTransactions,
+  useInventoryMonthTransactions,
   useLowStockItems,
   useExpiringItems,
 } from '@/hooks/useInventory';
@@ -26,12 +31,18 @@ import { FinanceService } from '@/services/finance.service';
 import { useAuthStore } from '@/store/useAuthStore';
 import { hasPermission } from '@/lib/permissions';
 import { formatLKR } from '@/lib/formatters';
-import { todayISO } from '@/lib/inventory';
+import { DEFAULT_REORDER_LEVEL, isActiveProgram, todayISO } from '@/lib/inventory';
 import ProtectedRoute from '@/components/layout/protected-route';
 import { KPICard } from '@/components/shared/kpi-card';
-import { AddItemDialog, MovementDialog, type MovementKind } from '@/components/inventory/stock-dialogs';
+import {
+  AddItemDialog,
+  EditItemDialog,
+  MovementDialog,
+  ReverseMovementDialog,
+  type MovementKind,
+} from '@/components/inventory/stock-dialogs';
 import { cn } from '@/lib/utils';
-import type { InventoryItem, InventoryTransaction } from '@/types';
+import type { InventoryBatch, InventoryItem, InventoryTransaction } from '@/types';
 import {
   Table,
   TableBody,
@@ -50,14 +61,26 @@ import { Input } from '@/components/ui/input';
 // Constants
 // ---------------------------------------------------------------------------
 
-// Items with fewer units than this count as "low stock". The page passes it to
-// the backend (GET /inventory/alerts/low-stock), and the backend decides which
-// items are low, so there is a single definition of "low stock" in the system.
-const LOW_STOCK_THRESHOLD = 10;
+// An item is "low stock" below its own reorder level, or below this default
+// when it has none. The page passes the default to the backend
+// (GET /inventory/alerts/low-stock), and the backend decides which items are
+// low, so there is a single definition of "low stock" in the system.
+const LOW_STOCK_THRESHOLD = DEFAULT_REORDER_LEVEL;
 const MAX_ALERT_CARDS = 4;
-const MAX_MOVEMENTS = 10;
 const EXPIRY_WINDOW_DAYS = 30;
 const MAX_EXPIRY_ROWS = 5;
+
+// "2026-11" -> "November 2026".
+function monthLabel(month: string) {
+  return format(parseISO(`${month}-01`), 'MMMM yyyy');
+}
+
+// "2026-01" moved by -1 -> "2025-12".
+function shiftMonth(month: string, by: number) {
+  const [year, m] = month.split('-').map(Number);
+  const d = new Date(year, m - 1 + by, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
 
 // One accent primary action; the rest are outline buttons with a coloured icon.
 const ACTION_BUTTON = 'h-10 gap-2 rounded-lg px-4 text-sm font-semibold shadow-sm transition-colors';
@@ -142,11 +165,16 @@ function StockPage() {
   const canManage = hasPermission(user?.role as string, 'inventory:manage');
 
   const { data: items, isLoading: loadingItems, isError: itemsError } = useInventoryItems();
+  // Each item's batches with their own price (migrations 020 and 021).
+  const { data: batches } = useAllBatches();
+  // The Movements card shows every movement in one month ("YYYY-MM").
+  const thisMonth = todayISO().slice(0, 7);
+  const [month, setMonth] = useState(thisMonth);
   const {
     data: transactions,
     isLoading: loadingTransactions,
     isError: transactionsError,
-  } = useInventoryTransactions();
+  } = useInventoryMonthTransactions(month);
   const {
     data: lowStock,
     isLoading: loadingLowStock,
@@ -162,13 +190,24 @@ function StockPage() {
   // saving, so the same movement cannot be submitted twice.
   const [addItemOpen, setAddItemOpen] = useState(false);
   const [movement, setMovement] = useState<{ kind: MovementKind; itemId?: number } | null>(null);
+  const [editing, setEditing] = useState<InventoryItem | null>(null);
+  const [reversing, setReversing] = useState<InventoryTransaction | null>(null);
   const hasItems = (items?.length ?? 0) > 0;
 
-  // Programs for the Stock Out / Return dialogs
+  // Programs: names for the movement list, and the Stock Out picker.
   const { data: programs } = useQuery({
     queryKey: ['programs'],
     queryFn: FinanceService.getPrograms,
   });
+  // Stock goes out only to a program that is running (the API refuses the
+  // rest). Returns pick from the programs that hold the item instead.
+  const activePrograms = useMemo(
+    () =>
+      (programs ?? [])
+        .filter((p) => isActiveProgram(p.status))
+        .sort((a, b) => a.program_name.localeCompare(b.program_name)),
+    [programs]
+  );
 
   const [search, setSearch] = useState('');
   const [stockFilter, setStockFilter] = useState<'all' | 'low'>('all');
@@ -194,10 +233,29 @@ function StockPage() {
     [items]
   );
 
-  const totalValue = useMemo(
-    () => (items ?? []).reduce((sum, i) => sum + i.current_stock * Number(i.unit_cost), 0),
-    [items]
-  );
+  // Batches per item, in the order Stock Out uses them.
+  const batchesByItem = useMemo(() => {
+    const map = new Map<number, InventoryBatch[]>();
+    for (const b of batches ?? []) {
+      const list = map.get(b.item_id) ?? [];
+      list.push(b);
+      map.set(b.item_id, list);
+    }
+    return map;
+  }, [batches]);
+
+  // An item's value: each batch at its own price. Falls back to stock x the
+  // item's price when the batches are not loaded or do not add up.
+  const itemValue = (item: InventoryItem) => {
+    const list = batchesByItem.get(item.id);
+    const inBatches = (list ?? []).reduce((sum, b) => sum + b.quantity_remaining, 0);
+    if (list && list.length > 0 && inBatches === item.current_stock) {
+      return list.reduce((sum, b) => sum + b.quantity_remaining * Number(b.unit_cost), 0);
+    }
+    return item.current_stock * Number(item.unit_cost);
+  };
+
+  const totalValue = (items ?? []).reduce((sum, i) => sum + itemValue(i), 0);
 
   const today = todayISO();
   const expiryRows = (expiring ?? [])
@@ -205,10 +263,7 @@ function StockPage() {
     .sort((a, b) => a.expire_date.localeCompare(b.expire_date))
     .slice(0, MAX_EXPIRY_ROWS);
 
-  const visibleValue = useMemo(
-    () => visibleItems.reduce((sum, i) => sum + i.current_stock * Number(i.unit_cost), 0),
-    [visibleItems]
-  );
+  const visibleValue = visibleItems.reduce((sum, i) => sum + itemValue(i), 0);
 
   const unitCostById = useMemo(
     () => new Map((items ?? []).map((i) => [i.id, Number(i.unit_cost)])),
@@ -234,8 +289,7 @@ function StockPage() {
         .sort(
           (a, b) =>
             b.transaction_date.localeCompare(a.transaction_date) || b.id - a.id
-        )
-        .slice(0, MAX_MOVEMENTS),
+        ),
     [transactions]
   );
 
@@ -256,7 +310,10 @@ function StockPage() {
   // The label depends on program_id, not on whether a name arrived: a Stock Out
   // is only a "Stock adjustment" when it really has no program.
   const getProgramLabel = (tx: InventoryTransaction) => {
-    if (tx.program_id == null) return tx.transaction_type === 'Issue' ? 'Stock adjustment' : '—';
+    if (tx.program_id == null) {
+      if (tx.reverses_id != null) return '—';
+      return tx.transaction_type === 'Issue' ? 'Stock adjustment' : '—';
+    }
     return (
       tx.programs?.program_name ?? programNameById.get(tx.program_id) ?? `Program #${tx.program_id}`
     );
@@ -336,7 +393,7 @@ function StockPage() {
           <>
             <KPICard title="Items" value={items?.length ?? 0} />
             <KPICard title="Stock value" value={formatLKR(totalValue)} />
-            <KPICard title={`Below ${LOW_STOCK_THRESHOLD} units`} value={lowStockError ? '—' : (lowStock?.length ?? 0)} />
+            <KPICard title="Low stock" value={lowStockError ? '—' : (lowStock?.length ?? 0)} />
             <KPICard
               title={`Expiring in ${EXPIRY_WINDOW_DAYS} days`}
               value={expiringError ? '—' : (expiring?.length ?? 0)}
@@ -361,7 +418,7 @@ function StockPage() {
             )}
           </div>
           <p className="text-xs text-text-muted">
-            Items with fewer than {LOW_STOCK_THRESHOLD} units
+            Items below their reorder level ({LOW_STOCK_THRESHOLD} units unless set on the item)
             {hiddenAlerts > 0 &&
               ` · showing the ${alertCards.length} lowest, ${hiddenAlerts} more in the list below`}
           </p>
@@ -390,7 +447,7 @@ function StockPage() {
                   All items are well stocked
                 </p>
                 <p className="text-xs text-text-secondary">
-                  Every item has at least {LOW_STOCK_THRESHOLD} units on hand.
+                  Every item is at or above its reorder level.
                 </p>
               </div>
             </div>
@@ -426,7 +483,8 @@ function StockPage() {
                       {item.current_stock}
                     </div>
                     <p className="mt-1 truncate text-xs text-text-secondary">
-                      units left{item.supplier_name ? ` · ${item.supplier_name}` : ''}
+                      units left · reorder at {item.reorder_level}
+                      {item.supplier_name ? ` · ${item.supplier_name}` : ''}
                     </p>
                   </div>
 
@@ -562,12 +620,17 @@ function StockPage() {
                       <TableHead className="text-right font-heading text-xs text-text-secondary">
                         Total Value
                       </TableHead>
+                      {canManage && (
+                        <TableHead className="w-10">
+                          <span className="sr-only">Edit</span>
+                        </TableHead>
+                      )}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {visibleItems.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={4} className="py-8 text-center text-xs text-text-muted">
+                        <TableCell colSpan={canManage ? 5 : 4} className="py-8 text-center text-xs text-text-muted">
                           {items && items.length > 0
                             ? 'No items match your search or filter'
                             : 'No inventory items yet'}
@@ -576,13 +639,24 @@ function StockPage() {
                     ) : (
                       visibleItems.map((item) => {
                         const status = getStockStatus(item);
+                        const itemBatches = batchesByItem.get(item.id) ?? [];
+                        const prices = itemBatches.map((b) => Number(b.unit_cost));
+                        const mixedPrices = prices.length > 1 && Math.min(...prices) !== Math.max(...prices);
                         return (
-                          <TableRow
-                            key={item.id}
-                            className="border-border-brand transition-colors hover:bg-bg-subtle/60"
-                          >
+                          <Fragment key={item.id}>
+                          <TableRow className="border-border-brand transition-colors hover:bg-bg-subtle/60">
                             <TableCell className="text-xs font-semibold text-text-primary">
                               {item.item_name}
+                              {itemBatches.length === 1 && (
+                                <p className="mt-0.5 font-mono text-[10px] font-normal text-text-muted">
+                                  Batch {itemBatches[0].batch_number}
+                                </p>
+                              )}
+                              {itemBatches.length > 1 && (
+                                <p className="mt-0.5 text-[10px] font-normal text-text-muted">
+                                  {itemBatches.length} batches
+                                </p>
+                              )}
                             </TableCell>
                             <TableCell>
                               <div className="flex items-center gap-2">
@@ -600,12 +674,63 @@ function StockPage() {
                               </div>
                             </TableCell>
                             <TableCell className="text-right font-mono text-xs font-semibold text-text-primary">
-                              {formatLKR(Number(item.unit_cost))}
+                              {mixedPrices ? (
+                                <span className="text-text-secondary">See batches</span>
+                              ) : (
+                                formatLKR(prices.length > 0 ? prices[0] : Number(item.unit_cost))
+                              )}
                             </TableCell>
                             <TableCell className="text-right font-mono text-xs text-text-secondary">
-                              {formatLKR(item.current_stock * Number(item.unit_cost))}
+                              {formatLKR(itemValue(item))}
                             </TableCell>
+                            {canManage && (
+                              <TableCell className="py-1 text-right">
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => setEditing(item)}
+                                  title={`Edit ${item.item_name}`}
+                                  aria-label={`Edit ${item.item_name}`}
+                                  className="h-8 w-8 p-0 text-text-secondary hover:text-text-primary"
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
+                                </Button>
+                              </TableCell>
+                            )}
                           </TableRow>
+                          {/* One line per batch when there is more than one, in the
+                              order Stock Out uses them. */}
+                          {itemBatches.length > 1 &&
+                            itemBatches.map((b, index) => (
+                              <TableRow
+                                key={`batch-${b.id}`}
+                                className="border-border-brand bg-bg-subtle/40 hover:bg-bg-subtle/60"
+                              >
+                                <TableCell className="py-1.5 pl-6 text-[11px] text-text-secondary">
+                                  <span className="font-mono text-text-primary">{b.batch_number}</span>
+                                  {index === 0 && (
+                                    <span className="ml-2 text-[9px] font-bold uppercase tracking-wide text-accent">
+                                      used next
+                                    </span>
+                                  )}
+                                  {b.expire_date && (
+                                    <span className="block text-[10px] text-text-muted">expires {b.expire_date}</span>
+                                  )}
+                                </TableCell>
+                                <TableCell className="py-1.5 font-mono text-[11px] text-text-secondary">
+                                  {b.quantity_remaining} left
+                                </TableCell>
+                                <TableCell className="py-1.5 text-right font-mono text-[11px] text-text-secondary">
+                                  {formatLKR(Number(b.unit_cost))}
+                                </TableCell>
+                                <TableCell className="py-1.5 text-right font-mono text-[11px] text-text-muted">
+                                  {formatLKR(b.quantity_remaining * Number(b.unit_cost))}
+                                </TableCell>
+                                {canManage && <TableCell className="py-1.5" />}
+                              </TableRow>
+                            ))}
+                          </Fragment>
                         );
                       })
                     )}
@@ -616,15 +741,49 @@ function StockPage() {
           </CardContent>
         </Card>
 
-        {/* Recent Movements */}
+        {/* Movements, one month at a time */}
         <Card className="rounded-card border border-border-brand bg-surface p-5 shadow-card">
-          <CardHeader className="p-0 pb-4">
-            <CardTitle className="text-base font-semibold font-heading text-text-primary">
-              Recent Movements
-            </CardTitle>
-            <CardDescription className="mt-1 text-xs text-text-secondary">
-              The latest {MAX_MOVEMENTS} stock movements, newest first.
-            </CardDescription>
+          <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-3 space-y-0 p-0 pb-4">
+            <div>
+              <CardTitle className="text-base font-semibold font-heading text-text-primary">
+                Movements
+              </CardTitle>
+              <CardDescription className="mt-1 text-xs text-text-secondary">
+                Every stock movement in {monthLabel(month)}, newest first
+                {!loadingTransactions && !transactionsError ? ` (${movements.length})` : ''}.
+              </CardDescription>
+            </div>
+            <div className="flex items-center gap-1">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setMonth(shiftMonth(month, -1))}
+                aria-label="Previous month"
+                className="h-9 w-9 p-0 text-text-secondary hover:text-text-primary"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              <input
+                type="month"
+                aria-label="Month"
+                value={month}
+                max={thisMonth}
+                onChange={(e) => e.target.value && setMonth(e.target.value)}
+                className="h-9 rounded-lg border border-border-brand bg-bg-subtle px-2 font-mono text-xs text-text-primary outline-none focus:border-accent dark:[color-scheme:dark]"
+              />
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setMonth(shiftMonth(month, 1))}
+                disabled={month >= thisMonth}
+                aria-label="Next month"
+                className="h-9 w-9 p-0 text-text-secondary hover:text-text-primary"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            </div>
           </CardHeader>
 
           <CardContent className="p-0">
@@ -640,9 +799,9 @@ function StockPage() {
               </p>
             ) : (
               <>
-                <div className="overflow-x-auto rounded-xl border border-border-brand">
+                <div className="max-h-[520px] overflow-auto rounded-xl border border-border-brand">
                   <Table>
-                    <TableHeader className="bg-bg-subtle">
+                    <TableHeader className="sticky top-0 z-10 bg-bg-subtle">
                       <TableRow className="border-border-brand hover:bg-transparent">
                         <TableHead className="font-heading text-xs text-text-secondary">Date</TableHead>
                         <TableHead className="font-heading text-xs text-text-secondary">Item</TableHead>
@@ -651,13 +810,18 @@ function StockPage() {
                         <TableHead className="text-right font-heading text-xs text-text-secondary">
                           Amount
                         </TableHead>
+                        {canManage && (
+                          <TableHead className="w-10">
+                            <span className="sr-only">Reverse</span>
+                          </TableHead>
+                        )}
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {movements.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={5} className="py-8 text-center text-xs text-text-muted">
-                            No movements yet
+                          <TableCell colSpan={canManage ? 6 : 5} className="py-8 text-center text-xs text-text-muted">
+                            No movements in {monthLabel(month)}
                           </TableCell>
                         </TableRow>
                       ) : (
@@ -679,6 +843,11 @@ function StockPage() {
                                 <p className="truncate text-xs font-semibold text-text-primary" title={getItemName(tx)}>
                                   {getItemName(tx)}
                                 </p>
+                                {tx.batch_number && (
+                                  <p className="mt-0.5 truncate font-mono text-[11px] text-text-secondary" title={`Batch ${tx.batch_number}`}>
+                                    Batch {tx.batch_number}
+                                  </p>
+                                )}
                                 {destination !== '—' && (
                                   <p className="mt-0.5 truncate text-[11px] text-text-secondary" title={destination}>
                                     {destination}
@@ -699,6 +868,16 @@ function StockPage() {
                                 >
                                   <MovementIcon size={12} /> {style.label}
                                 </span>
+                                {tx.reverses_id != null && (
+                                  <p className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-text-muted">
+                                    Reversal
+                                  </p>
+                                )}
+                                {tx.reversed_by != null && (
+                                  <p className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-text-muted">
+                                    Reversed
+                                  </p>
+                                )}
                               </TableCell>
                               <TableCell
                                 className={cn(
@@ -718,6 +897,23 @@ function StockPage() {
                               >
                                 {value > 0 ? formatLKR(value) : '—'}
                               </TableCell>
+                              {canManage && (
+                                <TableCell className="py-2 text-right">
+                                  {tx.reverses_id == null && tx.reversed_by == null && (
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() => setReversing(tx)}
+                                      title="Reverse this movement"
+                                      aria-label={`Reverse movement of ${getItemName(tx)}`}
+                                      className="h-8 w-8 p-0 text-text-secondary hover:text-text-primary"
+                                    >
+                                      <Undo2 className="h-3.5 w-3.5" />
+                                    </Button>
+                                  )}
+                                </TableCell>
+                              )}
                             </TableRow>
                           );
                         })
@@ -744,8 +940,14 @@ function StockPage() {
             kind={movement?.kind ?? null}
             presetItemId={movement?.itemId}
             items={sortedItems}
-            programs={programs ?? []}
+            programs={activePrograms}
             onClose={() => setMovement(null)}
+          />
+          <EditItemDialog item={editing} onClose={() => setEditing(null)} />
+          <ReverseMovementDialog
+            movement={reversing}
+            itemName={reversing ? getItemName(reversing) : ''}
+            onClose={() => setReversing(null)}
           />
         </>
       )}
