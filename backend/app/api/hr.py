@@ -6,6 +6,8 @@ from datetime import date, datetime, timezone
 from supabase import Client
 from app.core.security import require_any_permission, require_permission
 from app.core.audit import log_audit_action
+from app.core.permissions import UserRole
+from app.services.employees import require_active
 from fastapi.responses import StreamingResponse
 from datetime import date as date_cls
 from fastapi import HTTPException
@@ -22,8 +24,55 @@ def get_employee_by_user_id(supabase: Client, user_id: str):
 
 @router.get("/employees", response_model=List[EmployeeProfile])
 async def get_employees(user = Depends(require_permission('hr:manage')), supabase: Client = Depends(get_supabase)):
-    response = supabase.table("employee_profile").select("*").execute()
-    return response.data
+    # The linked login's email comes with each row: HR holds hr:manage, not
+    # admin:users, so it cannot look the account up on its own.
+    rows = supabase.table("employee_profile").select("*, users(email)").execute().data or []
+    for row in rows:
+        row["login_email"] = (row.pop("users", None) or {}).get("email")
+    return rows
+
+
+@router.get("/linkable-logins")
+async def get_linkable_logins(user = Depends(require_permission('hr:manage')), supabase: Client = Depends(get_supabase)):
+    """
+    Login accounts HR can link to an employee: those not linked to one yet,
+    minus System Administrator, which is not an employee role. Email and
+    role only.
+    """
+    accounts = supabase.table("users").select("id, email, roles(role_name)").execute().data or []
+    linked = _linked_user_ids(supabase)
+    out = []
+    for account in accounts:
+        role = (account.get("roles") or {}).get("role_name")
+        if account["id"] in linked or role == UserRole.SYSTEM_ADMINISTRATOR.value:
+            continue
+        out.append({"id": account["id"], "email": account.get("email"), "role": role})
+    out.sort(key=lambda a: (a["email"] or "").lower())
+    return out
+
+
+def _linked_user_ids(supabase: Client) -> set:
+    rows = supabase.table("employee_profile").select("id, user_id").execute().data or []
+    return {r["user_id"] for r in rows if r.get("user_id")}
+
+
+def _check_login(supabase: Client, user_id: str, employee_id: Optional[int] = None) -> None:
+    """
+    A login can be linked to one employee at most. Nothing in the schema says
+    so, and get_employee_by_user_id takes the first match, so a second link
+    would silently send that person's clock-ins to the wrong record.
+    """
+    accounts = supabase.table("users").select("id, roles(role_name)").eq("id", user_id).execute().data or []
+    if not accounts:
+        raise HTTPException(status_code=404, detail="That login account no longer exists.")
+    if (accounts[0].get("roles") or {}).get("role_name") == UserRole.SYSTEM_ADMINISTRATOR.value:
+        raise HTTPException(status_code=400, detail="System Administrator accounts can't be linked to an employee.")
+    holders = supabase.table("employee_profile").select("id, first_name, last_name") \
+        .eq("user_id", user_id).execute().data or []
+    other = next((h for h in holders if h.get("id") != employee_id), None)
+    if other:
+        name = f"{other.get('first_name', '')} {other.get('last_name', '')}".strip()
+        raise HTTPException(status_code=409, detail=f"That login is already linked to {name or 'another employee'}.")
 
 def _nic_taken(nic: str) -> HTTPException:
     return HTTPException(status_code=409, detail=f"An employee with NIC {nic} already exists.")
@@ -45,6 +94,8 @@ def _is_unique_violation(e: Exception) -> bool:
 @router.post("/employees", response_model=EmployeeProfile)
 async def create_employee(employee: EmployeeProfileCreate, user = Depends(require_permission('hr:manage')), supabase: Client = Depends(get_supabase)):
     _ensure_nic_free(supabase, employee.nic)
+    if employee.user_id:
+        _check_login(supabase, employee.user_id)
     try:
         response = supabase.table("employee_profile").insert(employee.model_dump()).execute()
     except Exception as e:
@@ -78,6 +129,8 @@ async def update_employee(employee_id: int, employee: EmployeeProfileUpdate, use
         raise HTTPException(status_code=400, detail="No changes were sent.")
     if "nic" in changes:
         _ensure_nic_free(supabase, changes["nic"], exclude_id=employee_id)
+    if changes.get("user_id"):
+        _check_login(supabase, changes["user_id"], employee_id=employee_id)
 
     try:
         response = supabase.table("employee_profile").update(changes).eq("id", employee_id).execute()
@@ -104,6 +157,7 @@ async def update_employee(employee_id: int, employee: EmployeeProfileUpdate, use
 @router.post("/attendance/clock-in")
 async def clock_in(user = Depends(require_permission('hr:attendance:self')), supabase: Client = Depends(get_supabase)):
     emp = get_employee_by_user_id(supabase, user['id'])
+    require_active(emp, "clock in")
     today = str(date.today())
     
     existing = supabase.table("attendance_log").select("*").eq("employee_id", emp['id']).eq("target_date", today).execute()
@@ -132,6 +186,7 @@ async def clock_in(user = Depends(require_permission('hr:attendance:self')), sup
 @router.post("/attendance/clock-out")
 async def clock_out(user = Depends(require_permission('hr:attendance:self')), supabase: Client = Depends(get_supabase)):
     emp = get_employee_by_user_id(supabase, user['id'])
+    require_active(emp, "clock out")
     today = str(date.today())
     
     existing = supabase.table("attendance_log").select("*").eq("employee_id", emp['id']).eq("target_date", today).execute()

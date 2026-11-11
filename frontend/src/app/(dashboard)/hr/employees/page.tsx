@@ -7,17 +7,17 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { UserPlus, Download } from 'lucide-react';
+import { UserPlus, Download, Pencil } from 'lucide-react';
 import { formatLKR } from '@/lib/formatters';
 import { buildCsv, downloadCsv } from '@/lib/csv';
 import { getErrorMessage } from '@/lib/utils';
+import { NIC_PATTERN, NIC_RULE } from '@/lib/employees';
 import ProtectedRoute from '@/components/layout/protected-route';
+import { EditEmployeeDialog } from '@/components/hr/EditEmployeeDialog';
+import { Employee } from '@/types';
 import { toast } from 'sonner';
 import Swal from 'sweetalert2';
 import { useThemeStore } from '@/store/useThemeStore';
-
-// Same rule as NIC_PATTERN in backend/app/schemas/hr.py.
-const NIC_PATTERN = /^(\d{9}[VX]|\d{12})$/;
 
 type StatusFilter = 'all' | 'Active' | 'Inactive';
 
@@ -29,6 +29,7 @@ const FILTER_TITLES: Record<StatusFilter, string> = {
 
 export default function HRPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [editing, setEditing] = useState<Employee | null>(null);
 
   const { data: employees, isLoading: loadingEmployees, isError: employeesFailed } = useEmployees();
 
@@ -53,7 +54,7 @@ export default function HRPage() {
         Number(emp.base_salary),
         emp.status,
         emp.date_joined,
-        emp.user_id ? 'Yes' : 'No',
+        emp.login_email ?? (emp.user_id ? 'Linked' : ''),
       ]),
     );
     const suffix = statusFilter === 'all' ? '' : `-${statusFilter.toLowerCase()}`;
@@ -113,7 +114,7 @@ export default function HRPage() {
         }
 
         if (!NIC_PATTERN.test(nic)) {
-          Swal.showValidationMessage('NIC must be 9 digits followed by V or X, or 12 digits');
+          Swal.showValidationMessage(NIC_RULE);
           return false;
         }
 
@@ -198,12 +199,14 @@ export default function HRPage() {
                       <TableHead className="text-text-secondary font-heading text-xs">NIC</TableHead>
                       <TableHead className="text-text-secondary font-heading text-xs">Salary</TableHead>
                       <TableHead className="text-text-secondary font-heading text-xs">Status</TableHead>
+                      <TableHead className="text-text-secondary font-heading text-xs">Login</TableHead>
+                      <TableHead className="text-text-secondary font-heading text-xs text-right"><span className="sr-only">Actions</span></TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {shown.length === 0 ? (
                       <TableRow className="hover:bg-transparent border-border-brand">
-                        <TableCell colSpan={4} className="text-center text-text-secondary text-xs py-8">
+                        <TableCell colSpan={6} className="text-center text-text-secondary text-xs py-8">
                           {employeesFailed
                             ? 'Could not load employees. Refresh to try again.'
                             : statusFilter === 'all' ? 'No employees yet.' : `No ${statusFilter.toLowerCase()} employees.`}
@@ -223,6 +226,22 @@ export default function HRPage() {
                             {emp.status}
                           </Badge>
                         </TableCell>
+                        <TableCell className="text-xs">
+                          {emp.user_id
+                            ? <span className="text-text-primary">{emp.login_email ?? 'Linked'}</span>
+                            : <span className="text-text-secondary">Not linked</span>}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => setEditing(emp)}
+                            aria-label={`Edit ${emp.first_name} ${emp.last_name}`}
+                            className="h-7 w-7 text-text-secondary hover:text-text-primary hover:bg-bg-subtle"
+                          >
+                            <Pencil size={14} />
+                          </Button>
+                        </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -231,6 +250,10 @@ export default function HRPage() {
             )}
           </CardContent>
         </Card>
+
+        {editing && (
+          <EditEmployeeDialog key={editing.id} employee={editing} onClose={() => setEditing(null)} />
+        )}
       </div>
     </ProtectedRoute>
   );

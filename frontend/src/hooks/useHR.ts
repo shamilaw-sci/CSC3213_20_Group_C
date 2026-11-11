@@ -1,11 +1,38 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { HRService } from '@/services/hr.service';
+import { EmployeeUpdate } from '@/types';
 import { toast } from 'sonner';
 
 export function useEmployees() {
   return useQuery({
     queryKey: ['employees'],
     queryFn: HRService.getEmployees,
+  });
+}
+
+// Used by the edit dialog, which mounts only while open. Under 'employees'
+// so saving an edit refreshes it: linking one employee takes that login off
+// everyone else's list.
+export function useLinkableLogins() {
+  return useQuery({
+    queryKey: ['employees', 'linkable-logins'],
+    queryFn: HRService.getLinkableLogins,
+  });
+}
+
+export function useUpdateEmployee() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ id, changes }: { id: number; changes: EmployeeUpdate }) =>
+      HRService.updateEmployee(id, changes),
+    onSuccess: () => {
+      // Status decides who appears on the attendance grid, leave and payroll.
+      queryClient.invalidateQueries({ queryKey: ['employees'] });
+      queryClient.invalidateQueries({ queryKey: ['attendance'] });
+      toast.success('Employee record updated');
+    },
+    // No error toast: the edit dialog shows the server's reason in place.
   });
 }
 

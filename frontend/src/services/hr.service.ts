@@ -1,5 +1,5 @@
 import api from '@/lib/api-client';
-import { Employee, AttendanceRecord, AttendanceMonth, PayrollRun, PayrollRunView } from '@/types';
+import { Employee, EmployeeUpdate, LinkableLogin, AttendanceRecord, AttendanceMonth, PayrollRun, PayrollRunView } from '@/types';
 
 export const HRService = {
   getEmployees: async () => {
@@ -12,8 +12,13 @@ export const HRService = {
     return response.data;
   },
 
-  updateEmployee: async (id: number, employee: Partial<Employee>) => {
-    const response = await api.put<Employee>(`/hr/employees/${id}`, employee);
+  updateEmployee: async (id: number, changes: EmployeeUpdate) => {
+    const response = await api.put<Employee>(`/hr/employees/${id}`, changes);
+    return response.data;
+  },
+
+  getLinkableLogins: async () => {
+    const response = await api.get<LinkableLogin[]>('/hr/linkable-logins');
     return response.data;
   },
 

@@ -84,6 +84,8 @@ class EmployeeProfile(EmployeeProfileBase):
     # Kept off EmployeeProfileBase on purpose, so the existing employee
     # create/update forms, which do not send it, cannot wipe it.
     date_joined: Optional[date] = None
+    # The linked login's email, filled in by GET /hr/employees only.
+    login_email: Optional[str] = None
     model_config = ConfigDict(from_attributes=True)
 
 # Sri Lanka time, no daylight saving (same constant as COLOMBO in
