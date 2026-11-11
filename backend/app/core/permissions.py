@@ -114,7 +114,10 @@ ROLE_PERMISSIONS = {
         # in this role are employees too (confirmed 2026-10-29). It reaches
         # only the holder's own records, so it adds no business-data access.
         Permission.HR_ATTENDANCE_SELF.value,
-        Permission.FINANCE_READ.value, Permission.FINANCE_WRITE.value, Permission.PAYROLL_GENERATE.value,
+        # No payroll:generate: HR generates payroll, Director approves it
+        # (confirmed 2026-11-11). Finance sees an approved payroll as a payable
+        # in the ledger and marks it paid there.
+        Permission.FINANCE_READ.value, Permission.FINANCE_WRITE.value,
         Permission.INVENTORY_READ.value, Permission.INVENTORY_MANAGE.value,
         # Not a widening of what this role can see: GET /finance/transactions
         # already returns programs(program_name) under finance:read, so a

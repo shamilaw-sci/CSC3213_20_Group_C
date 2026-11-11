@@ -84,7 +84,9 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
   'Finance Officer': [
     // Self-service: own attendance, schedule and leave only (confirmed 2026-10-29).
     'hr:attendance:self',
-    'finance:read', 'finance:write', 'payroll:generate',
+    // No payroll:generate: HR generates, Director approves (confirmed
+    // 2026-11-11). Finance pays the approved payable in the Ledger.
+    'finance:read', 'finance:write',
     'inventory:read', 'inventory:manage', 'programs:read'
   ],
   // Clinic and field operations, per the RBAC table on the support page.

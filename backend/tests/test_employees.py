@@ -55,6 +55,11 @@ class _Query:
         self._filters.append(lambda r: r.get(column) in values)
         return self
 
+    def gte(self, column, value):
+        # ISO dates and timestamps compare correctly as strings.
+        self._filters.append(lambda r: r.get(column) is not None and str(r.get(column)) >= str(value))
+        return self
+
     def __getattr__(self, name):
         return lambda *a, **k: self
 

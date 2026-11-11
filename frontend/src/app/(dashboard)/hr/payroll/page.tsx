@@ -17,6 +17,8 @@ import {
 import { hasPermission } from '@/lib/permissions';
 import { formatLKR } from '@/lib/formatters';
 import { cn } from '@/lib/utils';
+import { colomboDate } from '@/components/hr/attendance/dayStatus';
+import { PayrollDrift } from '@/types';
 
 const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -34,11 +36,12 @@ function when(iso: string | null | undefined) {
 }
 
 // Generate -> Approve -> Paid (in the Ledger). Shows where this month is.
-function Steps({ status }: { status: 'none' | 'Draft' | 'Approved' }) {
+function Steps({ status, paid }: { status: 'none' | 'Draft' | 'Approved'; paid: boolean }) {
   const steps = [
     { label: 'Draft generated', done: status !== 'none' },
     { label: 'Approved', done: status === 'Approved' },
-    { label: 'Paid in Ledger', done: false },
+    // Done once Finance marks the payable paid; it never used to show.
+    { label: 'Paid in Ledger', done: status === 'Approved' && paid },
   ];
   return (
     <ol className="flex flex-wrap items-center gap-2 text-xs">
@@ -55,6 +58,35 @@ function Steps({ status }: { status: 'none' | 'Draft' | 'Approved' }) {
   );
 }
 
+const CHANGE_LABEL: Record<PayrollDrift['change'], string> = {
+  added: 'not on the draft',
+  removed: 'no longer employed or not yet joined',
+  salary: 'salary changed',
+};
+
+// What changed since the draft was generated. Approval is refused until the
+// draft is regenerated: it used to post the old figures without a word.
+function DriftNotice({ drift, canGenerate }: { drift: PayrollDrift[]; canGenerate: boolean }) {
+  return (
+    <div className="space-y-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-text-secondary">
+      <p className="flex items-center gap-2 font-semibold text-text-primary">
+        <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600" />
+        This draft is out of date. {canGenerate ? 'Regenerate it' : 'Ask HR to regenerate it'} before it can be approved.
+      </p>
+      <ul className="space-y-1 pl-6">
+        {drift.map((d) => (
+          <li key={`${d.change}-${d.employee_id}`} className="list-disc">
+            <span className="text-text-primary">{d.employee_name}</span>: {CHANGE_LABEL[d.change]}
+            {d.change === 'salary' && d.draft_amount !== null && d.current_amount !== null
+              && ` (${formatLKR(d.draft_amount)} on the draft, ${formatLKR(d.current_amount)} now)`}
+            {d.change === 'added' && d.current_amount !== null && ` (${formatLKR(d.current_amount)})`}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export default function HRPayrollPage() {
   return (
     // Either permission: HR generates, Director approves.
@@ -65,9 +97,10 @@ export default function HRPayrollPage() {
 }
 
 function Payroll() {
-  const now = new Date();
-  const [month, setMonth] = useState(now.getMonth() + 1);
-  const [year, setYear] = useState(now.getFullYear());
+  // Sri Lanka's month, as the server judges what can be generated and approved.
+  const [thisYear, thisMonth] = colomboDate().split('-').map(Number);
+  const [month, setMonth] = useState(thisMonth);
+  const [year, setYear] = useState(thisYear);
   const [confirming, setConfirming] = useState(false);
 
   const { user } = useAuthStore();
@@ -85,8 +118,11 @@ function Payroll() {
   const status = run ? run.status : 'none';
   const period = `${MONTHS[month - 1]} ${year}`;
 
-  // The server refuses this too; saying so here saves a failed click.
+  // The server refuses these too; saying so here saves a failed click.
   const generatedByMe = !!run?.generated_by && run.generated_by === user?.id;
+  const drift = data?.drift ?? [];
+  const paid = data?.payment_status === 'Cash';
+  const approveBlocked = !!data?.approve_block || drift.length > 0 || generatedByMe;
 
   return (
     <div className="space-y-6 pb-12">
@@ -102,7 +138,7 @@ function Payroll() {
             {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
           </select>
           <select value={year} onChange={(e) => setYear(Number(e.target.value))} aria-label="Year" className={control}>
-            {[now.getFullYear() - 1, now.getFullYear(), now.getFullYear() + 1].map((y) => (
+            {[thisYear - 1, thisYear, thisYear + 1].map((y) => (
               <option key={y} value={y}>{y}</option>
             ))}
           </select>
@@ -121,10 +157,10 @@ function Payroll() {
             <CardHeader className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div>
                 <CardTitle className="text-base font-semibold font-heading text-text-primary">{period}</CardTitle>
-                <CardDescription className="mt-2"><Steps status={status} /></CardDescription>
+                <CardDescription className="mt-2"><Steps status={status} paid={paid} /></CardDescription>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                {canGenerate && status !== 'Approved' && (
+                {canGenerate && status !== 'Approved' && !data.generate_block && (
                   <Button
                     variant={run ? 'outline' : 'default'}
                     onClick={() => generate({ month, year })}
@@ -138,8 +174,12 @@ function Payroll() {
                 {canApprove && status === 'Draft' && (
                   <Button
                     onClick={() => setConfirming(true)}
-                    disabled={generatedByMe || isApproving}
-                    title={generatedByMe ? 'You generated this draft; someone else must approve it.' : undefined}
+                    disabled={approveBlocked || isApproving}
+                    title={
+                      generatedByMe ? 'You generated this draft; someone else must approve it.'
+                        : drift.length ? 'The draft is out of date; it has to be regenerated first.'
+                        : data.approve_block ?? undefined
+                    }
                     className="gap-2 bg-emerald-600 text-white hover:bg-emerald-600/90 font-semibold"
                   >
                     <ShieldCheck className="h-4 w-4" /> Approve
@@ -149,6 +189,13 @@ function Payroll() {
             </CardHeader>
 
             <CardContent className="space-y-4">
+              {canGenerate && status !== 'Approved' && data.generate_block && (
+                <p className="rounded-lg border border-border-brand bg-bg-subtle p-3 text-xs text-text-secondary">{data.generate_block}</p>
+              )}
+              {run?.status === 'Draft' && canApprove && data.approve_block && (
+                <p className="rounded-lg border border-border-brand bg-bg-subtle p-3 text-xs text-text-secondary">{data.approve_block}</p>
+              )}
+              {run?.status === 'Draft' && drift.length > 0 && <DriftNotice drift={drift} canGenerate={canGenerate} />}
               {data.incomplete_attendance > 0 && status !== 'Approved' && (
                 <p className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-text-secondary">
                   <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
@@ -199,10 +246,14 @@ function Payroll() {
                     <p className="flex flex-wrap items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-text-secondary">
                       <CheckCircle2 className="h-4 w-4 text-emerald-600" />
                       Approved and frozen.
-                      {run.finance_transaction_id
-                        ? <> Posted to the Ledger as payable #{run.finance_transaction_id}; Finance marks it paid once salaries are transferred.</>
-                        : <> Generated before approvals existed; its expense was posted directly at the time.</>}
-                      {canOpenLedger && run.finance_transaction_id && (
+                      {!run.finance_transaction_id
+                        ? <> Generated before approvals existed; its expense was posted directly at the time.</>
+                        : paid
+                          ? <> Posted to the Ledger as #{run.finance_transaction_id} and marked paid.</>
+                          : data.payment_status === 'Voided'
+                            ? <> Its Ledger entry #{run.finance_transaction_id} has been voided.</>
+                            : <> Posted to the Ledger as payable #{run.finance_transaction_id}; Finance marks it paid once salaries are transferred.</>}
+                      {canOpenLedger && run.finance_transaction_id && !paid && (
                         <Link
                           href="/finance/ledger?status=Receivable&type=Expense&sort=oldest"
                           className="font-semibold text-accent hover:underline"
