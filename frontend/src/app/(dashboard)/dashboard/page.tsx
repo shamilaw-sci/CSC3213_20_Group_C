@@ -374,11 +374,13 @@ function FinanceOfficerDashboard() {
              <div className="p-4 bg-bg-subtle rounded-lg border border-border-brand flex items-center justify-between">
               <div>
                 <p className="font-medium text-text-primary">Monthly Payroll</p>
-                <p className="text-sm text-text-secondary">Ready for generation when HR finishes locking.</p>
+                <p className="text-sm text-text-secondary">
+                  HR generates and the Director approves; approved payroll arrives in the Ledger as a payable to mark paid.
+                </p>
               </div>
-              <Link href="/hr/payroll">
+              <Link href="/finance/ledger?status=Receivable&type=Expense&sort=oldest">
                 <Button variant="outline" size="sm" className="gap-2">
-                  Check <ExternalLink className="w-4 h-4" />
+                  Payables <ExternalLink className="w-4 h-4" />
                 </Button>
               </Link>
             </div>

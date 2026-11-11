@@ -287,10 +287,27 @@ export interface PayrollLine {
   net_payable: number;
 }
 
+// How a draft differs from generating it now (migration 025). An approval
+// is refused while there is any.
+export interface PayrollDrift {
+  employee_id: number;
+  employee_name: string;
+  change: 'added' | 'removed' | 'salary';
+  draft_amount: number | null;
+  current_amount: number | null;
+}
+
 export interface PayrollRunView {
   run: PayrollRun | null;
   lines: PayrollLine[];
   incomplete_attendance: number;
+  // Drafts only; null when it can't be told (migration 025 not applied).
+  drift?: PayrollDrift[] | null;
+  // The approved payable's status in the Ledger: 'Cash' once paid.
+  payment_status?: 'Cash' | 'Receivable' | 'Voided' | null;
+  // Why the month can't be generated / approved yet, if it can't.
+  generate_block?: string | null;
+  approve_block?: string | null;
 }
 
 export interface AttendanceRecord {

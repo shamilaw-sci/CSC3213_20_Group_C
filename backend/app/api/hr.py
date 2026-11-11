@@ -572,7 +572,78 @@ _RPC_ERRORS = (
     ("not found", 404),
     ("No active employees found", 404),
     ("has nothing to pay", 400),
+    ("is out of date", 409),
 )
+
+_MONTH_NAMES = (
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
+)
+
+# When a month's payroll may be generated and approved (confirmed
+# 2026-11-11). Generated once the month has started; approved once it is
+# over, or from the 25th of the month itself, when salaries are prepared.
+# Never a month still to come: November was approved on the 3rd, and a
+# December draft existed in mid-November, which approving would have posted
+# to the ledger a month and a half early.
+APPROVE_FROM_DAY = 25
+
+# An approver whose role the generator changed this recently may not approve
+# that run. November's draft was generated, a General Staff account promoted
+# to Admin 22 minutes later, and the payroll approved by it a minute after
+# that: the two-person rule held on paper while one person did both.
+ROLE_CHANGE_COOLDOWN = timedelta(hours=24)
+
+
+def _period(month: int, year: int) -> str:
+    return f"{_MONTH_NAMES[month - 1]} {year}"
+
+
+def _generate_block(month: int, year: int) -> Optional[str]:
+    today = _sl_today()
+    if (year, month) > (today.year, today.month):
+        return f"Payroll for {_period(month, year)} can't be generated before the month starts."
+    return None
+
+
+def _approve_block(month: int, year: int) -> Optional[str]:
+    today = _sl_today()
+    if (year, month) > (today.year, today.month):
+        return f"Payroll for {_period(month, year)} can't be approved before the month starts."
+    if (year, month) == (today.year, today.month) and today.day < APPROVE_FROM_DAY:
+        return f"Payroll for {_period(month, year)} can be approved from {APPROVE_FROM_DAY} {_MONTH_NAMES[month - 1]}."
+    return None
+
+
+def _role_changed_by(supabase: Client, approver_id: str, generator_id: str) -> bool:
+    """Whether the generator changed the approver's role within the cooldown."""
+    cutoff = (_sl_now() - ROLE_CHANGE_COOLDOWN).astimezone(timezone.utc).isoformat()
+    rows = supabase.table("system_audit_logs").select("old_payload, new_payload") \
+        .eq("action_type", "USER_ROLE_CHANGE").eq("user_id", str(generator_id)) \
+        .gte("timestamp", cutoff).execute().data or []
+    for row in rows:
+        target = (row.get("new_payload") or {}).get("id") or (row.get("old_payload") or {}).get("id")
+        if target is not None and str(target) == str(approver_id):
+            return True
+    return False
+
+
+def _draft_drift(supabase: Client, run_id: int) -> Optional[list]:
+    """How a draft differs from generating it now; None if that can't be told."""
+    try:
+        rows = supabase.rpc("payroll_draft_drift", {"p_run_id": run_id}).execute().data or []
+    except Exception:
+        # Migration 025 not applied yet. Approval still works as before it.
+        return None
+    out = [{
+        "employee_id": r.get("employee_id"),
+        "employee_name": r.get("employee_name") or f"Employee {r.get('employee_id')}",
+        "change": r.get("change"),
+        "draft_amount": None if r.get("draft_amount") is None else float(r["draft_amount"]),
+        "current_amount": None if r.get("current_amount") is None else float(r["current_amount"]),
+    } for r in rows]
+    out.sort(key=lambda d: (d["change"] or "", d["employee_name"].lower()))
+    return out
 
 
 def _month_bounds(month: int, year: int) -> tuple[str, str]:
@@ -661,7 +732,23 @@ async def get_payroll_run(
         .gte("target_date", start).lt("target_date", end).execute().data or []
     incomplete = sum(1 for log in logs if not (log.get("clock_in") and log.get("clock_out")))
 
-    return {"run": run, "lines": lines, "incomplete_attendance": incomplete}
+    # Whether Finance has paid the approved payable. The page's last step,
+    # "Paid in Ledger", never showed as done, even for a paid month.
+    payment_status = None
+    if run and run.get("finance_transaction_id"):
+        tx = supabase.table("financial_transactions").select("status") \
+            .eq("id", run["finance_transaction_id"]).execute().data or []
+        payment_status = tx[0].get("status") if tx else None
+
+    return {
+        "run": run,
+        "lines": lines,
+        "incomplete_attendance": incomplete,
+        "drift": _draft_drift(supabase, run["id"]) if run and run.get("status") == "Draft" else None,
+        "payment_status": payment_status,
+        "generate_block": _generate_block(month, year),
+        "approve_block": _approve_block(month, year),
+    }
 
 
 @router.post("/payroll/generate")
@@ -680,6 +767,9 @@ async def generate_monthly_payroll(
     whole organisation's payroll over one forgotten clock-out.
     """
     _validate_month(month, year)
+    block = _generate_block(month, year)
+    if block:
+        raise HTTPException(status_code=400, detail=block)
     try:
         result = supabase.rpc(
             "generate_payroll_draft",
@@ -712,8 +802,24 @@ async def approve_payroll(
     """
     Approve a Draft: freezes it and posts its total to the ledger as a payable
     dated the last day of the month. The SQL function refuses an approval by
-    whoever generated the run.
+    whoever generated the run, and of a draft that is out of date.
     """
+    runs = supabase.table("payroll_runs").select("id, payroll_month, payroll_year, status, generated_by") \
+        .eq("id", run_id).execute().data or []
+    if not runs:
+        raise HTTPException(status_code=404, detail=f"Payroll run {run_id} not found.")
+    pending = runs[0]
+    if pending.get("status") == "Draft":
+        block = _approve_block(pending["payroll_month"], pending["payroll_year"])
+        if block:
+            raise HTTPException(status_code=400, detail=block)
+        generator = pending.get("generated_by")
+        if generator and str(generator) != str(user["id"]) and _role_changed_by(supabase, user["id"], generator):
+            raise HTTPException(
+                status_code=403,
+                detail="Your role was changed in the last 24 hours by the person who generated this payroll, "
+                       "so you can't approve it. Ask another approver.",
+            )
     try:
         result = supabase.rpc(
             "approve_payroll_run",
