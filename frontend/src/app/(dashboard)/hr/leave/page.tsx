@@ -220,6 +220,8 @@ function EntitlementsTab() {
   const { data, isLoading } = useEntitlements(year);
   const { mutate: generate, isPending: isGenerating } = useGenerateEntitlements();
   const { mutate: adjust, isPending: isAdjusting } = useAdjustEntitlement();
+  // The viewer's own row: nobody adjusts their own allowance (the server refuses).
+  const { data: me } = useMyLeave();
   const { user } = useAuthStore();
   const canSetJoinDate = hasPermission(user?.role as string, 'hr:manage');
   const columns = data?.employees[0]?.balances ?? [];
@@ -276,7 +278,12 @@ function EntitlementsTab() {
                       <td className="px-4 py-2.5 font-mono text-xs text-text-secondary">{e.date_joined ?? '—'}</td>
                       {e.balances.map((b) => (
                         <td key={b.leave_type_id} className="px-4 py-2.5">
-                          {b.set_up ? (
+                          {b.set_up && me?.employee_id === e.employee_id ? (
+                            <span title="Your own allowance; another HR officer adjusts it.">
+                              <span className="font-mono tabular-nums text-text-primary">{fmtDays(b.available)}</span>
+                              <span className="text-xs text-text-muted"> / {fmtDays(b.total)}</span>
+                            </span>
+                          ) : b.set_up ? (
                             <button onClick={() => { setAdjusting({ name: e.employee_name, balance: b }); setAdjustment(String(b.adjustment ?? 0)); setAdjustNote(b.note ?? ''); }}
                               className="text-left hover:underline" title="Adjust">
                               <span className="font-mono tabular-nums text-text-primary">{fmtDays(b.available)}</span>

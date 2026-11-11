@@ -26,6 +26,7 @@ from app.core.permissions import has_permission
 from app.core.security import get_current_user, require_permission
 from app.core.supabase import get_supabase
 from app.services.employees import require_active
+from app.services.payroll_status import payroll_approved
 from app.services.leave_rules import (
     ZERO,
     Balance,
@@ -34,10 +35,11 @@ from app.services.leave_rules import (
     casual_earned_to_date,
     check_request,
     days_by_year,
+    days_text,
     entitlement_for,
     leave_days,
 )
-from app.services.work_calendar import resolve_day, schedule_for
+from app.services.work_calendar import COLOMBO, resolve_day, schedule_for
 
 router = APIRouter()
 
@@ -74,6 +76,26 @@ class DateJoinedIn(BaseModel):
 # --------------------------------------------------------------------------
 # Loading
 # --------------------------------------------------------------------------
+
+_MONTHS = ("January", "February", "March", "April", "May", "June",
+           "July", "August", "September", "October", "November", "December")
+
+
+def _today() -> date:
+    # Sri Lanka's date: the deployed backend runs on UTC, where the first
+    # hours of a Colombo day are still yesterday.
+    return datetime.now(COLOMBO).date()
+
+
+def _frozen_months(supabase: Client, dates) -> list[str]:
+    """
+    The months among `dates` whose payroll is approved. Their attendance is
+    frozen (app/api/hr.py), and leave decides what an attendance day is, so
+    leave on those days is frozen with it (confirmed 2026-11-11).
+    """
+    months = sorted({(d.year, d.month) for d in dates})
+    return [f"{_MONTHS[m - 1]} {y}" for y, m in months if payroll_approved(supabase, m, y)]
+
 
 def _role(user: dict) -> str:
     return (user.get("roles") or {}).get("role_name") or ""
@@ -183,12 +205,17 @@ def _balance(supabase: Client, employee_id: int, leave_type_id: int, year: int,
         adjustment=_d(e.get("adjustment")),
         approved=sum((_d(r["fraction"]) for r in in_year if r["status"] == "Approved"), ZERO),
         pending=sum((_d(r["fraction"]) for r in in_year if r["status"] == "Pending"), ZERO),
-        earned_to_date=casual_earned_to_date(joined, year, date.today()) if rule == "soe_casual" else None,
+        earned_to_date=casual_earned_to_date(joined, year, _today()) if rule == "soe_casual" else None,
     )
 
 
-def _assess(supabase: Client, employee: dict, body: LeaveIn, exclude_request: Optional[int] = None) -> dict:
-    """Days, per-year balances and errors for a proposed request."""
+def _assess(supabase: Client, employee: dict, body: LeaveIn, exclude_request: Optional[int] = None,
+            subject: Optional[str] = None) -> dict:
+    """
+    Days, per-year balances and errors for a proposed request. `subject` is
+    the employee's name when HR files for them, for messages that would
+    otherwise say "You".
+    """
     if body.end_date < body.start_date:
         raise HTTPException(status_code=400, detail="The end date is before the start date.")
     if body.half_day != "none" and body.start_date != body.end_date:
@@ -216,8 +243,15 @@ def _assess(supabase: Client, employee: dict, body: LeaveIn, exclude_request: Op
     check = check_request(lt, days, body.half_day, balances)
     errors = list(check.errors)
     if overlapping:
-        errors.insert(0, f"You already have leave requested or approved on {', '.join(overlapping[:3])}"
+        has = f"{subject} already has" if subject else "You already have"
+        errors.insert(0, f"{has} leave requested or approved on {', '.join(overlapping[:3])}"
                          f"{' and more' if len(overlapping) > 3 else ''}.")
+    if joined and body.start_date < joined:
+        errors.insert(0, f"{subject or 'You'} joined on {joined.day} {_MONTHS[joined.month - 1]} {joined.year}; "
+                         "leave can't start before that.")
+    frozen = _frozen_months(supabase, [d for d, _ in days] or [body.start_date])
+    if frozen:
+        errors.insert(0, f"Payroll for {', '.join(frozen)} is approved, so leave on its days can no longer be requested.")
 
     return {
         "leave_type": lt_row,
@@ -252,6 +286,13 @@ def _subject(supabase: Client, user: dict, body: LeaveIn) -> dict:
         employee = _employee(supabase, body.employee_id)
     require_active(employee, "request leave")
     return employee
+
+
+def _subject_name(user: dict, employee: dict) -> Optional[str]:
+    """The employee's name when someone else is filing for them, else None."""
+    if str(employee.get("user_id")) == str(user["id"]):
+        return None
+    return f"{employee.get('first_name', '')} {employee.get('last_name', '')}".strip() or "This employee"
 
 
 def _public(assessment: dict) -> dict:
@@ -300,7 +341,7 @@ def _summary(supabase: Client, employee: dict, year: int) -> list[dict]:
 async def my_leave(year: Optional[int] = None, user=Depends(require_permission("hr:attendance:self")),
                    supabase: Client = Depends(get_supabase)):
     employee = _my_employee(supabase, user)
-    year = year or date.today().year
+    year = year or _today().year
     requests = supabase.table("leave_requests").select("*, leave_types(name, code)") \
         .eq("employee_id", employee["id"]).order("start_date", desc=True).limit(100).execute().data or []
     return {
@@ -314,13 +355,14 @@ async def my_leave(year: Optional[int] = None, user=Depends(require_permission("
 
 @router.post("/preview")
 async def preview(body: LeaveIn, user=Depends(get_current_user), supabase: Client = Depends(get_supabase)):
-    return _public(_assess(supabase, _subject(supabase, user, body), body))
+    employee = _subject(supabase, user, body)
+    return _public(_assess(supabase, employee, body, subject=_subject_name(user, employee)))
 
 
 @router.post("/requests")
 async def create_request(body: LeaveIn, user=Depends(get_current_user), supabase: Client = Depends(get_supabase)):
     employee = _subject(supabase, user, body)
-    assessment = _assess(supabase, employee, body)
+    assessment = _assess(supabase, employee, body, subject=_subject_name(user, employee))
     if assessment["errors"]:
         raise HTTPException(status_code=400, detail=assessment["errors"][0])
 
@@ -372,9 +414,20 @@ async def cancel_request(request_id: int, user=Depends(get_current_user), supaba
     if req["status"] not in LIVE:
         raise HTTPException(status_code=409, detail=f"This request is already {req['status'].lower()}.")
     # Staff may withdraw approved leave only before it starts; after that,
-    # changing what happened is HR's call.
-    if req["status"] == "Approved" and not is_hr and _date(req["start_date"]) <= date.today():
-        raise HTTPException(status_code=409, detail="Approved leave that has started can only be changed by HR.")
+    # changing what happened is HR's call, and for HR's own leave another HR
+    # officer's (confirmed 2026-11-11), as with deciding it.
+    if req["status"] == "Approved" and (is_owner or not is_hr) and _date(req["start_date"]) <= _today():
+        raise HTTPException(status_code=409, detail=(
+            "Approved leave that has started can only be changed by another HR officer." if is_hr
+            else "Approved leave that has started can only be changed by HR."))
+    # Cancelling approved leave turns its days back into absences; in a month
+    # whose payroll is approved that is history. A pending request never
+    # counted, so it can still be withdrawn.
+    if req["status"] == "Approved":
+        frozen = _frozen_months(supabase, _request_dates(supabase, req))
+        if frozen:
+            raise HTTPException(status_code=409, detail=(
+                f"Payroll for {', '.join(frozen)} is approved, so leave on its days can no longer be cancelled."))
 
     updated = supabase.table("leave_requests").update({"status": "Cancelled"}).eq("id", request_id).execute().data
     await log_audit_action(supabase, user_id=user["id"], action_type="LEAVE_CANCEL",
@@ -385,6 +438,14 @@ async def cancel_request(request_id: int, user=Depends(get_current_user), supaba
 # --------------------------------------------------------------------------
 # Approval
 # --------------------------------------------------------------------------
+
+def _request_dates(supabase: Client, req: dict) -> list[date]:
+    """The dates a request covers: its day rows, or its range if it has none."""
+    rows = supabase.table("leave_request_days").select("request_id, leave_date") \
+        .eq("request_id", req["id"]).execute().data or []
+    dates = [_date(r["leave_date"]) for r in rows if r.get("request_id") == req["id"]]
+    return dates or [_date(req["start_date"]), _date(req["end_date"])]
+
 
 def _forbid_own(supabase: Client, user: dict, req: dict) -> None:
     """Nobody decides a request for their own leave, or one they filed."""
@@ -423,6 +484,12 @@ async def _decide(supabase: Client, user: dict, request_id: int, approve: bool, 
         raise HTTPException(status_code=409, detail=f"This request is already {req['status'].lower()}.")
 
     if approve:
+        # Approving makes the days leave rather than absences: not in a month
+        # whose payroll is approved. Rejecting changes nothing there.
+        frozen = _frozen_months(supabase, _request_dates(supabase, req))
+        if frozen:
+            raise HTTPException(status_code=409, detail=(
+                f"Payroll for {', '.join(frozen)} is approved, so leave on its days can no longer be approved."))
         # Balances may have moved since submission (another approval, an HR
         # adjustment). Approved leave alone must fit; pending ones do not
         # block, since this is the one being decided.
@@ -438,7 +505,7 @@ async def _decide(supabase: Client, user: dict, request_id: int, approve: bool, 
                     have = ZERO if b is None else b.remaining
                     raise HTTPException(status_code=409, detail=(
                         f"Approving would exceed the {year} {lt_row['name'].lower()} balance: "
-                        f"{have.normalize()} days left, request needs {wanted.normalize()}."))
+                        f"{days_text(have)} days left, request needs {days_text(wanted)}."))
     elif not (note and note.strip()):
         raise HTTPException(status_code=400, detail="Give a reason when rejecting, so the employee knows why.")
 
@@ -569,6 +636,11 @@ async def adjust_entitlement(entitlement_id: int, body: EntitlementAdjustIn,
     rows = supabase.table("leave_entitlements").select("*").eq("id", entitlement_id).execute().data
     if not rows:
         raise HTTPException(status_code=404, detail="Entitlement not found")
+    # An adjustment adds days to someone's allowance. Nobody decides their own
+    # leave, so nobody adjusts their own allowance either.
+    mine = supabase.table("employee_profile").select("id, user_id").eq("user_id", str(user["id"])).execute().data or []
+    if any(m.get("id") == rows[0]["employee_id"] and str(m.get("user_id")) == str(user["id"]) for m in mine):
+        raise HTTPException(status_code=403, detail="You can't adjust your own leave allowance. Ask another HR officer.")
     update = {"adjustment": float(body.adjustment), "note": body.note, "updated_by": str(user["id"]),
               "updated_at": datetime.now(timezone.utc).isoformat()}
     saved = supabase.table("leave_entitlements").update(update).eq("id", entitlement_id).execute().data
@@ -582,12 +654,38 @@ async def adjust_entitlement(entitlement_id: int, body: EntitlementAdjustIn,
 async def set_date_joined(employee_id: int, body: DateJoinedIn, user=Depends(require_permission("hr:manage")),
                           supabase: Client = Depends(get_supabase)):
     employee = _employee(supabase, employee_id)
-    if body.date_joined > date.today() + timedelta(days=366):
+    today = _today()
+    if body.date_joined > today + timedelta(days=366):
         raise HTTPException(status_code=400, detail="That join date is more than a year away.")
     supabase.table("employee_profile").update({"date_joined": body.date_joined.isoformat()}) \
         .eq("id", employee_id).execute()
+
+    # Annual and casual allowances follow the join date, and generation never
+    # touches an existing row, so a corrected date used to leave them as they
+    # were (4 days of annual instead of 14). This year's and later rows are
+    # recomputed; carried-over days and HR adjustments are kept. Past years
+    # are left alone: their leave has been taken against them.
+    types = {t["id"]: t for t in (supabase.table("leave_types").select("*").execute().data or [])}
+    rows = supabase.table("leave_entitlements").select("*").eq("employee_id", employee_id) \
+        .gte("year", today.year).execute().data or []
+    changed = []
+    for r in rows:
+        t = types.get(r.get("leave_type_id"))
+        if r.get("employee_id") != employee_id or int(r["year"]) < today.year or not t:
+            continue
+        days = entitlement_for(t.get("first_year_rule") or "none", body.date_joined, int(r["year"]), t.get("default_days"))
+        if days is None or _d(days) == _d(r.get("entitled_days")):
+            continue
+        supabase.table("leave_entitlements").update({
+            "entitled_days": float(days), "updated_by": str(user["id"]),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }).eq("id", r["id"]).execute()
+        changed.append({"year": int(r["year"]), "leave_type": t["name"],
+                        "from": float(_d(r.get("entitled_days"))), "to": float(days)})
+
     await log_audit_action(supabase, user_id=user["id"], action_type="EMPLOYEE_DATE_JOINED",
                            table_name="employee_profile",
                            old_payload={"date_joined": employee.get("date_joined")},
-                           new_payload={"date_joined": body.date_joined.isoformat()})
-    return {"employee_id": employee_id, "date_joined": body.date_joined.isoformat()}
+                           new_payload={"date_joined": body.date_joined.isoformat(),
+                                        "entitlements_updated": [{**c, "from": str(c["from"]), "to": str(c["to"])} for c in changed]})
+    return {"employee_id": employee_id, "date_joined": body.date_joined.isoformat(), "entitlements_updated": changed}

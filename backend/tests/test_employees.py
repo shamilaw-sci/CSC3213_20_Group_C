@@ -68,9 +68,10 @@ class _Query:
         if self._op == "insert":
             if self._name in self._db.fail_inserts:
                 raise self._db.fail_inserts[self._name]
-            row = {"id": len(rows) + 100, **self._data}
-            rows.append(row)
-            return _Result([row])
+            new = [{"id": len(rows) + 100 + i, **d} for i, d in enumerate(
+                self._data if isinstance(self._data, list) else [self._data])]
+            rows.extend(new)
+            return _Result(new)
         matched = [r for r in rows if all(f(r) for f in self._filters)]
         if self._op == "update":
             for r in matched:

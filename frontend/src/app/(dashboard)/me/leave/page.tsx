@@ -31,7 +31,10 @@ function MyLeave() {
 
       {error ? (
         <p className="rounded-lg border border-rose-500/20 bg-rose-500/10 p-4 text-sm text-rose-500">
-          Your account isn&apos;t linked to an employee record yet. Ask HR to link it.
+          {/* Only a 404 means no linked record; anything else used to say so too. */}
+          {(error as { response?: { status?: number } }).response?.status === 404
+            ? "Your account isn't linked to an employee record yet. Ask HR to link it."
+            : 'Could not load your leave. Refresh to try again.'}
         </p>
       ) : isLoading || !data ? (
         <Skeleton className="h-28 w-full bg-bg-subtle" />
