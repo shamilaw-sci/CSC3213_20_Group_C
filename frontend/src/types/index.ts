@@ -17,6 +17,7 @@ export interface Employee {
   base_salary: number;
   status: string;
   user_id?: string;
+  date_joined?: string | null;
 }
 
 // --- Work schedules and holidays (app/api/hr_calendar.py) ---

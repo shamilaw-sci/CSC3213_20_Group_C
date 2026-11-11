@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends
 from app.core.supabase import get_supabase
-from app.schemas.hr import (EmployeeProfile, EmployeeProfileCreate,AttendanceLog, AttendanceLogCreate, AttendanceLogUpdate,PayrollLedger, SRI_LANKA)
+from app.schemas.hr import (EmployeeProfile, EmployeeProfileCreate, EmployeeProfileUpdate, AttendanceLog, AttendanceLogCreate, AttendanceLogUpdate,PayrollLedger, SRI_LANKA)
 from typing import List, Optional, Dict, Any
 from datetime import date, datetime, timezone
 from supabase import Client
@@ -25,9 +25,32 @@ async def get_employees(user = Depends(require_permission('hr:manage')), supabas
     response = supabase.table("employee_profile").select("*").execute()
     return response.data
 
+def _nic_taken(nic: str) -> HTTPException:
+    return HTTPException(status_code=409, detail=f"An employee with NIC {nic} already exists.")
+
+
+def _ensure_nic_free(supabase: Client, nic: str, exclude_id: Optional[int] = None) -> None:
+    # The column is UNIQUE, but a violation surfaced as a bare 500 and the
+    # form could only say "Failed to add employee".
+    rows = supabase.table("employee_profile").select("id").eq("nic", nic).execute().data or []
+    if any(r.get("id") != exclude_id for r in rows):
+        raise _nic_taken(nic)
+
+
+def _is_unique_violation(e: Exception) -> bool:
+    # Another request can take the NIC between the check and the write.
+    return getattr(e, "code", None) == "23505" or "duplicate key" in str(e)
+
+
 @router.post("/employees", response_model=EmployeeProfile)
 async def create_employee(employee: EmployeeProfileCreate, user = Depends(require_permission('hr:manage')), supabase: Client = Depends(get_supabase)):
-    response = supabase.table("employee_profile").insert(employee.model_dump()).execute()
+    _ensure_nic_free(supabase, employee.nic)
+    try:
+        response = supabase.table("employee_profile").insert(employee.model_dump()).execute()
+    except Exception as e:
+        if _is_unique_violation(e):
+            raise _nic_taken(employee.nic)
+        raise
     if not response.data:
         raise HTTPException(status_code=400, detail="Failed to create employee")
 
@@ -43,14 +66,25 @@ async def create_employee(employee: EmployeeProfileCreate, user = Depends(requir
     return response.data[0]
 
 @router.put("/employees/{employee_id}", response_model=EmployeeProfile)
-async def update_employee(employee_id: int, employee: EmployeeProfileCreate, user = Depends(require_permission('hr:manage')), supabase: Client = Depends(get_supabase)):
+async def update_employee(employee_id: int, employee: EmployeeProfileUpdate, user = Depends(require_permission('hr:manage')), supabase: Client = Depends(get_supabase)):
     # Salary and role live on this row, so the prior values are the point of
     # the audit entry.
     existing = supabase.table("employee_profile").select("*").eq("id", employee_id).execute()
     if not existing.data:
         raise HTTPException(status_code=404, detail="Employee not found")
 
-    response = supabase.table("employee_profile").update(employee.model_dump()).eq("id", employee_id).execute()
+    changes = employee.model_dump(exclude_unset=True)
+    if not changes:
+        raise HTTPException(status_code=400, detail="No changes were sent.")
+    if "nic" in changes:
+        _ensure_nic_free(supabase, changes["nic"], exclude_id=employee_id)
+
+    try:
+        response = supabase.table("employee_profile").update(changes).eq("id", employee_id).execute()
+    except Exception as e:
+        if _is_unique_violation(e):
+            raise _nic_taken(changes["nic"])
+        raise
     if not response.data:
         raise HTTPException(status_code=404, detail="Employee not found")
 

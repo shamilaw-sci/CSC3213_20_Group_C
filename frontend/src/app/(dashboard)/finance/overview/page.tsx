@@ -576,7 +576,7 @@ export default function FinancePage() {
                     filteredTransactions.map((tx) => (
                       <TableRow 
                         key={tx.id} 
-                        className={`border-border-brand hover:bg-[#14161C]/40 transition-colors ${tx.status === 'Voided' ? 'opacity-50' : ''}`}
+                        className={`border-border-brand hover:bg-bg-subtle transition-colors ${tx.status === 'Voided' ? 'opacity-50' : ''}`}
                       >
                         <TableCell className="font-semibold text-xs">
                           <div className="text-text-primary">{format(new Date(tx.transaction_date), 'MMM dd, yyyy')}</div>

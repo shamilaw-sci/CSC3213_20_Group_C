@@ -69,7 +69,7 @@ export default function AdminPage() {
       color: isDark ? '#F9FAFB' : '#111318',
       showCancelButton: true,
       confirmButtonColor: '#DC2626',
-      cancelButtonColor: isDark ? '#232730' : '#E5E7EB',
+      cancelButtonColor: isDark ? '#232730' : '#6B7280',
       confirmButtonText: 'Yes, Delete',
       cancelButtonText: 'Cancel'
     }).then(async (result) => {
@@ -199,7 +199,7 @@ export default function AdminPage() {
                       </TableRow>
                     ) : (
                       filteredUsers.map((u) => (
-                        <TableRow key={u.id} className="border-border-brand hover:bg-[#14161C]/40 transition-colors">
+                        <TableRow key={u.id} className="border-border-brand hover:bg-bg-subtle transition-colors">
                           <TableCell className="font-mono text-xs text-text-muted">{u.id.substring(0, 8)}...</TableCell>
                           <TableCell className="text-xs font-semibold text-text-primary">
                             <div>{u.email}</div>

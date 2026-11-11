@@ -1,6 +1,7 @@
-from pydantic import BaseModel, ConfigDict, field_validator
+import re
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from datetime import date, datetime, timedelta, timezone
-from typing import Optional, List
+from typing import Literal, Optional, List
 
 class RoleBase(BaseModel):
     role_name: str
@@ -17,8 +18,65 @@ class EmployeeProfileBase(BaseModel):
     status: str = "Active"
     user_id: Optional[str] = None
 
+# Sri Lankan NIC: the old 9 digits plus V or X, or the 12-digit number issued
+# since 2016.
+NIC_PATTERN = re.compile(r"^(\d{9}[VX]|\d{12})$")
+
+EmployeeStatus = Literal["Active", "Inactive"]
+
+
+def _clean_nic(value: str) -> str:
+    nic = value.strip().upper()
+    if not NIC_PATTERN.match(nic):
+        raise ValueError("NIC must be 9 digits followed by V or X, or 12 digits")
+    return nic
+
+
+def _clean_name(value: str) -> str:
+    name = value.strip()
+    if not name:
+        raise ValueError("must not be blank")
+    if len(name) > 100:  # VARCHAR(100)
+        raise ValueError("must be 100 characters or fewer")
+    return name
+
+
+# The rules below apply to what is written, not to EmployeeProfileBase:
+# rows created before them (demo NICs like DEMO5V among them) must still
+# read back through EmployeeProfile.
 class EmployeeProfileCreate(EmployeeProfileBase):
-    pass
+    base_salary: float = Field(gt=0)
+    status: EmployeeStatus = "Active"
+
+    _names = field_validator("first_name", "last_name")(_clean_name)
+    _nic = field_validator("nic")(_clean_nic)
+
+
+class EmployeeProfileUpdate(BaseModel):
+    """
+    A partial update: only the fields sent are written. It used to take the
+    full create model, whose user_id defaults to None, so any edit that left
+    user_id out unlinked the employee from their login and they could no
+    longer clock in.
+    """
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    nic: Optional[str] = None
+    base_salary: Optional[float] = Field(default=None, gt=0)
+    status: Optional[EmployeeStatus] = None
+    user_id: Optional[str] = None
+
+    # Leaving a field out keeps it; sending null for one of these is refused
+    # (the columns are NOT NULL). Only user_id may be cleared, to unlink.
+    @field_validator("first_name", "last_name", "nic", "base_salary", "status", mode="before")
+    @classmethod
+    def _not_null(cls, value):
+        if value is None:
+            raise ValueError("cannot be cleared")
+        return value
+
+    _names = field_validator("first_name", "last_name")(_clean_name)
+    _nic = field_validator("nic")(_clean_nic)
 
 class EmployeeProfile(EmployeeProfileBase):
     id: int
