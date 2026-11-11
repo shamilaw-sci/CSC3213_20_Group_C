@@ -163,9 +163,8 @@ export function useCreateEmployee() {
       queryClient.invalidateQueries({ queryKey: ['employees'] });
       toast.success('Employee record created successfully');
     },
-    onError: (error: any) => {
-      toast.error(error?.response?.data?.detail || 'Failed to add employee');
-    }
+    // No error toast: the Add Employee dialog shows the server's reason
+    // itself and stays open so the details can be corrected.
   });
 }
 
