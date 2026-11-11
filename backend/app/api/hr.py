@@ -2,12 +2,13 @@ from fastapi import APIRouter, HTTPException, Depends
 from app.core.supabase import get_supabase
 from app.schemas.hr import (EmployeeProfile, EmployeeProfileCreate, EmployeeProfileUpdate, AttendanceLog, AttendanceLogCreate, AttendanceLogUpdate,PayrollLedger, SRI_LANKA)
 from typing import List, Optional, Dict, Any
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from supabase import Client
 from app.core.security import require_any_permission, require_permission
 from app.core.audit import log_audit_action
 from app.core.permissions import UserRole
 from app.services.employees import require_active
+from app.services.payroll_status import payroll_approved
 from fastapi.responses import StreamingResponse
 from datetime import date as date_cls
 from fastapi import HTTPException
@@ -154,23 +155,55 @@ async def update_employee(employee_id: int, employee: EmployeeProfileUpdate, use
 
 # --- SELF SERVICE ATTENDANCE ---
 
+# An overnight shift clocks out the morning after it clocked in. A record
+# from yesterday that is still open is only closed by today's clock-out if it
+# began within this long; past that it is a forgotten clock-out for HR to fix,
+# not a shift, and closing it would book a 20-hour day.
+OVERNIGHT_MAX = timedelta(hours=16)
+
+
+def _sl_now() -> datetime:
+    return datetime.now(SRI_LANKA)
+
+
+def _sl_today() -> date:
+    # Sri Lanka's date, not the server's: the deployed backend runs on UTC,
+    # where a 05:00 clock-in in Colombo is still the previous day.
+    return _sl_now().date()
+
+
+def _parse_ts(value) -> Optional[datetime]:
+    """A stored or submitted clock time as an aware datetime."""
+    if value is None or isinstance(value, datetime):
+        return value if value is None or value.tzinfo else value.replace(tzinfo=SRI_LANKA)
+    dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
 @router.post("/attendance/clock-in")
 async def clock_in(user = Depends(require_permission('hr:attendance:self')), supabase: Client = Depends(get_supabase)):
     emp = get_employee_by_user_id(supabase, user['id'])
     require_active(emp, "clock in")
-    today = str(date.today())
-    
+    today = _sl_today().isoformat()
+
     existing = supabase.table("attendance_log").select("*").eq("employee_id", emp['id']).eq("target_date", today).execute()
     if existing.data:
         raise HTTPException(status_code=400, detail="Already clocked in for today.")
-    
+
     record = {
         "employee_id": emp['id'],
         "target_date": today,
         "clock_in": datetime.now(timezone.utc).isoformat(),
         "is_locked": False
     }
-    resp = supabase.table("attendance_log").insert(record).execute()
+    try:
+        resp = supabase.table("attendance_log").insert(record).execute()
+    except Exception as e:
+        # A double click lands two requests between the check and the insert;
+        # the unique index (migration 024) refuses the second.
+        if _is_unique_violation(e):
+            raise HTTPException(status_code=400, detail="Already clocked in for today.")
+        raise
 
     await log_audit_action(
         supabase,
@@ -187,23 +220,34 @@ async def clock_in(user = Depends(require_permission('hr:attendance:self')), sup
 async def clock_out(user = Depends(require_permission('hr:attendance:self')), supabase: Client = Depends(get_supabase)):
     emp = get_employee_by_user_id(supabase, user['id'])
     require_active(emp, "clock out")
-    today = str(date.today())
-    
-    existing = supabase.table("attendance_log").select("*").eq("employee_id", emp['id']).eq("target_date", today).execute()
-    if not existing.data:
+    now = _sl_now()
+    today = now.date()
+    yesterday = today - timedelta(days=1)
+
+    rows = supabase.table("attendance_log").select("*").eq("employee_id", emp['id']) \
+        .in_("target_date", [today.isoformat(), yesterday.isoformat()]).execute().data or []
+    todays = [r for r in rows if str(r["target_date"])[:10] == today.isoformat()]
+    overnight = [
+        r for r in rows
+        if str(r["target_date"])[:10] == yesterday.isoformat() and r.get("clock_in") and not r.get("clock_out")
+        and now - _parse_ts(r["clock_in"]) <= OVERNIGHT_MAX
+    ]
+    if todays:
+        record = todays[0]
+    elif overnight:
+        record = overnight[0]
+    else:
         raise HTTPException(status_code=400, detail="No active clock-in record found for today.")
-    
-    record = existing.data[0]
+
     if record['is_locked']:
         raise HTTPException(status_code=403, detail="Attendance record is already locked.")
     if record['clock_out']:
         raise HTTPException(status_code=400, detail="Already clocked out.")
-        
-    clock_out_time = datetime.now(timezone.utc)
-    clock_in_time = datetime.fromisoformat(record['clock_in'].replace('Z', '+00:00'))
-    diff = clock_out_time - clock_in_time
-    worked_hours = round(diff.total_seconds() / 3600.0, 2)
-    
+
+    # The same instant that chose the record, stored as UTC like clock-in.
+    clock_out_time = now.astimezone(timezone.utc)
+    worked_hours = _compute_worked_hours(_parse_ts(record['clock_in']), clock_out_time)
+
     # Clocking out does not lock. It used to, which left HR unable to correct
     # a wrong clock-out: update_attendance refuses locked rows and nothing
     # could unlock them. Locking is HR's step, per day, once reviewed.
@@ -211,7 +255,7 @@ async def clock_out(user = Depends(require_permission('hr:attendance:self')), su
         "clock_out": clock_out_time.isoformat(),
         "worked_hours": worked_hours,
     }
-    
+
     resp = supabase.table("attendance_log").update(update_data).eq("id", record['id']).execute()
 
     await log_audit_action(
@@ -229,12 +273,12 @@ async def clock_out(user = Depends(require_permission('hr:attendance:self')), su
 async def get_my_attendance(month: Optional[int] = None, year: Optional[int] = None, user = Depends(require_permission('hr:attendance:self')), supabase: Client = Depends(get_supabase)):
     emp = get_employee_by_user_id(supabase, user['id'])
     query = supabase.table("attendance_log").select("*").eq("employee_id", emp['id']).order("target_date", desc=True)
-    
+
     if month and year:
         start_date = f"{year}-{month:02d}-01"
         end_date = f"{year+1}-01-01" if month == 12 else f"{year}-{month+1:02d}-01"
         query = query.gte("target_date", start_date).lt("target_date", end_date)
-        
+
     resp = query.execute()
     return resp.data
 
@@ -258,20 +302,63 @@ def _compute_worked_hours(clock_in, clock_out):
         # Subtract real instants. Stripping the timezones (as this used to)
         # mixed a stored UTC time with a newly entered Sri Lanka time when
         # only one of the two was edited, putting worked hours 5.5 h out.
-        # A naive value is a Sri Lanka wall-clock time.
-        if clock_in.tzinfo is None:
-            clock_in = clock_in.replace(tzinfo=SRI_LANKA)
-        if clock_out.tzinfo is None:
-            clock_out = clock_out.replace(tzinfo=SRI_LANKA)
-        delta = (clock_out - clock_in).total_seconds() / 3600
-        if delta < 0:
-            delta += 24  # overnight shift: check-out landed after midnight
-        return round(delta, 2)
+        # A naive value is a Sri Lanka wall-clock time. An overnight shift's
+        # clock-out is stored on the next day, so the difference is positive;
+        # it used to be stored on the same day and wrapped by 24 h here, which
+        # also turned a typo (out 07:00 after in 09:10) into a 21.8-hour day.
+        return round((_parse_ts(clock_out) - _parse_ts(clock_in)).total_seconds() / 3600, 2)
     return None
+
+
+MAX_SHIFT = timedelta(hours=24)
+
+
+def _check_times(target_date: date, clock_in: Optional[datetime], clock_out: Optional[datetime]) -> None:
+    """The rules for times HR records or corrects."""
+    if clock_in is None:
+        raise HTTPException(status_code=400, detail="A clock-in time is required.")
+    if target_date > _sl_today():
+        raise HTTPException(status_code=400, detail="Attendance can't be recorded for a future date.")
+    if clock_in.astimezone(SRI_LANKA).date() != target_date:
+        raise HTTPException(status_code=400, detail=f"The clock-in must be on {target_date.isoformat()} (Sri Lanka time).")
+    now = _sl_now()
+    if clock_in > now or (clock_out is not None and clock_out > now):
+        raise HTTPException(status_code=400, detail="Clock times can't be in the future.")
+    if clock_out is not None:
+        if clock_out <= clock_in:
+            raise HTTPException(
+                status_code=400,
+                detail="Clock-out must be after clock-in. For an overnight shift, put the clock-out on the next day.",
+            )
+        if clock_out - clock_in > MAX_SHIFT:
+            raise HTTPException(status_code=400, detail="A shift can't be longer than 24 hours.")
+
+
+def _refuse_if_payroll_approved(supabase: Client, d: date) -> None:
+    # Approved pay was worked out from the month as it stood, so its
+    # attendance is history from then. Only unlock used to check this, so a
+    # record could still be added, edited and locked, and then never reopened.
+    if payroll_approved(supabase, d.month, d.year):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Payroll for {d.month}/{d.year} is approved; its attendance can no longer be changed.",
+        )
+
+
+def _forbid_own_record(supabase: Client, user: dict, employee_id: int) -> None:
+    # HR does not correct its own attendance, as with approving one's own
+    # leave: someone else has to (confirmed 2026-11-11).
+    mine = supabase.table("employee_profile").select("id").eq("user_id", str(user["id"])).execute().data or []
+    if any(m.get("id") == employee_id for m in mine):
+        raise HTTPException(status_code=403, detail="You can't change your own attendance. Ask another HR officer to do it.")
 
 
 @router.post("/attendance", response_model=AttendanceLog)
 async def log_attendance(attendance: AttendanceLogCreate, user = Depends(require_permission('hr:attendance:manage')), supabase: Client = Depends(get_supabase)):
+    _forbid_own_record(supabase, user, attendance.employee_id)
+    _check_times(attendance.target_date, attendance.clock_in, attendance.clock_out)
+    _refuse_if_payroll_approved(supabase, attendance.target_date)
+
     existing = supabase.table("attendance_log").select("*") \
         .eq("employee_id", attendance.employee_id) \
         .eq("target_date", str(attendance.target_date)).execute()
@@ -282,8 +369,14 @@ async def log_attendance(attendance: AttendanceLogCreate, user = Depends(require
 
     payload = attendance.model_dump(mode="json")
     payload["worked_hours"] = _compute_worked_hours(attendance.clock_in, attendance.clock_out)
+    payload["is_locked"] = False
 
-    response = supabase.table("attendance_log").insert(payload).execute()
+    try:
+        response = supabase.table("attendance_log").insert(payload).execute()
+    except Exception as e:
+        if _is_unique_violation(e):
+            raise HTTPException(status_code=400, detail="A log already exists for this employee on this date. Edit it instead.")
+        raise
     if not response.data:
         raise HTTPException(status_code=400, detail="Failed to log attendance")
 
@@ -316,6 +409,15 @@ async def export_attendance(
         .execute()
     )
 
+    def hhmm(value) -> str:
+        # Sri Lanka wall-clock time, as the grid shows it. The raw value is a
+        # UTC timestamp ("2026-07-29T03:00:00+00:00") that read as 03:00.
+        dt = _parse_ts(value)
+        if not dt:
+            return ""
+        local = dt.astimezone(SRI_LANKA)
+        return local.strftime("%H:%M") + (" (next day)" if local.date() > parsed_date else "")
+
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(["Employee", "Check In", "Check Out", "Worked Hours"])
@@ -325,8 +427,8 @@ async def export_attendance(
         full_name = f"{profile.get('first_name', '')} {profile.get('last_name', '')}".strip()
         writer.writerow([
             full_name,
-            log.get("clock_in"),
-            log.get("clock_out"),
+            hhmm(log.get("clock_in")),
+            hhmm(log.get("clock_out")),
             log.get("worked_hours"),
         ])
 
@@ -344,13 +446,21 @@ async def update_attendance(attendance_id: int, attendance: AttendanceLogUpdate,
         raise HTTPException(status_code=404, detail="Attendance record not found")
 
     current = existing.data[0]
+    _forbid_own_record(supabase, user, current["employee_id"])
     if current["is_locked"]:
         raise HTTPException(status_code=400, detail="This record is locked and cannot be edited")
+    record_date = date_cls.fromisoformat(str(current["target_date"])[:10])
+    _refuse_if_payroll_approved(supabase, record_date)
 
-    clock_in = attendance.clock_in or current.get("clock_in")
-    clock_out = attendance.clock_out or current.get("clock_out")
-    clock_in = datetime.fromisoformat(clock_in) if isinstance(clock_in, str) else clock_in
-    clock_out = datetime.fromisoformat(clock_out) if isinstance(clock_out, str) else clock_out
+    # A field sent as null is a deliberate clear: a wrong clock-out can be
+    # removed (the record goes back to missing a clock-out). The clock-in
+    # cannot be. Fields not sent keep their stored values.
+    sent = attendance.model_fields_set
+    if "clock_in" in sent and attendance.clock_in is None:
+        raise HTTPException(status_code=400, detail="The clock-in can't be cleared.")
+    clock_in = attendance.clock_in if "clock_in" in sent else _parse_ts(current.get("clock_in"))
+    clock_out = attendance.clock_out if "clock_out" in sent else _parse_ts(current.get("clock_out"))
+    _check_times(record_date, clock_in, clock_out)
 
     payload = attendance.model_dump(mode="json", exclude_unset=True)
     payload["worked_hours"] = _compute_worked_hours(clock_in, clock_out)
@@ -424,15 +534,11 @@ async def unlock_attendance(attendance_id: int, user = Depends(require_permissio
     if not existing.data:
         raise HTTPException(status_code=404, detail="Attendance record not found")
     record = existing.data[0]
+    _forbid_own_record(supabase, user, record["employee_id"])
     if not record.get("is_locked"):
         raise HTTPException(status_code=400, detail="This record is not locked.")
 
-    record_date = date_cls.fromisoformat(str(record["target_date"])[:10])
-    if _approved_run(supabase, record_date.month, record_date.year):
-        raise HTTPException(
-            status_code=409,
-            detail=f"Payroll for {record_date.month}/{record_date.year} is approved; its attendance can no longer be changed.",
-        )
+    _refuse_if_payroll_approved(supabase, date_cls.fromisoformat(str(record["target_date"])[:10]))
 
     response = supabase.table("attendance_log").update({"is_locked": False}).eq("id", attendance_id).execute()
     if not response.data:
@@ -473,12 +579,6 @@ def _month_bounds(month: int, year: int) -> tuple[str, str]:
     start = f"{year}-{month:02d}-01"
     end = f"{year+1}-01-01" if month == 12 else f"{year}-{month+1:02d}-01"
     return start, end
-
-
-def _approved_run(supabase: Client, month: int, year: int) -> bool:
-    runs = supabase.table("payroll_runs").select("id, status") \
-        .eq("payroll_month", month).eq("payroll_year", year).execute().data or []
-    return any(r.get("status") == "Approved" for r in runs)
 
 
 def _validate_month(month: int, year: int) -> None:

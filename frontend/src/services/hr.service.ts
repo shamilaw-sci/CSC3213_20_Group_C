@@ -91,7 +91,8 @@ export const HRService = {
     return response.data;
   },
 
-  updateAttendance: async (id: number, attendance: { clock_in?: string; clock_out?: string }) => {
+  // clock_out: null clears a wrong clock-out.
+  updateAttendance: async (id: number, attendance: { clock_in?: string; clock_out?: string | null }) => {
   const response = await api.put<AttendanceRecord>(`/hr/attendance/${id}`, attendance);
   return response.data;
   },

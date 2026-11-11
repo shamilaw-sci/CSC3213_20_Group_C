@@ -35,8 +35,10 @@ def test_worked_hours_subtract_real_instants():
     assert _compute_worked_hours(new_in, stored_out) == 8.5
 
 
-def test_overnight_shift_still_wraps():
-    assert _compute_worked_hours(datetime(2026, 10, 29, 20, 0), datetime(2026, 10, 29, 4, 0)) == 8.0
+def test_an_overnight_shift_is_stored_with_a_next_day_clock_out():
+    # It used to be stored on the same day and wrapped by 24 h, which also
+    # turned a typo (out 07:00 after in 09:10) into a 21.8-hour day.
+    assert _compute_worked_hours(datetime(2026, 10, 29, 20, 0), datetime(2026, 10, 30, 4, 0)) == 8.0
 
 
 def test_hr_logged_times_are_stored_with_the_sri_lanka_offset():

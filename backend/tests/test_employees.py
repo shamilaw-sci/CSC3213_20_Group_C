@@ -48,7 +48,11 @@ class _Query:
         return self
 
     def eq(self, column, value):
-        self._filters.append((column, value))
+        self._filters.append(lambda r: r.get(column) == value)
+        return self
+
+    def in_(self, column, values):
+        self._filters.append(lambda r: r.get(column) in values)
         return self
 
     def __getattr__(self, name):
@@ -57,10 +61,12 @@ class _Query:
     def execute(self):
         rows = self._db.tables.setdefault(self._name, [])
         if self._op == "insert":
+            if self._name in self._db.fail_inserts:
+                raise self._db.fail_inserts[self._name]
             row = {"id": len(rows) + 100, **self._data}
             rows.append(row)
             return _Result([row])
-        matched = [r for r in rows if all(r.get(c) == v for c, v in self._filters)]
+        matched = [r for r in rows if all(f(r) for f in self._filters)]
         if self._op == "update":
             for r in matched:
                 r.update(self._data)
@@ -71,6 +77,7 @@ class _Db:
     def __init__(self, employees):
         self.tables = {"employee_profile": [dict(e) for e in employees], "system_audit_logs": []}
         self.updates = []
+        self.fail_inserts = {}  # table -> exception its next insert raises
 
     def table(self, name):
         return _Query(self, name)

@@ -210,7 +210,7 @@ export function useLogAttendance() {
 export function useUpdateAttendance() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, ...data }: { id: number; clock_in?: string; clock_out?: string }) =>
+    mutationFn: ({ id, ...data }: { id: number; clock_in?: string; clock_out?: string | null }) =>
       HRService.updateAttendance(id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['attendance'] });

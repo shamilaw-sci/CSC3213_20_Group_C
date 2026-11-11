@@ -22,6 +22,7 @@ import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+from app.api.hr import _sl_today
 from app.core.permissions import has_permission
 from app.core.supabase import get_supabase
 from app.main import app
@@ -200,8 +201,8 @@ def test_clock_out_does_not_lock_the_record():
     supabase = _Rpc(tables={
         "employee_profile": {"select": [{"id": 7, "user_id": USER_ID}]},
         "attendance_log": {
-            "select": [{"id": 5, "employee_id": 7, "clock_in": "2026-10-29T03:00:00+00:00",
-                        "clock_out": None, "is_locked": False}],
+            "select": [{"id": 5, "employee_id": 7, "target_date": _sl_today().isoformat(),
+                        "clock_in": "2026-10-29T03:00:00+00:00", "clock_out": None, "is_locked": False}],
             "update": [{"id": 5}],
         },
     })

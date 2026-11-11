@@ -19,6 +19,7 @@ from supabase import Client
 from app.core.security import require_any_permission, require_permission
 from app.core.supabase import get_supabase
 from app.services.attendance_month import build_month, month_days
+from app.services.payroll_status import payroll_approved
 from app.services.work_calendar import COLOMBO
 
 router = APIRouter()
@@ -88,7 +89,16 @@ async def attendance_month(
     user=Depends(require_any_permission("hr:attendance:manage", "hr:attendance:read")),
     supabase: Client = Depends(get_supabase),
 ):
-    return _month(supabase, year, month)
+    result = _month(supabase, year, month)
+    # For the grid to show what it can't edit, rather than offer edits the
+    # server refuses: the viewer's own row, and a month whose payroll is
+    # approved.
+    mine = supabase.table("employee_profile").select("id").eq("user_id", str(user["id"])).execute().data or []
+    return {
+        **result,
+        "my_employee_id": mine[0]["id"] if mine else None,
+        "payroll_approved": payroll_approved(supabase, month, year),
+    }
 
 
 @router.get("/attendance/me/month")
