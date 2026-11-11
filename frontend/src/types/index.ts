@@ -16,8 +16,23 @@ export interface Employee {
   nic: string;
   base_salary: number;
   status: string;
-  user_id?: string;
+  user_id?: string | null;
   date_joined?: string | null;
+  // The linked login's email; sent by GET /hr/employees only.
+  login_email?: string | null;
+}
+
+// PUT /hr/employees/{id} writes only the fields sent. user_id: null unlinks
+// the login; the other fields cannot be cleared.
+export type EmployeeUpdate = Partial<Pick<Employee, 'first_name' | 'last_name' | 'nic' | 'base_salary' | 'status'>> & {
+  user_id?: string | null;
+};
+
+// A login account HR may link to an employee (GET /hr/linkable-logins).
+export interface LinkableLogin {
+  id: string;
+  email: string;
+  role: string | null;
 }
 
 // --- Work schedules and holidays (app/api/hr_calendar.py) ---

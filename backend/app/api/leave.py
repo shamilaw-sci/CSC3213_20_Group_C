@@ -25,6 +25,7 @@ from app.core.audit import log_audit_action
 from app.core.permissions import has_permission
 from app.core.security import get_current_user, require_permission
 from app.core.supabase import get_supabase
+from app.services.employees import require_active
 from app.services.leave_rules import (
     ZERO,
     Balance,
@@ -235,16 +236,22 @@ def _assess(supabase: Client, employee: dict, body: LeaveIn, exclude_request: Op
 
 
 def _subject(supabase: Client, user: dict, body: LeaveIn) -> dict:
-    """The employee a request is for: oneself, or anyone for leave:approve holders."""
+    """
+    The employee a request is for: oneself, or anyone for leave:approve
+    holders. Never a deactivated employee, whoever is asking.
+    """
     if body.employee_id is None:
         if not has_permission(_role(user), "hr:attendance:self"):
             raise HTTPException(status_code=403, detail="Insufficient permissions. Requires hr:attendance:self")
-        return _my_employee(supabase, user)
-    if not has_permission(_role(user), "leave:approve"):
-        mine = supabase.table("employee_profile").select("id").eq("user_id", str(user["id"])).execute().data
-        if not mine or mine[0]["id"] != body.employee_id:
-            raise HTTPException(status_code=403, detail="Only HR can request leave on someone else's behalf.")
-    return _employee(supabase, body.employee_id)
+        employee = _my_employee(supabase, user)
+    else:
+        if not has_permission(_role(user), "leave:approve"):
+            mine = supabase.table("employee_profile").select("id").eq("user_id", str(user["id"])).execute().data
+            if not mine or mine[0]["id"] != body.employee_id:
+                raise HTTPException(status_code=403, detail="Only HR can request leave on someone else's behalf.")
+        employee = _employee(supabase, body.employee_id)
+    require_active(employee, "request leave")
+    return employee
 
 
 def _public(assessment: dict) -> dict:
