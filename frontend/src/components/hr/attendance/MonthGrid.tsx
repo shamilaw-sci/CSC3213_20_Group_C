@@ -111,6 +111,12 @@ export function MonthGrid({ canEdit }: { canEdit: boolean }) {
         <span className="flex items-center gap-1.5"><span className="inline-block h-4 w-6 rounded bg-bg-subtle" />Weekend / day off</span>
       </div>
 
+      {canEdit && data?.payroll_approved && (
+        <p className="rounded-lg border border-border-brand bg-bg-subtle px-4 py-2.5 text-xs text-text-secondary">
+          {`Payroll for ${MONTH.format(new Date(year, month - 1, 1))} is approved, so this month's attendance is read-only.`}
+        </p>
+      )}
+
       {error && !data ? (
         <p className="rounded-lg border border-rose-500/20 bg-rose-500/10 p-4 text-sm text-rose-500">Failed to load attendance for this month.</p>
       ) : isLoading || !data ? (
@@ -223,6 +229,8 @@ export function MonthGrid({ canEdit }: { canEdit: boolean }) {
           employeeId={open.row.employee_id}
           employeeName={open.row.employee_name}
           canEdit={canEdit}
+          isOwn={data?.my_employee_id === open.row.employee_id}
+          payrollApproved={!!data?.payroll_approved}
           onClose={() => setOpen(null)}
         />
       )}

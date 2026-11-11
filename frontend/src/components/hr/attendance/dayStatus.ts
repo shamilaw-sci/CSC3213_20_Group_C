@@ -66,6 +66,19 @@ const TIME = new Intl.DateTimeFormat('en-LK', { timeZone: 'Asia/Colombo', hour: 
 
 export const hhmm = (iso: string | null) => (iso ? TIME.format(new Date(iso)) : '—');
 
+const DAY = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Colombo', year: 'numeric', month: '2-digit', day: '2-digit' });
+
+// A date in Sri Lanka as YYYY-MM-DD, whatever the viewer's time zone: the
+// date attendance is filed under.
+export const colomboDate = (at: Date = new Date()) => DAY.format(at);
+
+// YYYY-MM-DD plus n days.
+export function addDays(iso: string, n: number) {
+  const d = localDate(iso);
+  d.setDate(d.getDate() + n);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 export function hours(minutes: number) {
   const h = Math.floor(minutes / 60);
   const m = minutes % 60;

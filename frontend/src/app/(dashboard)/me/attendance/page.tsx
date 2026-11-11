@@ -1,24 +1,20 @@
 'use client';
 
-import { useMyAttendance, useClockIn, useClockOut } from '@/hooks/useHR';
+import { useMyAttendance } from '@/hooks/useHR';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { format } from 'date-fns';
 import { Clock, Lock, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { MyScheduleCard } from '@/components/hr/calendar/MyScheduleCard';
 import { MyMonth } from '@/components/hr/attendance/MyMonth';
+import { TodayClockCard } from '@/components/hr/attendance/TodayClockCard';
+import { colomboDate, hhmm } from '@/components/hr/attendance/dayStatus';
 
 export default function MyAttendancePage() {
-  const currentMonth = new Date().getMonth() + 1;
-  const currentYear = new Date().getFullYear();
-  
+  // Sri Lanka's date and times throughout, whatever the browser's zone.
+  const todayStr = colomboDate();
+  const [currentYear, currentMonth] = todayStr.split('-').map(Number);
+
   const { data: attendanceLogs, isLoading } = useMyAttendance(currentMonth, currentYear);
-  const { mutate: clockIn, isPending: isClockingIn } = useClockIn();
-  const { mutate: clockOut, isPending: isClockingOut } = useClockOut();
-  
-  const todayStr = format(new Date(), 'yyyy-MM-dd');
-  const todayRecord = attendanceLogs?.find(log => log.target_date === todayStr);
 
   return (
     <div className="space-y-6">
@@ -30,65 +26,9 @@ export default function MyAttendancePage() {
       </div>
 
       <div className="grid md:grid-cols-3 gap-6">
-        <Card className="md:col-span-1 border-border-brand bg-surface">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Clock className="w-5 h-5 text-accent" />
-              Today's Status
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="flex flex-col items-center justify-center py-6 space-y-6">
-            {isLoading ? (
-              <Skeleton className="w-full h-32 rounded-lg" />
-            ) : !todayRecord ? (
-              <>
-                <div className="text-center">
-                  <p className="text-text-secondary">You haven't clocked in yet.</p>
-                </div>
-                <Button 
-                  onClick={() => clockIn()} 
-                  disabled={isClockingIn}
-                  className="w-full bg-accent text-bg-brand hover:bg-accent/90"
-                  size="lg"
-                >
-                  {isClockingIn ? 'Clocking In...' : 'Clock In Now'}
-                </Button>
-              </>
-            ) : todayRecord.clock_out ? (
-              <>
-                <div className="text-center space-y-2">
-                  {todayRecord.is_locked
-                    ? <Lock className="w-12 h-12 text-emerald-500 mx-auto" />
-                    : <CheckCircle2 className="w-12 h-12 text-emerald-500 mx-auto" />}
-                  <p className="font-medium text-emerald-500">Attendance Completed</p>
-                  <p className="text-sm text-text-secondary">
-                    In: {format(new Date(todayRecord.clock_in!), 'HH:mm')} | Out: {todayRecord.clock_out ? format(new Date(todayRecord.clock_out), 'HH:mm') : '-'}
-                  </p>
-                  <p className="text-xs text-text-secondary">{todayRecord.worked_hours ?? 0} hours worked</p>
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="text-center space-y-2">
-                  <div className="animate-pulse bg-emerald-500/20 text-emerald-500 px-3 py-1 rounded-full text-sm font-medium inline-block mb-2">
-                    Active Session
-                  </div>
-                  <p className="text-sm text-text-secondary">
-                    Clocked in at {format(new Date(todayRecord.clock_in!), 'HH:mm')}
-                  </p>
-                </div>
-                <Button 
-                  onClick={() => clockOut()} 
-                  disabled={isClockingOut}
-                  className="w-full bg-rose-500 text-white hover:bg-rose-600"
-                  size="lg"
-                >
-                  {isClockingOut ? 'Clocking Out...' : 'Clock Out'}
-                </Button>
-              </>
-            )}
-          </CardContent>
-        </Card>
+        <div className="md:col-span-1">
+          <TodayClockCard title="Today's Status" />
+        </div>
 
         <Card className="md:col-span-2 border-border-brand bg-surface">
           <CardHeader>
@@ -115,12 +55,8 @@ export default function MyAttendancePage() {
                     {attendanceLogs.map((log) => (
                       <tr key={log.id} className="border-b border-border-brand last:border-0">
                         <td className="px-4 py-3 font-medium">{log.target_date}</td>
-                        <td className="px-4 py-3 text-text-secondary">
-                          {log.clock_in ? format(new Date(log.clock_in), 'HH:mm') : '-'}
-                        </td>
-                        <td className="px-4 py-3 text-text-secondary">
-                          {log.clock_out ? format(new Date(log.clock_out), 'HH:mm') : '-'}
-                        </td>
+                        <td className="px-4 py-3 text-text-secondary">{log.clock_in ? hhmm(log.clock_in) : '-'}</td>
+                        <td className="px-4 py-3 text-text-secondary">{log.clock_out ? hhmm(log.clock_out) : '-'}</td>
                         <td className="px-4 py-3 text-text-secondary">
                           {log.worked_hours ? `${log.worked_hours}h` : '-'}
                         </td>

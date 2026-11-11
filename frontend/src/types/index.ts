@@ -254,6 +254,10 @@ export interface AttendanceMonth {
   attention: AttentionItem[];
   today: string;
   employee?: MonthRow | null; // /me/month only
+  // /month only: the viewer's own employee row (HR can't edit it) and
+  // whether this month's payroll is approved (attendance is then frozen).
+  my_employee_id?: number | null;
+  payroll_approved?: boolean;
 }
 
 // --- Payroll (GET /hr/payroll/run) ---
@@ -300,6 +304,7 @@ export interface AttendanceRecord {
   employee_profile?: {
     first_name: string;
     last_name: string;
+    user_id?: string | null;
   };
 }
 
