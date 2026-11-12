@@ -137,6 +137,11 @@ export function useUnlockAttendance() {
   });
 }
 
+// One's own payslips: approved payrolls only.
+export function useMyPayslips() {
+  return useQuery({ queryKey: ['payroll', 'me'], queryFn: HRService.getMyPayslips, retry: false });
+}
+
 export function usePayrollRun(month: number, year: number) {
   return useQuery({
     queryKey: ['payroll', 'run', { month, year }],

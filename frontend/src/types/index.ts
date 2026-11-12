@@ -20,12 +20,18 @@ export interface Employee {
   date_joined?: string | null;
   // The linked login's email; sent by GET /hr/employees only.
   login_email?: string | null;
+  // A leaver's last day (their final month is pro-rated to it) and the
+  // EPF number printed on payslips (migration 026).
+  date_left?: string | null;
+  epf_number?: string | null;
 }
 
 // PUT /hr/employees/{id} writes only the fields sent. user_id: null unlinks
 // the login; the other fields cannot be cleared.
 export type EmployeeUpdate = Partial<Pick<Employee, 'first_name' | 'last_name' | 'nic' | 'base_salary' | 'status'>> & {
   user_id?: string | null;
+  epf_number?: string | null;
+  date_left?: string | null;
 };
 
 // A login account HR may link to an employee (GET /hr/linkable-logins).
@@ -279,22 +285,61 @@ export interface PayrollRun {
   finance_transaction_id: number | null;
   generator?: { email: string } | null;
   approver?: { email: string } | null;
+  // Payroll engine (migration 026); null on runs from before it. `total` is
+  // then the employer cost: gross + employer EPF + ETF.
+  gross_total?: number | null;
+  epf_employee_total?: number | null;
+  epf_employer_total?: number | null;
+  etf_total?: number | null;
+  net_total?: number | null;
+  epf_transaction_id?: number | null;
+  etf_transaction_id?: number | null;
 }
 
+// One employee's line. The breakdown is null on lines from before the
+// engine, which were net pay only (the base salary).
 export interface PayrollLine {
   id: number;
   employee_id: number;
   employee_name: string;
   nic: string | null;
+  epf_number?: string | null;
+  days_in_month?: number | null;
+  paid_days?: number | null;
+  basic?: number | null;
+  nopay_days?: number | null;
+  nopay_deduction?: number | null;
+  gross?: number | null;
+  epf_employee?: number | null;
+  epf_employer?: number | null;
+  etf?: number | null;
   net_payable: number;
 }
 
-// How a draft differs from generating it now (migration 025). An approval
+// An approved run's ledger entry and whether Finance has paid it.
+export interface PayrollPayable {
+  label: string;
+  transaction_id: number;
+  status: 'Cash' | 'Receivable' | 'Voided' | null;
+  amount: number | null;
+}
+
+// A payslip on My Payslips (approved runs only).
+export interface MyPayslip {
+  run_id: number;
+  payroll_month: number;
+  payroll_year: number;
+  approved_at: string | null;
+  gross: number | null;
+  net_payable: number;
+}
+
+// How a draft differs from computing it now (the payroll engine). An approval
 // is refused while there is any.
 export interface PayrollDrift {
   employee_id: number;
   employee_name: string;
-  change: 'added' | 'removed' | 'salary';
+  change: 'added' | 'removed' | 'changed';
   draft_amount: number | null;
   current_amount: number | null;
 }
@@ -303,8 +348,10 @@ export interface PayrollRunView {
   run: PayrollRun | null;
   lines: PayrollLine[];
   incomplete_attendance: number;
-  // Drafts only; null when it can't be told (migration 025 not applied).
+  // Drafts only.
   drift?: PayrollDrift[] | null;
+  // Approved runs: net salaries, EPF and ETF payables.
+  payables?: PayrollPayable[];
   // The approved payable's status in the Ledger: 'Cash' once paid.
   payment_status?: 'Cash' | 'Receivable' | 'Voided' | null;
   // Why the month can't be generated / approved yet, if it can't.

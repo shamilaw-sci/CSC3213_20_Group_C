@@ -48,10 +48,12 @@ class _PayrollDb(_Db):
         self.tables["payroll_runs"] = [dict(r) for r in runs]
         self.tables["system_audit_logs"] = [dict(a) for a in audit]
         self.rpc_calls = []
+        self.rpc_params = []
         self._drift, self._drift_error = drift or [], drift_error
 
     def rpc(self, name, params=None):
         self.rpc_calls.append(name)
+        self.rpc_params.append((name, params))
         db = self
 
         class _Call:
@@ -168,23 +170,53 @@ def test_a_role_change_by_someone_else_does_not_count(clock):
 # What the run view shows
 # --------------------------------------------------------------------------
 
+def _staff(id, first, last, base, joined="2020-01-01"):
+    return {"id": id, "first_name": first, "last_name": last, "nic": None, "epf_number": None,
+            "base_salary": base, "status": "Active", "date_joined": joined, "date_left": None}
+
+
+def _stored(employee_id, first, last, base):
+    """A draft line as generated at `base` for a full month."""
+    gross = float(base)
+    return {"id": employee_id + 500, "run_id": 1, "employee_id": employee_id,
+            "employee_profile": {"first_name": first, "last_name": last},
+            "days_in_month": 31, "paid_days": 31, "basic": gross, "nopay_days": 0, "nopay_deduction": 0,
+            "gross": gross, "epf_employee": round(gross * 0.08, 2), "epf_employer": round(gross * 0.12, 2),
+            "etf": round(gross * 0.03, 2), "net_payable": round(gross * 0.92, 2)}
+
+
+def _drifted_db():
+    # Drafted with Kamala on 65000 and no Thilini; now Kamala earns 70000
+    # and Thilini has been added.
+    db = _PayrollDb([_run()])
+    db.tables["employee_profile"] = [_staff(2, "Kamala", "Silva", 70000), _staff(31, "Thilini", "Perera", 100000)]
+    db.tables["payroll_ledger"] = [_stored(2, "Kamala", "Silva", 65000)]
+    return db
+
+
 def test_an_out_of_date_draft_lists_what_changed(clock):
-    db = _PayrollDb([_run()], drift=[
-        {"employee_id": 31, "employee_name": "Thilini Perera", "change": "added", "draft_amount": None, "current_amount": 100000},
-        {"employee_id": 2, "employee_name": "Kamala Silva", "change": "salary", "draft_amount": 65000, "current_amount": 70000},
-    ])
-    drift = _send(db, "GET", "/api/hr/payroll/run?month=10&year=2026").json()["drift"]
+    drift = _send(_drifted_db(), "GET", "/api/hr/payroll/run?month=10&year=2026").json()["drift"]
 
-    assert [(d["employee_name"], d["change"]) for d in drift] == [("Thilini Perera", "added"), ("Kamala Silva", "salary")]
-    assert drift[1]["current_amount"] == 70000.0
+    assert [(d["employee_name"], d["change"]) for d in drift] == [("Thilini Perera", "added"), ("Kamala Silva", "changed")]
+    assert drift[1]["draft_amount"] == 59800.0 and drift[1]["current_amount"] == 64400.0
 
 
-def test_without_migration_025_the_run_view_still_loads(clock):
-    db = _PayrollDb([_run()], drift_error=Exception("Could not find the function payroll_draft_drift"))
-    response = _send(db, "GET", "/api/hr/payroll/run?month=10&year=2026")
+def test_an_out_of_date_draft_cannot_be_approved(clock):
+    db = _drifted_db()
+    response = _approve(db)
 
-    assert response.status_code == 200, response.text
-    assert response.json()["drift"] is None
+    assert response.status_code == 409, response.text
+    assert "2 employees have changed" in response.json()["detail"]
+    assert "approve_payroll_run" not in db.rpc_calls
+
+
+def test_a_current_draft_is_approved_with_its_generated_at(clock):
+    db = _PayrollDb([_run(generated_at="2026-11-01T05:00:00+00:00")])
+    db.tables["employee_profile"] = [_staff(2, "Kamala", "Silva", 65000)]
+    db.tables["payroll_ledger"] = [_stored(2, "Kamala", "Silva", 65000)]
+
+    assert _approve(db).status_code == 200
+    assert db.rpc_calls == ["approve_payroll_run"]
 
 
 @pytest.mark.parametrize("status", ["Cash", "Receivable"])

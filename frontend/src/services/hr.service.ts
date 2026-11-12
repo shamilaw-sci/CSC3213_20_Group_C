@@ -1,5 +1,5 @@
 import api from '@/lib/api-client';
-import { Employee, EmployeeUpdate, LinkableLogin, AttendanceRecord, AttendanceMonth, PayrollRun, PayrollRunView } from '@/types';
+import { Employee, EmployeeUpdate, LinkableLogin, MyPayslip, AttendanceRecord, AttendanceMonth, PayrollRun, PayrollRunView } from '@/types';
 
 export const HRService = {
   getEmployees: async () => {
@@ -90,6 +90,16 @@ export const HRService = {
     const response = await api.post<PayrollRun>(`/hr/payroll/runs/${runId}/approve`);
     return response.data;
   },
+
+  // A payslip PDF, as a blob to save: anyone's for HR and approvers
+  // (a draft's is marked DRAFT), one's own approved ones for staff.
+  getPayslip: async (runId: number, employeeId: number) =>
+    (await api.get<Blob>(`/hr/payroll/runs/${runId}/payslips/${employeeId}`, { responseType: 'blob' })).data,
+
+  getMyPayslips: async () => (await api.get<MyPayslip[]>('/hr/payroll/me/payslips')).data,
+
+  getMyPayslip: async (runId: number) =>
+    (await api.get<Blob>(`/hr/payroll/me/payslips/${runId}`, { responseType: 'blob' })).data,
 
   // clock_out: null clears a wrong clock-out.
   updateAttendance: async (id: number, attendance: { clock_in?: string; clock_out?: string | null }) => {

@@ -19,7 +19,8 @@ import {
   Plane,
   CalendarPlus,
   CircleCheckBig,
-  HandCoins
+  HandCoins,
+  ReceiptText
 } from 'lucide-react';
 
 import { hasAnyPermission, type Permission } from './permissions';
@@ -123,6 +124,7 @@ export const NAVIGATION_CONFIG: NavSection[] = [
     items: [
       { label: 'My Attendance', href: '/me/attendance', icon: BookOpen, requiredPermission: 'hr:attendance:self' },
       { label: 'My Leave', href: '/me/leave', icon: Plane, requiredPermission: 'hr:attendance:self' },
+      { label: 'My Payslips', href: '/me/payslips', icon: ReceiptText, requiredPermission: 'hr:attendance:self' },
     ]
   },
   {

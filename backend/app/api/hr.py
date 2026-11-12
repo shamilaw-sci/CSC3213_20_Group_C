@@ -9,6 +9,9 @@ from app.core.audit import log_audit_action
 from app.core.permissions import UserRole
 from app.services.employees import require_active
 from app.services.payroll_status import is_frozen
+from app.services.payroll_engine import PayLine, compute_run, drift, month_bounds
+from app.services.reports import PDFGenerationError, generate_pdf
+from decimal import Decimal
 from fastapi.responses import StreamingResponse
 from datetime import date as date_cls
 from fastapi import HTTPException
@@ -98,7 +101,12 @@ async def create_employee(employee: EmployeeProfileCreate, user = Depends(requir
     if employee.user_id:
         _check_login(supabase, employee.user_id)
     try:
-        response = supabase.table("employee_profile").insert(employee.model_dump()).execute()
+        payload = employee.model_dump()
+        # Only sent when set, so creating an employee keeps working before
+        # migration 026 adds the column.
+        if not (payload.get("epf_number") or "").strip():
+            payload.pop("epf_number", None)
+        response = supabase.table("employee_profile").insert(payload).execute()
     except Exception as e:
         if _is_unique_violation(e):
             raise _nic_taken(employee.nic)
@@ -125,9 +133,20 @@ async def update_employee(employee_id: int, employee: EmployeeProfileUpdate, use
     if not existing.data:
         raise HTTPException(status_code=404, detail="Employee not found")
 
-    changes = employee.model_dump(exclude_unset=True)
+    changes = employee.model_dump(mode="json", exclude_unset=True)
     if not changes:
         raise HTTPException(status_code=400, detail="No changes were sent.")
+    if "epf_number" in changes:
+        changes["epf_number"] = (changes["epf_number"] or "").strip() or None
+    # The last day goes with being a leaver: reactivating clears it, and it
+    # can't come before the join date. Payroll pro-rates the final month to it.
+    if changes.get("status") == "Active":
+        changes["date_left"] = None
+    if changes.get("date_left"):
+        left = date_cls.fromisoformat(changes["date_left"])
+        joined = existing.data[0].get("date_joined")
+        if joined and left < date_cls.fromisoformat(str(joined)[:10]):
+            raise HTTPException(status_code=400, detail="The last working day can't be before the join date.")
     if "nic" in changes:
         _ensure_nic_free(supabase, changes["nic"], exclude_id=employee_id)
     if changes.get("user_id"):
@@ -577,6 +596,8 @@ _RPC_ERRORS = (
     ("No active employees found", 404),
     ("has nothing to pay", 400),
     ("is out of date", 409),
+    # PostgREST, when the function's new signature isn't there yet.
+    ("Could not find the function", 503),
 )
 
 _MONTH_NAMES = (
@@ -632,21 +653,94 @@ def _role_changed_by(supabase: Client, approver_id: str, generator_id: str) -> b
     return False
 
 
-def _draft_drift(supabase: Client, run_id: int) -> Optional[list]:
-    """How a draft differs from generating it now; None if that can't be told."""
+def _is_missing_column(error: Exception) -> bool:
+    text = str(error).lower()
+    return "42703" in text or ("column" in text and "does not exist" in text)
+
+
+def _select_with_fallback(supabase: Client, table: str, columns: str, fallback: str, **eq):
+    """
+    Select `columns`, or `fallback` if a column is missing because migration
+    026 isn't applied yet, so the payroll page still loads in between.
+    """
+    def run(cols):
+        q = supabase.table(table).select(cols)
+        for k, v in eq.items():
+            q = q.eq(k, v)
+        return q.execute().data or []
     try:
-        rows = supabase.rpc("payroll_draft_drift", {"p_run_id": run_id}).execute().data or []
-    except Exception:
-        # Migration 025 not applied yet. Approval still works as before it.
-        return None
-    out = [{
-        "employee_id": r.get("employee_id"),
-        "employee_name": r.get("employee_name") or f"Employee {r.get('employee_id')}",
-        "change": r.get("change"),
-        "draft_amount": None if r.get("draft_amount") is None else float(r["draft_amount"]),
-        "current_amount": None if r.get("current_amount") is None else float(r["current_amount"]),
-    } for r in rows]
-    out.sort(key=lambda d: (d["change"] or "", d["employee_name"].lower()))
+        return run(columns)
+    except Exception as e:
+        if not _is_missing_column(e):
+            raise
+        return run(fallback)
+
+
+def _payroll_inputs(supabase: Client, month: int, year: int) -> tuple[list[dict], dict]:
+    """
+    What the engine needs for a month: every employee (leavers included;
+    the engine decides who is paid) and each one's approved unpaid leave
+    days in the month, as (date, fraction).
+    """
+    employees = _select_with_fallback(
+        supabase, "employee_profile",
+        "id, first_name, last_name, nic, epf_number, base_salary, status, date_joined, date_left",
+        "id, first_name, last_name, nic, base_salary, status, date_joined",
+    )
+    first, last = month_bounds(month, year)
+    unpaid_types = [t["id"] for t in (supabase.table("leave_types").select("id, is_paid").execute().data or [])
+                    if t.get("is_paid") is False]
+    unpaid: dict[int, list] = {}
+    if unpaid_types:
+        requests = [r for r in (supabase.table("leave_requests").select("id, employee_id, status, leave_type_id")
+                                .eq("status", "Approved").in_("leave_type_id", unpaid_types)
+                                .lte("start_date", last.isoformat()).gte("end_date", first.isoformat())
+                                .execute().data or [])
+                    if r.get("status") == "Approved" and r.get("leave_type_id") in unpaid_types]
+        by_id = {r["id"]: r for r in requests}
+        if by_id:
+            days = supabase.table("leave_request_days").select("request_id, leave_date, fraction") \
+                .in_("request_id", list(by_id)).gte("leave_date", first.isoformat()) \
+                .lte("leave_date", last.isoformat()).execute().data or []
+            for d in days:
+                req = by_id.get(d["request_id"])
+                leave_date = date_cls.fromisoformat(str(d["leave_date"])[:10])
+                if req and first <= leave_date <= last:
+                    unpaid.setdefault(req["employee_id"], []).append((leave_date, Decimal(str(d["fraction"]))))
+    return employees, unpaid
+
+
+def _compute(supabase: Client, month: int, year: int) -> list[PayLine]:
+    employees, unpaid = _payroll_inputs(supabase, month, year)
+    return compute_run(employees, unpaid, month, year)
+
+
+def _stored_lines(supabase: Client, run_id: int) -> list[dict]:
+    rows = _select_with_fallback(
+        supabase, "payroll_ledger",
+        "*, employee_profile(first_name, last_name, nic, epf_number)",
+        "*, employee_profile(first_name, last_name, nic)",
+        run_id=run_id,
+    )
+    out = []
+    for r in rows:
+        if r.get("run_id") not in (None, run_id):
+            continue
+        profile = r.pop("employee_profile", None) or {}
+        name = f"{profile.get('first_name', '')} {profile.get('last_name', '')}".strip()
+        line = {
+            "id": r.get("id"),
+            "employee_id": r.get("employee_id"),
+            "employee_name": name or f"Employee {r.get('employee_id')}",
+            "nic": profile.get("nic"),
+            "epf_number": profile.get("epf_number"),
+        }
+        for k in ("days_in_month", "paid_days"):
+            line[k] = r.get(k)
+        for k in ("basic", "nopay_days", "nopay_deduction", "gross", "epf_employee", "epf_employer", "etf", "net_payable"):
+            line[k] = None if r.get(k) is None else float(r[k])
+        out.append(line)
+    out.sort(key=lambda line: line["employee_name"].lower())
     return out
 
 
@@ -661,11 +755,14 @@ def _validate_month(month: int, year: int) -> None:
         raise HTTPException(status_code=400, detail="Choose a valid month and year.")
 
 
+_RUN_AMOUNTS = ("total", "gross_total", "epf_employee_total", "epf_employer_total", "etf_total", "net_total")
+
+
 def _audit_run(run: dict) -> dict:
-    # total as a decimal string: a whole-number float like 155000.0 comes
+    # Amounts as decimal strings: a whole-number float like 155000.0 comes
     # back from JSONB as 155000 and would make the audit hash unverifiable
     # (see the note in create_transaction in app/api/finance.py).
-    return {**run, "total": f"{float(run.get('total') or 0):.2f}"}
+    return {**run, **{k: f"{float(run[k]):.2f}" for k in _RUN_AMOUNTS if run.get(k) is not None}}
 
 
 def _rpc_error(e: Exception) -> HTTPException:
@@ -686,6 +783,29 @@ def _single(data):
     return data
 
 
+def _payables(supabase: Client, run: Optional[dict]) -> list[dict]:
+    """The approved run's ledger entries, with whether Finance has paid each."""
+    if not run:
+        return []
+    wanted = [("Net salaries", run.get("finance_transaction_id"), run.get("net_total")),
+              ("EPF (8% + 12%)", run.get("epf_transaction_id"),
+               None if run.get("epf_employee_total") is None
+               else float(run["epf_employee_total"]) + float(run.get("epf_employer_total") or 0)),
+              ("ETF (3%)", run.get("etf_transaction_id"), run.get("etf_total"))]
+    ids = [tx for _, tx, _ in wanted if tx]
+    if not ids:
+        return []
+    rows = supabase.table("financial_transactions").select("id, status, amount").in_("id", ids).execute().data or []
+    by_id = {r["id"]: r for r in rows}
+    out = []
+    for label, tx, _ in wanted:
+        if tx:
+            row = by_id.get(tx) or {}
+            out.append({"label": label, "transaction_id": tx, "status": row.get("status"),
+                        "amount": None if row.get("amount") is None else float(row["amount"])})
+    return out
+
+
 @router.get("/payroll", response_model=List[PayrollLedger])
 async def get_payroll(month: int, year: int, user = Depends(require_permission('finance:read')), supabase: Client = Depends(get_supabase)):
     response = supabase.table("payroll_ledger").select("*").eq("payroll_month", month).eq("payroll_year", year).execute()
@@ -700,9 +820,10 @@ async def get_payroll_run(
     supabase: Client = Depends(get_supabase),
 ):
     """
-    The month's run, its lines with employee names, and how many attendance
-    records in the month are still incomplete (a warning, not a gate: pay is a
-    fixed monthly salary).
+    The month's run with each line's breakdown, how a draft differs from
+    computing it now, the approved run's payables, and how many attendance
+    records in the month are still incomplete (a warning: absences are not
+    deducted yet).
     """
     _validate_month(month, year)
 
@@ -713,42 +834,26 @@ async def get_payroll_run(
         ) \
         .eq("payroll_month", month).eq("payroll_year", year).execute().data or []
     run = runs[0] if runs else None
-
-    lines = []
-    if run:
-        rows = supabase.table("payroll_ledger") \
-            .select("*, employee_profile(first_name, last_name, nic)") \
-            .eq("run_id", run["id"]).execute().data or []
-        for r in rows:
-            profile = r.get("employee_profile") or {}
-            name = f"{profile.get('first_name', '')} {profile.get('last_name', '')}".strip()
-            lines.append({
-                "id": r.get("id"),
-                "employee_id": r.get("employee_id"),
-                "employee_name": name or f"Employee {r.get('employee_id')}",
-                "nic": profile.get("nic"),
-                "net_payable": float(r.get("net_payable") or 0),
-            })
-        lines.sort(key=lambda line: line["employee_name"].lower())
+    lines = _stored_lines(supabase, run["id"]) if run else []
 
     start, end = _month_bounds(month, year)
     logs = supabase.table("attendance_log").select("id, clock_in, clock_out") \
         .gte("target_date", start).lt("target_date", end).execute().data or []
     incomplete = sum(1 for log in logs if not (log.get("clock_in") and log.get("clock_out")))
 
-    # Whether Finance has paid the approved payable. The page's last step,
-    # "Paid in Ledger", never showed as done, even for a paid month.
+    payables = _payables(supabase, run)
+    # Paid once every payable is: the page's "Paid in Ledger" step.
     payment_status = None
-    if run and run.get("finance_transaction_id"):
-        tx = supabase.table("financial_transactions").select("status") \
-            .eq("id", run["finance_transaction_id"]).execute().data or []
-        payment_status = tx[0].get("status") if tx else None
+    if payables:
+        statuses = {p["status"] for p in payables}
+        payment_status = "Cash" if statuses == {"Cash"} else "Voided" if "Voided" in statuses else "Receivable"
 
     return {
         "run": run,
         "lines": lines,
         "incomplete_attendance": incomplete,
-        "drift": _draft_drift(supabase, run["id"]) if run and run.get("status") == "Draft" else None,
+        "drift": drift(lines, _compute(supabase, month, year)) if run and run.get("status") == "Draft" else None,
+        "payables": payables,
         "payment_status": payment_status,
         "generate_block": _generate_block(month, year),
         "approve_block": _approve_block(month, year),
@@ -763,21 +868,19 @@ async def generate_monthly_payroll(
     supabase: Client = Depends(get_supabase)
 ):
     """
-    Create or refresh the month's Draft. Nothing reaches the finance ledger
-    until approve_payroll.
-
-    Attendance no longer blocks this. Pay is a fixed monthly salary, so an
-    unlocked or incomplete record does not change it; it used to stop the
-    whole organisation's payroll over one forgotten clock-out.
+    Create or refresh the month's Draft from the payroll engine. Nothing
+    reaches the finance ledger until approve_payroll.
     """
     _validate_month(month, year)
     block = _generate_block(month, year)
     if block:
         raise HTTPException(status_code=400, detail=block)
+    lines = _compute(supabase, month, year)
     try:
         result = supabase.rpc(
             "generate_payroll_draft",
-            {"p_month": month, "p_year": year, "p_user": str(user["id"])},
+            {"p_month": month, "p_year": year, "p_user": str(user["id"]),
+             "p_lines": [line.as_row() for line in lines]},
         ).execute()
     except Exception as e:
         raise _rpc_error(e)
@@ -804,17 +907,19 @@ async def approve_payroll(
     supabase: Client = Depends(get_supabase),
 ):
     """
-    Approve a Draft: freezes it and posts its total to the ledger as a payable
-    dated the last day of the month. The SQL function refuses an approval by
-    whoever generated the run, and of a draft that is out of date.
+    Approve a Draft: freezes it and posts three payables (net salaries, EPF,
+    ETF) dated the last day of the month. Refused for whoever generated it,
+    and for a draft that differs from computing it now.
     """
-    runs = supabase.table("payroll_runs").select("id, payroll_month, payroll_year, status, generated_by") \
+    runs = supabase.table("payroll_runs") \
+        .select("id, payroll_month, payroll_year, status, generated_by, generated_at") \
         .eq("id", run_id).execute().data or []
     if not runs:
         raise HTTPException(status_code=404, detail=f"Payroll run {run_id} not found.")
     pending = runs[0]
     if pending.get("status") == "Draft":
-        block = _approve_block(pending["payroll_month"], pending["payroll_year"])
+        month, year = pending["payroll_month"], pending["payroll_year"]
+        block = _approve_block(month, year)
         if block:
             raise HTTPException(status_code=400, detail=block)
         generator = pending.get("generated_by")
@@ -824,10 +929,18 @@ async def approve_payroll(
                 detail="Your role was changed in the last 24 hours by the person who generated this payroll, "
                        "so you can't approve it. Ask another approver.",
             )
+        changes = drift(_stored_lines(supabase, run_id), _compute(supabase, month, year))
+        if changes:
+            raise HTTPException(
+                status_code=409,
+                detail=f"The payroll draft for {month}/{year} is out of date: {len(changes)} "
+                       f"employee{'s have' if len(changes) != 1 else ' has'} changed since it was generated. "
+                       "Regenerate it before approving.",
+            )
     try:
         result = supabase.rpc(
             "approve_payroll_run",
-            {"p_run_id": run_id, "p_user": str(user["id"])},
+            {"p_run_id": run_id, "p_user": str(user["id"]), "p_generated_at": pending.get("generated_at")},
         ).execute()
     except Exception as e:
         raise _rpc_error(e)
@@ -845,3 +958,81 @@ async def approve_payroll(
         new_payload=_audit_run(run),
     )
     return run
+
+
+# --- PAYSLIPS ---
+
+def _payslip_pdf(run: dict, line: dict) -> StreamingResponse:
+    period = _period(run["payroll_month"], run["payroll_year"])
+    try:
+        pdf = generate_pdf("payslip.html", {
+            "report_title": f"Payslip, {period}",
+            "period": period,
+            "run": run,
+            "line": line,
+            "draft": run.get("status") != "Approved",
+            # Lines from before the engine carry net pay only.
+            "legacy": line.get("gross") is None,
+        })
+    except PDFGenerationError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    name = line["employee_name"].replace(" ", "_")
+    return StreamingResponse(
+        iter([pdf]), media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="payslip_{run["payroll_year"]}-{run["payroll_month"]:02d}_{name}.pdf"'},
+    )
+
+
+def _run_and_line(supabase: Client, run_id: int, employee_id: int) -> tuple[dict, dict]:
+    runs = supabase.table("payroll_runs").select("*").eq("id", run_id).execute().data or []
+    run = next((r for r in runs if r.get("id") == run_id), None)
+    if not run:
+        raise HTTPException(status_code=404, detail="Payroll run not found.")
+    line = next((l for l in _stored_lines(supabase, run_id) if l["employee_id"] == employee_id), None)
+    if not line:
+        raise HTTPException(status_code=404, detail="That employee is not on this payroll.")
+    return run, line
+
+
+@router.get("/payroll/runs/{run_id}/payslips/{employee_id}")
+async def get_payslip(
+    run_id: int,
+    employee_id: int,
+    user = Depends(require_any_permission('payroll:generate', 'payroll:approve')),
+    supabase: Client = Depends(get_supabase),
+):
+    """Anyone's payslip for HR and approvers; a draft's is marked DRAFT."""
+    run, line = _run_and_line(supabase, run_id, employee_id)
+    return _payslip_pdf(run, line)
+
+
+@router.get("/payroll/me/payslips")
+async def my_payslips(user = Depends(require_permission('hr:attendance:self')), supabase: Client = Depends(get_supabase)):
+    """One's own payslips, from approved runs only."""
+    emp = get_employee_by_user_id(supabase, user['id'])
+    rows = supabase.table("payroll_ledger").select("*, payroll_runs(id, payroll_month, payroll_year, status, approved_at)") \
+        .eq("employee_id", emp["id"]).execute().data or []
+    out = []
+    for r in rows:
+        run = r.get("payroll_runs") or {}
+        if r.get("employee_id") != emp["id"] or run.get("status") != "Approved":
+            continue
+        out.append({
+            "run_id": run["id"], "payroll_month": run["payroll_month"], "payroll_year": run["payroll_year"],
+            "approved_at": run.get("approved_at"),
+            "gross": None if r.get("gross") is None else float(r["gross"]),
+            "net_payable": float(r.get("net_payable") or 0),
+        })
+    out.sort(key=lambda p: (p["payroll_year"], p["payroll_month"]), reverse=True)
+    return out
+
+
+@router.get("/payroll/me/payslips/{run_id}")
+async def my_payslip(run_id: int, user = Depends(require_permission('hr:attendance:self')),
+                     supabase: Client = Depends(get_supabase)):
+    emp = get_employee_by_user_id(supabase, user['id'])
+    run, line = _run_and_line(supabase, run_id, emp["id"])
+    # A draft can still change; staff see a payslip once it is approved.
+    if run.get("status") != "Approved":
+        raise HTTPException(status_code=404, detail="That payslip isn't available yet.")
+    return _payslip_pdf(run, line)
