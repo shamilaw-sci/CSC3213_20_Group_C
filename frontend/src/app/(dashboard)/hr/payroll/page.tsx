@@ -263,6 +263,11 @@ function Payroll() {
               ) : (
                 <>
                   <Summary run={run} count={lines.length} />
+                  {run.absence_months && (
+                    <p className="text-xs text-text-secondary">
+                      {`Deducts absences from ${run.absence_months}, recorded when that month was closed.`}
+                    </p>
+                  )}
                   <p className="text-xs text-text-secondary">
                     Generated {when(run.generated_at)}
                     {run.generator?.email && <> by <span className="text-text-primary">{run.generator.email}</span></>}
@@ -313,6 +318,7 @@ function Payroll() {
                           <th className="px-4 py-3 font-semibold">Employee</th>
                           <th className="px-4 py-3 text-right font-semibold">Basic</th>
                           <th className="px-4 py-3 text-right font-semibold">No-pay</th>
+                          <th className="px-4 py-3 text-right font-semibold" title="From an earlier closed month, deducted in arrears">Absences</th>
                           <th className="px-4 py-3 text-right font-semibold">Gross</th>
                           <th className="px-4 py-3 text-right font-semibold">EPF 8%</th>
                           <th className="px-4 py-3 text-right font-semibold">Net pay</th>
@@ -336,6 +342,9 @@ function Payroll() {
                               <td className="px-4 py-3 text-right font-mono tabular-nums text-text-secondary">
                                 {l.nopay_days ? <>-{lkr(l.nopay_deduction)}<span className="block text-[11px] text-text-muted">{l.nopay_days} day{l.nopay_days === 1 ? '' : 's'}</span></> : '—'}
                               </td>
+                              <td className="px-4 py-3 text-right font-mono tabular-nums text-text-secondary">
+                                {l.absent_days ? <>-{lkr(l.absence_deduction)}<span className="block text-[11px] text-text-muted">{l.absent_days} day{l.absent_days === 1 ? '' : 's'}</span></> : '—'}
+                              </td>
                               <td className="px-4 py-3 text-right font-mono tabular-nums">{lkr(l.gross)}</td>
                               <td className="px-4 py-3 text-right font-mono tabular-nums text-text-secondary">{lkr(l.epf_employee)}</td>
                               <td className="px-4 py-3 text-right font-mono font-semibold tabular-nums text-text-primary">{formatLKR(l.net_payable)}</td>
@@ -356,7 +365,7 @@ function Payroll() {
                       </tbody>
                       <tfoot className="border-t-2 border-border-brand">
                         <tr>
-                          <td className="px-4 py-3 font-semibold text-text-primary" colSpan={3}>Total</td>
+                          <td className="px-4 py-3 font-semibold text-text-primary" colSpan={4}>Total</td>
                           <td className="px-4 py-3 text-right font-mono font-semibold tabular-nums">{lkr(run.gross_total)}</td>
                           <td className="px-4 py-3 text-right font-mono font-semibold tabular-nums">{lkr(run.epf_employee_total)}</td>
                           <td className="px-4 py-3 text-right font-mono font-semibold tabular-nums text-text-primary">

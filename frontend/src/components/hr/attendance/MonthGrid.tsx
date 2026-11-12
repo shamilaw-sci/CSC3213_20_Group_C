@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { AlertTriangle, CalendarCheck, ChevronLeft, ChevronRight, FileSpreadsheet, Info, Search } from 'lucide-react';
+import { AlertTriangle, CalendarCheck, ChevronLeft, ChevronRight, FileSpreadsheet, Info, Lock, LockOpen, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -12,6 +12,7 @@ import { AttentionItem, DayCell, MonthRow } from '@/types';
 import { DayDetailDialog } from './DayDetailDialog';
 import { LEGEND, TONE_CLASS, hhmm, localDate, lookOf } from './dayStatus';
 import { TrackingDialog, longDate } from './TrackingDialog';
+import { CloseMonthDialog } from './CloseMonthDialog';
 
 const MONTH = new Intl.DateTimeFormat('en-LK', { month: 'long', year: 'numeric' });
 const SHORT = new Intl.DateTimeFormat('en-LK', { weekday: 'short', day: 'numeric', month: 'short' });
@@ -33,6 +34,7 @@ export function MonthGrid({ canEdit, canChangeTracking }: { canEdit: boolean; ca
   const [attentionOnly, setAttentionOnly] = useState(false);
   const [open, setOpen] = useState<{ row: MonthRow; cell: DayCell } | null>(null);
   const [changingTracking, setChangingTracking] = useState(false);
+  const [closing, setClosing] = useState(false);
   const { data, isLoading, isFetching, error } = useAttendanceMonth(year, month);
 
   const step = (delta: number) => {
@@ -106,6 +108,13 @@ export function MonthGrid({ canEdit, canChangeTracking }: { canEdit: boolean; ca
         <Button variant="outline" onClick={exportCsv} disabled={!data} className="gap-2 border-border-brand">
           <FileSpreadsheet className="h-4 w-4" /> CSV
         </Button>
+        {/* A month can be closed once it has ended; a closed one reopened. */}
+        {canEdit && data && (data.month_close_status === 'Closed' || data.days[data.days.length - 1].date < data.today) && (
+          <Button variant="outline" onClick={() => setClosing(true)} className="gap-2 border-border-brand">
+            {data.month_close_status === 'Closed' ? <LockOpen className="h-4 w-4" /> : <Lock className="h-4 w-4" />}
+            {data.month_close_status === 'Closed' ? 'Closed' : 'Close month'}
+          </Button>
+        )}
       </div>
 
       {/* When tracking started: everything before it is Not tracked. */}
@@ -143,7 +152,12 @@ export function MonthGrid({ canEdit, canChangeTracking }: { canEdit: boolean; ca
         </p>
       )}
 
-      {canEdit && data?.payroll_frozen_through && (
+      {data?.month_close_status === 'Closed' ? (
+        <p className="rounded-lg border border-border-brand bg-bg-subtle px-4 py-2.5 text-xs text-text-secondary">
+          {`${MONTH.format(new Date(year, month - 1, 1))} is closed: its attendance is read-only, and its absences go `
+            + 'to the next payroll generated.'}
+        </p>
+      ) : canEdit && data?.payroll_frozen_through && (
         <p className="rounded-lg border border-border-brand bg-bg-subtle px-4 py-2.5 text-xs text-text-secondary">
           {data.payroll_frozen_through >= data.days[data.days.length - 1].date
             ? `Payroll for ${MONTH.format(new Date(year, month - 1, 1))} is approved, so this month's attendance is read-only.`
@@ -271,6 +285,7 @@ export function MonthGrid({ canEdit, canChangeTracking }: { canEdit: boolean; ca
       {changingTracking && data && (
         <TrackingDialog current={data.tracking_start_date} onClose={() => setChangingTracking(false)} />
       )}
+      {closing && <CloseMonthDialog year={year} month={month} onClose={() => setClosing(false)} />}
     </div>
   );
 }

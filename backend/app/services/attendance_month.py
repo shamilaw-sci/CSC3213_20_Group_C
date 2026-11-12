@@ -382,3 +382,17 @@ def build_month(
         "today": today.isoformat(),
         "tracking_start_date": tracking_start.isoformat() if tracking_start else None,
     }
+
+
+def absence_days(cells: list[dict]) -> list[tuple[str, float]]:
+    """
+    (date, fraction) of each payable absence, for month close: a full day,
+    or half a day where approved half-day leave covered the other half
+    (confirmed 2026-11-12). Only ABSENT counts, so a not-tracked day never does.
+    """
+    out = []
+    for c in cells:
+        if c["status"] == ABSENT:
+            leave = c.get("leave")
+            out.append((c["date"], 0.5 if leave and float(leave.get("fraction", 1)) < 1 else 1.0))
+    return out

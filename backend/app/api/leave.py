@@ -26,7 +26,7 @@ from app.core.permissions import has_permission
 from app.core.security import get_current_user, require_permission
 from app.core.supabase import get_supabase
 from app.services.employees import require_active
-from app.services.payroll_status import is_frozen
+from app.services.payroll_status import is_frozen, month_close
 from app.services.leave_rules import (
     ZERO,
     Balance,
@@ -107,8 +107,11 @@ def _frozen(supabase: Client, dates, action: str) -> Optional[str]:
     for (y, m), last in sorted(through.items()):
         month = f"{_MONTHS[m - 1]} {y}"
         whole = last.month != m or last.day == (date(y + (m == 12), m % 12 + 1, 1) - timedelta(days=1)).day
-        parts.append(f"payroll for {month} is approved" if whole
-                     else f"payroll for {month} was approved on {last.day} {_MONTHS[m - 1]}")
+        if month_close(supabase, m, y):
+            parts.append(f"{month} is closed")
+        else:
+            parts.append(f"payroll for {month} is approved" if whole
+                         else f"payroll for {month} was approved on {last.day} {_MONTHS[m - 1]}")
     message = " and ".join(parts)
     return f"{message[0].upper()}{message[1:]}, so leave on those days can no longer be {action}."
 

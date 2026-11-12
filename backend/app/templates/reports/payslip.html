@@ -49,6 +49,10 @@
     <tr><td>Less no-pay leave ({{ "%g" | format(line.nopay_days) }} day{{ "" if line.nopay_days == 1 else "s" }})</td>
         <td class="num">-{{ lkr(line.nopay_deduction) }}</td></tr>
     {% endif %}
+    {% if line.absent_days %}
+    <tr><td>Less absences ({{ "%g" | format(line.absent_days) }} day{{ "" if line.absent_days == 1 else "s" }}{% if run.absence_months %}, {{ run.absence_months }}{% endif %})</td>
+        <td class="num">-{{ lkr(line.absence_deduction) }}</td></tr>
+    {% endif %}
     <tr class="total"><td>Gross pay</td><td class="num">{{ lkr(line.gross) }}</td></tr>
 </table>
 
@@ -63,6 +67,6 @@
     <tr><td>EPF, employer (12%)</td><td class="num">{{ lkr(line.epf_employer) }}</td></tr>
     <tr><td>ETF (3%)</td><td class="num">{{ lkr(line.etf) }}</td></tr>
 </table>
-<p class="note">A day's pay is the base salary divided by 30. EPF and ETF are worked out on gross pay.</p>
+<p class="note">A day's pay is the base salary divided by 30. Absences are deducted the month after their month is closed. EPF and ETF are worked out on gross pay.</p>
 {% endif %}
 {% endblock %}

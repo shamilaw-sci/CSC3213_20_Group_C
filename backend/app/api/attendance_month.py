@@ -40,13 +40,15 @@ from app.services.attendance_month import (
     NOT_TRACKED,
     REST,
     UPCOMING,
+    absence_days,
     build_month,
     days_brought_into_tracking,
     month_days,
+    month_has_tracked_days,
     months_between,
     tracked_from_for,
 )
-from app.services.payroll_status import payroll_approved, payroll_frozen_through
+from app.services.payroll_status import frozen_through, month_close, payroll_approved
 from app.services.work_calendar import COLOMBO
 
 router = APIRouter()
@@ -178,7 +180,7 @@ def _pending_corrections(supabase: Client, year: int, month: int, employee_id: O
 
 
 def _frozen_through_iso(supabase: Client, year: int, month: int) -> Optional[str]:
-    t = payroll_frozen_through(supabase, month, year)
+    t = frozen_through(supabase, month, year)
     return t.isoformat() if t else None
 
 
@@ -201,6 +203,8 @@ async def attendance_month(
         # Days up to this date are read-only; later days stay editable.
         "payroll_frozen_through": _frozen_through_iso(supabase, year, month),
         "pending_corrections": _pending_corrections(supabase, year, month),
+        # Closed, Reopened or None (migration 029): the grid's banner.
+        "month_close_status": (_close_row(supabase, year, month) or {}).get("status"),
     }
 
 
@@ -260,13 +264,15 @@ class OverrideIn(BaseModel):
 def _frozen_months(supabase: Client, first: date, last: date) -> list[dict]:
     """
     Months in first..last with frozen days in the span: days on or before the
-    month's payroll approval date (the whole month if approved after it).
+    month's payroll approval date (the whole month if approved after it), or
+    the whole of a closed month.
     """
     out = []
     for y, m in months_between(first, last):
-        through = payroll_frozen_through(supabase, m, y)
+        through = frozen_through(supabase, m, y)
         if through and through >= date(y, m, 1) and first <= through:
-            out.append({"year": y, "month": m, "frozen_through": through.isoformat()})
+            out.append({"year": y, "month": m, "frozen_through": through.isoformat(),
+                        "closed": month_close(supabase, m, y) is not None})
     return out
 
 
@@ -378,11 +384,13 @@ def _refuse_if_paid(impact: dict) -> None:
     if blocked:
         names = ", ".join(date(b["year"], b["month"], 1).strftime("%B %Y") for b in blocked)
         after = date.fromisoformat(max(b["frozen_through"] for b in blocked)) + timedelta(days=1)
-        raise HTTPException(
-            status_code=409,
-            detail=f"Payroll for {names} is already approved, and this would turn days up to its approval "
-                   f"into absences. Choose {after.day} {after.strftime('%B %Y')} or later.",
-        )
+        if all(b.get("closed") for b in blocked):
+            detail = (f"{names} is closed, and this would turn its days into absences. "
+                      f"Choose {after.day} {after.strftime('%B %Y')} or later, or reopen the month.")
+        else:
+            detail = (f"Payroll for {names} is already approved, and this would turn days up to its approval "
+                      f"into absences. Choose {after.day} {after.strftime('%B %Y')} or later.")
+        raise HTTPException(status_code=409, detail=detail)
 
 
 @router.get("/attendance-tracking/impact")
@@ -457,3 +465,136 @@ async def set_employee_tracking(
         new_payload={"employee_id": employee_id, "attendance_tracked_from": value},
     )
     return {"employee_id": employee_id, "attendance_tracked_from": value, "impact": impact}
+
+
+# --------------------------------------------------------------------------
+# Month close (attendance rework, step 5; migration 029)
+# --------------------------------------------------------------------------
+#
+# HR closes a past month once nothing is loose. The close records each
+# employee's payable absences, freezes the month, and the next payroll
+# generated deducts those absences in arrears (confirmed 2026-11-12).
+
+_MONTH_NAMES = ("January", "February", "March", "April", "May", "June",
+                "July", "August", "September", "October", "November", "December")
+
+
+def _close_row(supabase: Client, year: int, month: int) -> Optional[dict]:
+    """The month's close row, Closed or Reopened, or None (also before 029)."""
+    try:
+        rows = supabase.table("attendance_month_closes").select("*") \
+            .eq("close_month", month).eq("close_year", year).execute().data or []
+    except Exception as e:
+        if not _not_migrated(e):
+            raise
+        return None
+    return next((r for r in rows if r.get("close_month") == month and r.get("close_year") == year), None)
+
+
+def _close_preview(supabase: Client, year: int, month: int) -> dict:
+    """What closing the month would record, and what stops it."""
+    first, last = _bounds(year, month)
+    period = f"{_MONTH_NAMES[month - 1]} {year}"
+    result = _month(supabase, year, month)
+    rows = result["employees"]
+
+    missing, absences = [], []
+    for r in rows:
+        for c in r["cells"]:
+            if c["status"] == MISSING_CLOCK_OUT:
+                missing.append({"employee_id": r["employee_id"], "employee_name": r["employee_name"], "date": c["date"]})
+        days = absence_days(r["cells"])
+        if days:
+            absences.append({
+                "employee_id": r["employee_id"], "employee_name": r["employee_name"],
+                "absent_days": sum(f for _, f in days), "absent_dates": [d for d, _ in days],
+            })
+    names = {r["employee_id"]: r["employee_name"] for r in rows}
+    waiting = [{**p, "employee_name": names.get(p["employee_id"], f"Employee {p['employee_id']}")}
+               for p in _pending_corrections(supabase, year, month)]
+
+    close = _close_row(supabase, year, month)
+    status = close["status"] if close else "Open"
+    blocks = []
+    if status == "Closed":
+        blocks.append(f"{period} is already closed.")
+    if last >= datetime.now(COLOMBO).date():
+        blocks.append(f"{period} can be closed once it has ended.")
+    tracked = [date.fromisoformat(r["tracked_from"]) if r.get("tracked_from") else None for r in rows]
+    if rows and not month_has_tracked_days(year, month, tracked):
+        blocks.append(f"Attendance wasn't tracked in {period}, so there is nothing to close.")
+    if missing:
+        blocks.append(f"{len(missing)} day{'s are' if len(missing) != 1 else ' is'} missing a clock-out.")
+    if waiting:
+        blocks.append(f"{len(waiting)} correction request{'s are' if len(waiting) != 1 else ' is'} still waiting.")
+
+    reopen_block = None
+    if status == "Closed" and close.get("deducted_in_run_id"):
+        reopen_block = "Its absences are in an approved payroll, so it can no longer be reopened."
+    return {
+        "year": year, "month": month, "status": status, "close": close,
+        "can_close": not blocks, "blocks": blocks,
+        "can_reopen": status == "Closed" and reopen_block is None, "reopen_block": reopen_block,
+        "missing_clock_outs": missing, "pending_corrections": waiting,
+        "absences": sorted(absences, key=lambda a: a["employee_name"].lower()),
+        "absent_days_total": sum(a["absent_days"] for a in absences),
+    }
+
+
+@router.get("/attendance/close")
+async def month_close_preview(year: int, month: int, user=Depends(require_permission("hr:attendance:manage")),
+                              supabase: Client = Depends(get_supabase)):
+    _bounds(year, month)
+    return _close_preview(supabase, year, month)
+
+
+@router.post("/attendance/close")
+async def close_month(year: int, month: int, user=Depends(require_permission("hr:attendance:manage")),
+                      supabase: Client = Depends(get_supabase)):
+    """Close a past month, recording its payable absences for the next payroll."""
+    _bounds(year, month)
+    preview = _close_preview(supabase, year, month)
+    if not preview["can_close"]:
+        raise HTTPException(status_code=409, detail=" ".join(preview["blocks"]))
+    lines = [{"employee_id": a["employee_id"], "absent_days": a["absent_days"], "absent_dates": a["absent_dates"]}
+             for a in preview["absences"]]
+    try:
+        result = supabase.rpc("close_attendance_month",
+                              {"p_month": month, "p_year": year, "p_user": str(user["id"]), "p_lines": lines}).execute()
+    except Exception as e:
+        msg = getattr(e, "message", None) or str(e)
+        if "already closed" in msg:
+            raise HTTPException(status_code=409, detail=msg)
+        if "Could not find the function" in msg:
+            raise HTTPException(status_code=503, detail="Month close isn't set up yet (database migration 029).")
+        raise
+    close = result.data[0] if isinstance(result.data, list) and result.data else result.data
+    await log_audit_action(supabase, user_id=user["id"], action_type="ATTENDANCE_MONTH_CLOSE",
+                           table_name="attendance_month_closes", old_payload=None,
+                           new_payload={"year": year, "month": month, "absent_days_total": str(preview["absent_days_total"]),
+                                        "employees_with_absences": len(lines)})
+    return {**preview, "status": "Closed", "close": close, "can_close": False}
+
+
+@router.post("/attendance/close/reopen")
+async def reopen_month(year: int, month: int, user=Depends(require_permission("hr:attendance:manage")),
+                       supabase: Client = Depends(get_supabase)):
+    """Reopen a closed month, until a payroll that took its absences is approved."""
+    _bounds(year, month)
+    close = _close_row(supabase, year, month)
+    period = f"{_MONTH_NAMES[month - 1]} {year}"
+    if not close or close.get("status") != "Closed":
+        raise HTTPException(status_code=409, detail=f"{period} isn't closed.")
+    if close.get("deducted_in_run_id"):
+        raise HTTPException(status_code=409, detail=f"{period}'s absences are in an approved payroll, so it can no longer be reopened.")
+    # Guarded in the update too: a payroll approved in between wins.
+    updated = supabase.table("attendance_month_closes") \
+        .update({"status": "Reopened", "reopened_by": str(user["id"]),
+                 "reopened_at": datetime.now(COLOMBO).isoformat()}) \
+        .eq("id", close["id"]).eq("status", "Closed").is_("deducted_in_run_id", "null").execute().data or []
+    if not updated:
+        raise HTTPException(status_code=409, detail=f"{period} could not be reopened; reload and try again.")
+    await log_audit_action(supabase, user_id=user["id"], action_type="ATTENDANCE_MONTH_REOPEN",
+                           table_name="attendance_month_closes", old_payload=close,
+                           new_payload={"status": "Reopened"})
+    return _close_preview(supabase, year, month)

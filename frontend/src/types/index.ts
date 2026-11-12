@@ -274,9 +274,26 @@ export interface AttendanceMonth {
   payroll_frozen_through?: string | null;
   // Correction requests still waiting for HR in this month (migration 028).
   pending_corrections?: { id: number; employee_id: number; date: string }[];
+  // The month's close (migration 029): Closed, Reopened, or never closed.
+  month_close_status?: 'Closed' | 'Reopened' | null;
 }
 
 // GET /hr/attendance-tracking/impact: what a new tracked-from date would do.
+// GET /hr/attendance/close: what closing a month would record and what stops it.
+export interface MonthClosePreview {
+  year: number;
+  month: number;
+  status: 'Open' | 'Closed' | 'Reopened';
+  can_close: boolean;
+  blocks: string[];
+  can_reopen: boolean;
+  reopen_block: string | null;
+  missing_clock_outs: { employee_id: number; employee_name: string; date: string }[];
+  pending_corrections: { id: number; employee_id: number; employee_name: string; date: string }[];
+  absences: { employee_id: number; employee_name: string; absent_days: number; absent_dates: string[] }[];
+  absent_days_total: number;
+}
+
 // A request to correct a past day's times (migration 028).
 export type CorrectionStatus = 'Pending' | 'Approved' | 'Rejected' | 'Cancelled';
 
@@ -352,6 +369,8 @@ export interface PayrollRun {
   net_total?: number | null;
   epf_transaction_id?: number | null;
   etf_transaction_id?: number | null;
+  // Closed months whose absences this run deducts in arrears, e.g. "October 2026".
+  absence_months?: string | null;
 }
 
 // One employee's line. The breakdown is null on lines from before the
@@ -367,6 +386,9 @@ export interface PayrollLine {
   basic?: number | null;
   nopay_days?: number | null;
   nopay_deduction?: number | null;
+  // Absences from an earlier closed month, deducted in arrears (migration 029).
+  absent_days?: number | null;
+  absence_deduction?: number | null;
   gross?: number | null;
   epf_employee?: number | null;
   epf_employer?: number | null;
