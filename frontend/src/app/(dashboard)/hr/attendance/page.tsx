@@ -10,6 +10,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import {Dialog,DialogContent,DialogDescription,DialogHeader,DialogTitle,DialogTrigger,DialogFooter,DialogClose,} from "@/components/ui/dialog";
 import ProtectedRoute from '@/components/layout/protected-route';
 import { MonthGrid } from '@/components/hr/attendance/MonthGrid';
+import { CorrectionsTab } from '@/components/hr/attendance/Corrections';
 import { useAuthStore } from '@/store/useAuthStore';
 import { hasPermission } from '@/lib/permissions';
 import { cn } from '@/lib/utils';
@@ -29,7 +30,7 @@ function Attendance() {
   const canManage = hasPermission(user?.role as string, 'hr:attendance:manage');
   // HR Officer and Admin set when tracking starts; the Director sees it.
   const canChangeTracking = hasPermission(user?.role as string, 'hr:manage');
-  const [tab, setTab] = useState<'month' | 'day'>('month');
+  const [tab, setTab] = useState<'month' | 'day' | 'corrections'>('month');
 
   return (
     <div className="space-y-6 pb-12">
@@ -42,7 +43,7 @@ function Attendance() {
       </div>
       {canManage && (
         <div className="flex w-fit gap-1 rounded-lg border border-border-brand bg-bg-subtle p-1" role="tablist">
-          {([['month', 'Month'], ['day', 'Day']] as const).map(([value, label]) => (
+          {([['month', 'Month'], ['day', 'Day'], ['corrections', 'Corrections']] as const).map(([value, label]) => (
             <button key={value} role="tab" aria-selected={tab === value} onClick={() => setTab(value)}
               className={cn('rounded-md px-3 py-1.5 text-xs font-semibold transition-colors',
                 tab === value ? 'bg-surface text-accent shadow-xs' : 'text-text-secondary hover:text-text-primary')}>
@@ -51,7 +52,9 @@ function Attendance() {
           ))}
         </div>
       )}
-      {tab === 'month' || !canManage ? <MonthGrid canEdit={canManage} canChangeTracking={canChangeTracking} /> : <DayView />}
+      {tab === 'month' || !canManage
+        ? <MonthGrid canEdit={canManage} canChangeTracking={canChangeTracking} />
+        : tab === 'day' ? <DayView /> : <CorrectionsTab />}
     </div>
   );
 }

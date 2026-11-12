@@ -41,6 +41,12 @@ export function MonthGrid({ canEdit, canChangeTracking }: { canEdit: boolean; ca
     setMonth(d.getMonth() + 1);
   };
 
+  // Days with a correction waiting for HR (migration 028): ringed in amber.
+  const pending = useMemo(
+    () => new Set((data?.pending_corrections ?? []).map((p) => `${p.employee_id}|${p.date}`)),
+    [data],
+  );
+
   const needsAttention = useMemo(
     () => new Set((data?.attention ?? []).filter((a) => !a.info).map((a) => a.employee_id)),
     [data],
@@ -130,6 +136,13 @@ export function MonthGrid({ canEdit, canChangeTracking }: { canEdit: boolean; ca
         <span className="flex items-center gap-1.5"><span className="inline-block h-4 w-6 rounded bg-bg-subtle" />Weekend / day off</span>
       </div>
 
+      {canEdit && !!data?.pending_corrections?.length && (
+        <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-xs text-text-secondary">
+          {`${data.pending_corrections.length} correction request${data.pending_corrections.length === 1 ? ' is' : 's are'} `
+            + 'waiting this month (ringed in amber). Decide them on the Corrections tab.'}
+        </p>
+      )}
+
       {canEdit && data?.payroll_frozen_through && (
         <p className="rounded-lg border border-border-brand bg-bg-subtle px-4 py-2.5 text-xs text-text-secondary">
           {data.payroll_frozen_through >= data.days[data.days.length - 1].date
@@ -192,10 +205,10 @@ export function MonthGrid({ canEdit, canChangeTracking }: { canEdit: boolean; ca
                                 <button
                                   type="button"
                                   onClick={() => setOpen({ row: r, cell: c })}
-                                  title={`${SHORT.format(localDate(c.date))}: ${look.label}`}
-                                  aria-label={`${r.employee_name}, ${SHORT.format(localDate(c.date))}: ${look.label}`}
+                                  title={`${SHORT.format(localDate(c.date))}: ${look.label}${pending.has(`${r.employee_id}|${c.date}`) ? ' · correction requested' : ''}`}
+                                  aria-label={`${r.employee_name}, ${SHORT.format(localDate(c.date))}: ${look.label}${pending.has(`${r.employee_id}|${c.date}`) ? ', correction requested' : ''}`}
                                   className={cn('flex h-7 w-7 items-center justify-center rounded text-[10px] font-bold transition-shadow hover:ring-2 hover:ring-accent/50',
-                                    TONE_CLASS[look.tone])}
+                                    TONE_CLASS[look.tone], pending.has(`${r.employee_id}|${c.date}`) && 'ring-2 ring-amber-400')}
                                 >
                                   {look.code}
                                 </button>

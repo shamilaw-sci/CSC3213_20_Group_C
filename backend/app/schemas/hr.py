@@ -150,3 +150,28 @@ class AttendanceLogUpdate(BaseModel):
     @classmethod
     def _sri_lanka_time(cls, value):
         return _as_sri_lanka_time(value)
+
+class CorrectionRequestIn(BaseModel):
+    """A staff request to correct a past day's times (migration 028)."""
+    target_date: date
+    # None: leave that end as it is. At least one is required.
+    clock_in: Optional[datetime] = None
+    clock_out: Optional[datetime] = None
+    reason: str = Field(max_length=500)
+
+    @field_validator("clock_in", "clock_out")
+    @classmethod
+    def _sri_lanka_time(cls, value):
+        return _as_sri_lanka_time(value)
+
+    @field_validator("reason")
+    @classmethod
+    def _reason(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Give a reason, so HR knows what happened.")
+        return value
+
+
+class CorrectionDecisionIn(BaseModel):
+    note: Optional[str] = Field(default=None, max_length=500)

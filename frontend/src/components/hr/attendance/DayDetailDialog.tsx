@@ -6,10 +6,12 @@ import { Button } from '@/components/ui/button';
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
-import { useLogAttendance, useUnlockAttendance, useUpdateAttendance } from '@/hooks/useHR';
+import {
+  useCancelCorrection, useLogAttendance, useRequestCorrection, useUnlockAttendance, useUpdateAttendance,
+} from '@/hooks/useHR';
 import { DayCell } from '@/types';
 import { cn } from '@/lib/utils';
-import { TONE_CLASS, addDays, hhmm, hours, localDate, lookOf } from './dayStatus';
+import { TONE_CLASS, addDays, colomboDate, hhmm, hours, localDate, lookOf } from './dayStatus';
 
 const LONG = new Intl.DateTimeFormat('en-LK', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 const field =
@@ -23,13 +25,18 @@ const toInput = (iso: string | null) => (iso ? hhmm(iso) : '');
 const toIso = (date: string, time: string) => `${date}T${time}:00+05:30`;
 
 export function DayDetailDialog({
-  cell, employeeId, employeeName, canEdit, isOwn = false, payrollApproved = false, onClose,
+  cell, employeeId, employeeName, canEdit, isOwn = false, payrollApproved = false,
+  canRequest = false, pendingCorrectionId = null, onClose,
 }: {
   cell: DayCell; employeeId: number; employeeName: string; canEdit: boolean;
   // The viewer's own row: HR can't correct its own attendance.
   isOwn?: boolean;
   // This day is on or before its month's payroll approval: frozen.
   payrollApproved?: boolean;
+  // One's own month (My Attendance): a past day can be sent to HR to correct.
+  canRequest?: boolean;
+  // A correction already waiting for HR on this day.
+  pendingCorrectionId?: number | null;
   onClose: () => void;
 }) {
   const look = lookOf(cell);
@@ -42,7 +49,14 @@ export function DayDetailDialog({
   const { mutate: create, isPending: isCreating } = useLogAttendance();
   const { mutate: unlock, isPending: isUnlocking } = useUnlockAttendance();
 
+  const [reason, setReason] = useState('');
+  const { mutate: requestCorrection, isPending: isRequesting } = useRequestCorrection();
+  const { mutate: withdraw, isPending: isWithdrawing } = useCancelCorrection();
+
   const blocked = isOwn || payrollApproved;
+  // Past days from tracking on, not frozen, with nothing already waiting.
+  const requestable = canRequest && !canEdit && !payrollApproved && !pendingCorrectionId
+    && cell.date < colomboDate() && !['not_employed', 'not_tracked', 'upcoming', 'in_progress'].includes(cell.status);
   const editable = canEdit && !blocked && !cell.locked && !['not_employed', 'not_tracked', 'upcoming'].includes(cell.status);
   const changed = clockIn !== toInput(cell.clock_in) || clockOut !== toInput(cell.clock_out) || (!!clockOut && nextDay !== storedNextDay);
 
@@ -51,6 +65,20 @@ export function DayDetailDialog({
   // saved as-is and wrapped by 24 h, so a typo booked a 21-hour day.
   const outBeforeIn = !!clockIn && !!clockOut && !nextDay && clockOut <= clockIn;
   const outIso = clockOut ? toIso(nextDay ? addDays(cell.date, 1) : cell.date, clockOut) : null;
+
+  // Only the ends that change are sent; the other stays as recorded.
+  const sendRequest = () => {
+    if (outBeforeIn) return;
+    requestCorrection(
+      {
+        target_date: cell.date,
+        ...(clockIn && clockIn !== toInput(cell.clock_in) ? { clock_in: toIso(cell.date, clockIn) } : {}),
+        ...(outIso && (clockOut !== toInput(cell.clock_out) || nextDay !== storedNextDay) ? { clock_out: outIso } : {}),
+        reason: reason.trim(),
+      },
+      { onSuccess: onClose },
+    );
+  };
 
   const save = () => {
     if (outBeforeIn) return;
@@ -144,11 +172,20 @@ export function DayDetailDialog({
           {canEdit && !isOwn && payrollApproved && (
             <p className="text-xs text-text-muted">Payroll covering this day is approved, so its attendance can no longer be changed.</p>
           )}
+          {canRequest && pendingCorrectionId && (
+            <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-text-primary">
+              You asked HR to correct this day. It&apos;s waiting for a decision.
+            </p>
+          )}
+          {canRequest && payrollApproved && (
+            <p className="text-xs text-text-muted">Payroll covering this day is approved, so it can no longer be corrected.</p>
+          )}
 
-          {editable && (
+          {(editable || requestable) && (
             <div className="space-y-2">
               <p className="text-[11px] font-semibold uppercase tracking-wider text-text-secondary">
-                {cell.record_id ? 'Correct the times' : 'Record times'} <span className="font-normal normal-case text-text-muted">(Sri Lanka time)</span>
+                {requestable ? 'Ask HR to correct' : cell.record_id ? 'Correct the times' : 'Record times'}{' '}
+                <span className="font-normal normal-case text-text-muted">(Sri Lanka time)</span>
               </p>
               <div className="flex flex-wrap items-center gap-2">
                 <input type="time" value={clockIn} onChange={(e) => setClockIn(e.target.value)} aria-label="Clock in" className={cn(field, 'font-mono')} />
@@ -166,8 +203,12 @@ export function DayDetailDialog({
                   The clock-out is before the clock-in. Fix the time, or tick &quot;next day&quot; if this was an overnight shift.
                 </p>
               )}
-              {cell.record_id && cell.clock_out && (
+              {editable && cell.record_id && cell.clock_out && (
                 <p className="text-[11px] text-text-muted">Empty the clock-out to remove a wrong one.</p>
+              )}
+              {requestable && (
+                <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} maxLength={500}
+                  aria-label="Reason" placeholder="What happened? (required)" className={cn(field, 'h-auto w-full py-2')} />
               )}
             </div>
           )}
@@ -180,7 +221,19 @@ export function DayDetailDialog({
               <LockOpen className="h-4 w-4" /> Unlock to correct
             </Button>
           )}
+          {canRequest && pendingCorrectionId && (
+            <Button variant="outline" disabled={isWithdrawing} onClick={() => withdraw(pendingCorrectionId, { onSuccess: onClose })}
+              className="mr-auto border-border-brand">
+              Withdraw request
+            </Button>
+          )}
           <Button variant="outline" onClick={onClose}>Close</Button>
+          {requestable && (
+            <Button onClick={sendRequest} disabled={!changed || outBeforeIn || !reason.trim() || isRequesting}
+              className="bg-accent text-white hover:bg-accent/90">
+              {isRequesting ? 'Sending…' : 'Send to HR'}
+            </Button>
+          )}
           {editable && (
             <Button onClick={save} disabled={!changed || !clockIn || outBeforeIn || isUpdating || isCreating} className="bg-accent text-white hover:bg-accent/90">
               {isUpdating || isCreating ? 'Saving…' : 'Save'}
