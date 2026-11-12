@@ -40,6 +40,10 @@ def describe(row: dict) -> str:
     """
     source = source_type(row)
     label = SOURCE_LABELS.get(source, source.replace("_", " ").capitalize())
+    # A memo (migration 026) says which entry this is when one source posts
+    # several at once: payroll's net salaries, EPF and ETF payables.
+    if row.get("memo"):
+        return f"{label}-{row['memo']}"
     program = "General" if row.get("program_id") is None else program_label(row)
     return f"{label}-{program}"
 

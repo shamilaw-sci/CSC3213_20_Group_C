@@ -17,6 +17,8 @@ class EmployeeProfileBase(BaseModel):
     base_salary: float
     status: str = "Active"
     user_id: Optional[str] = None
+    # Printed on payslips (migration 026).
+    epf_number: Optional[str] = Field(default=None, max_length=20)
 
 # Sri Lankan NIC: the old 9 digits plus V or X, or the 12-digit number issued
 # since 2016.
@@ -65,6 +67,10 @@ class EmployeeProfileUpdate(BaseModel):
     base_salary: Optional[float] = Field(default=None, gt=0)
     status: Optional[EmployeeStatus] = None
     user_id: Optional[str] = None
+    epf_number: Optional[str] = Field(default=None, max_length=20)
+    # A leaver's last day (migration 026): their final month is pro-rated to
+    # it. Reactivating clears it.
+    date_left: Optional[date] = None
 
     # Leaving a field out keeps it; sending null for one of these is refused
     # (the columns are NOT NULL). Only user_id may be cleared, to unlink.
@@ -80,6 +86,7 @@ class EmployeeProfileUpdate(BaseModel):
 
 class EmployeeProfile(EmployeeProfileBase):
     id: int
+    date_left: Optional[date] = None
     # Read-only here: set through PATCH /leave/employees/{id}/date-joined.
     # Kept off EmployeeProfileBase on purpose, so the existing employee
     # create/update forms, which do not send it, cannot wipe it.
