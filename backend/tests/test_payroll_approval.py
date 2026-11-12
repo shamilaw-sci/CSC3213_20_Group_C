@@ -82,7 +82,8 @@ def test_generate_makes_a_draft_and_posts_nothing_to_the_ledger():
     assert response.json()["status"] == "Draft"
     assert supabase.rpc_calls == [
         # The engine's lines: none here, as the fake has no employees.
-        ("generate_payroll_draft", {"p_month": 10, "p_year": 2026, "p_user": USER_ID, "p_lines": []}),
+        ("generate_payroll_draft", {"p_month": 10, "p_year": 2026, "p_user": USER_ID, "p_lines": [],
+                                    "p_absence_months": None}),
     ]
     assert _inserted(supabase, "financial_transactions") == []
 
@@ -121,7 +122,8 @@ def test_only_payroll_approve_holders_can_approve(role):
     response = _send(role, supabase, "POST", "/api/hr/payroll/runs/3/approve")
     if has_permission(role, "payroll:approve"):
         assert response.status_code == 200, response.text
-        assert supabase.rpc_calls == [("approve_payroll_run", {"p_run_id": 3, "p_user": USER_ID, "p_generated_at": None})]
+        assert supabase.rpc_calls == [("approve_payroll_run", {"p_run_id": 3, "p_user": USER_ID, "p_generated_at": None,
+                                                                 "p_close_ids": []})]
     else:
         assert response.status_code == 403
         assert supabase.rpc_calls == []

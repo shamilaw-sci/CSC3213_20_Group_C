@@ -1,5 +1,5 @@
 import api from '@/lib/api-client';
-import { CorrectionInput, CorrectionRequest, Employee, EmployeeUpdate, LinkableLogin, MyPayslip, AttendanceRecord, AttendanceMonth, PayrollRun, PayrollRunView, TrackingImpact } from '@/types';
+import { CorrectionInput, CorrectionRequest, MonthClosePreview, Employee, EmployeeUpdate, LinkableLogin, MyPayslip, AttendanceRecord, AttendanceMonth, PayrollRun, PayrollRunView, TrackingImpact } from '@/types';
 
 export const HRService = {
   getEmployees: async () => {
@@ -78,6 +78,14 @@ export const HRService = {
     (await api.post<CorrectionRequest>(`/hr/attendance/corrections/${id}/approve`, { note: note || null })).data,
   rejectCorrection: async (id: number, note: string) =>
     (await api.post<CorrectionRequest>(`/hr/attendance/corrections/${id}/reject`, { note })).data,
+
+  // Month close: freeze a past month and record its absences for payroll.
+  getClosePreview: async (year: number, month: number) =>
+    (await api.get<MonthClosePreview>('/hr/attendance/close', { params: { year, month } })).data,
+  closeMonth: async ({ year, month }: { year: number; month: number }) =>
+    (await api.post<MonthClosePreview>('/hr/attendance/close', null, { params: { year, month } })).data,
+  reopenMonth: async ({ year, month }: { year: number; month: number }) =>
+    (await api.post<MonthClosePreview>('/hr/attendance/close/reopen', null, { params: { year, month } })).data,
 
   // The monthly grid: everyone (HR, Director) or just oneself.
   getAttendanceMonth: async (year: number, month: number) =>

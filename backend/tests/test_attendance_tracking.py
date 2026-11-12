@@ -216,7 +216,7 @@ def test_moving_earlier_into_an_approved_payroll_month_is_refused():
 def test_the_impact_names_the_paid_months_before_saving():
     body = _send(_db(approved=[(2026, 9)]), "GET", "/api/hr/attendance-tracking/impact?start=2026-08-01").json()
     # No approval date on the fixture: the whole month is frozen.
-    assert body["blocked_months"] == [{"year": 2026, "month": 9, "frozen_through": "2026-09-30"}]
+    assert body["blocked_months"] == [{"year": 2026, "month": 9, "frozen_through": "2026-09-30", "closed": False}]
 
 
 def test_moving_earlier_past_unpaid_months_is_saved():

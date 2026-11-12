@@ -9,12 +9,16 @@ Pure, over rows already fetched. Rules (confirmed 2026-11-12):
     never more than the base salary.
   * Approved leave of an unpaid type (no-pay leave) is deducted at the
     daily rate, for days inside the employed span, never below zero.
-  * Gross = basic - no-pay deduction. EPF: 8% of gross from the employee,
-    12% from the employer; ETF 3% from the employer.
+  * Absences from a closed month (month close, migration 029) are deducted
+    in arrears, by the next payroll generated after closing, at the same
+    daily rate (confirmed 2026-11-12). Half a day of leave with no clock-in
+    for the other half is half a day's absence.
+  * Gross = basic - no-pay deduction - absence deduction, never below zero.
+    EPF: 8% of gross from the employee, 12% from the employer; ETF 3% from
+    the employer.
   * Net pay = gross - employee EPF. Employer cost = gross + 12% + 3%.
 
-Not in v1: absence deductions (they need the attendance tracking start date
-and month close), allowances, overtime and APIT.
+Not yet: allowances, overtime and APIT.
 """
 
 import calendar
@@ -73,6 +77,8 @@ class PayLine:
     basic: Decimal
     nopay_days: Decimal
     nopay_deduction: Decimal
+    absent_days: Decimal
+    absence_deduction: Decimal
     gross: Decimal
     epf_employee: Decimal
     epf_employer: Decimal
@@ -92,11 +98,13 @@ class PayLine:
         return out
 
 
-def compute_line(employee: dict, month: int, year: int, unpaid_days: Iterable[tuple[date, Decimal]] = ()) -> Optional[PayLine]:
+def compute_line(employee: dict, month: int, year: int, unpaid_days: Iterable[tuple[date, Decimal]] = (),
+                 absent_days=ZERO) -> Optional[PayLine]:
     """
     One employee's line, or None if they are not paid for the month.
     `unpaid_days` are (date, fraction) of approved unpaid leave; days outside
-    the employed span are ignored.
+    the employed span are ignored. `absent_days` are absences recorded by an
+    earlier month's close, deducted here in arrears.
     """
     if not is_eligible(employee, month, year):
         return None
@@ -114,7 +122,9 @@ def compute_line(employee: dict, month: int, year: int, unpaid_days: Iterable[tu
     # Every employed day unpaid pays nothing: at base / 30, a wholly unpaid
     # February would otherwise still pay two days.
     deduction = basic if nopay >= paid_days else min(basic, money(daily * nopay))
-    gross = basic - deduction
+    absent = Decimal(str(absent_days or 0))
+    absence_deduction = min(basic - deduction, money(daily * absent))
+    gross = basic - deduction - absence_deduction
     epf_employee = money(gross * EPF_EMPLOYEE)
 
     name = f"{employee.get('first_name', '')} {employee.get('last_name', '')}".strip()
@@ -126,6 +136,8 @@ def compute_line(employee: dict, month: int, year: int, unpaid_days: Iterable[tu
         basic=basic,
         nopay_days=nopay,
         nopay_deduction=deduction,
+        absent_days=absent,
+        absence_deduction=absence_deduction,
         gross=gross,
         epf_employee=epf_employee,
         epf_employer=money(gross * EPF_EMPLOYER),
@@ -135,14 +147,18 @@ def compute_line(employee: dict, month: int, year: int, unpaid_days: Iterable[tu
 
 
 def compute_run(employees: list[dict], unpaid_by_employee: dict[int, list[tuple[date, Decimal]]],
-                month: int, year: int) -> list[PayLine]:
-    lines = [compute_line(e, month, year, unpaid_by_employee.get(e["id"], [])) for e in employees]
+                month: int, year: int, absences_by_employee: Optional[dict[int, Decimal]] = None) -> list[PayLine]:
+    absences = absences_by_employee or {}
+    lines = [compute_line(e, month, year, unpaid_by_employee.get(e["id"], []), absences.get(e["id"], ZERO))
+             for e in employees]
     return sorted((l for l in lines if l is not None), key=lambda l: (l.employee_name.lower(), l.employee_id))
 
 
 # Compared when deciding whether a stored draft still matches a fresh run.
 COMPARED = ("paid_days", "basic", "nopay_days", "nopay_deduction", "gross",
             "epf_employee", "epf_employer", "etf", "net_payable")
+# Added with month close; a stored line without them had none.
+COMPARED_DEFAULT_ZERO = ("absent_days", "absence_deduction")
 
 
 def drift(stored: list[dict], fresh: list[PayLine]) -> list[dict]:
@@ -159,7 +175,8 @@ def drift(stored: list[dict], fresh: list[PayLine]) -> list[dict]:
         if row is None:
             out.append({"employee_id": line.employee_id, "employee_name": line.employee_name, "change": "added",
                         "draft_amount": None, "current_amount": float(line.net_payable)})
-        elif any(row.get(k) is None or money(row[k]) != money(getattr(line, k)) for k in COMPARED):
+        elif (any(row.get(k) is None or money(row[k]) != money(getattr(line, k)) for k in COMPARED)
+              or any(money(row.get(k) or 0) != money(getattr(line, k)) for k in COMPARED_DEFAULT_ZERO)):
             out.append({"employee_id": line.employee_id, "employee_name": line.employee_name, "change": "changed",
                         "draft_amount": float(money(row.get("net_payable") or 0)),
                         "current_amount": float(line.net_payable)})

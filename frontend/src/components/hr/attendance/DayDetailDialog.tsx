@@ -170,7 +170,7 @@ export function DayDetailDialog({
             <p className="text-xs text-text-muted">This is your own attendance. Another HR officer has to correct it.</p>
           )}
           {canEdit && !isOwn && payrollApproved && (
-            <p className="text-xs text-text-muted">Payroll covering this day is approved, so its attendance can no longer be changed.</p>
+            <p className="text-xs text-text-muted">This day is frozen (its payroll is approved or its month is closed), so its attendance can no longer be changed.</p>
           )}
           {canRequest && pendingCorrectionId && (
             <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-text-primary">
@@ -178,7 +178,7 @@ export function DayDetailDialog({
             </p>
           )}
           {canRequest && payrollApproved && (
-            <p className="text-xs text-text-muted">Payroll covering this day is approved, so it can no longer be corrected.</p>
+            <p className="text-xs text-text-muted">This day is frozen (its payroll is approved or its month is closed), so it can no longer be corrected.</p>
           )}
 
           {(editable || requestable) && (

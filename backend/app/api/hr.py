@@ -8,7 +8,7 @@ from app.core.security import require_any_permission, require_permission
 from app.core.audit import log_audit_action
 from app.core.permissions import UserRole
 from app.services.employees import require_active
-from app.services.payroll_status import is_frozen
+from app.services.payroll_status import is_frozen, month_close
 from app.services.payroll_engine import PayLine, compute_run, drift, month_bounds
 from app.services.reports import PDFGenerationError, generate_pdf
 from decimal import Decimal
@@ -359,8 +359,14 @@ def _refuse_if_payroll_approved(supabase: Client, d: date) -> None:
     # record could still be added, edited and locked, and then never reopened.
     # Only days up to the approval date (confirmed 2026-11-12): payroll can be
     # approved from the 25th, and the rest of that month is still to happen.
+    # A closed month (migration 029) is frozen whole until HR reopens it.
     through = is_frozen(supabase, d)
     if through:
+        if month_close(supabase, d.month, d.year):
+            raise HTTPException(
+                status_code=409,
+                detail=f"{_period(d.month, d.year)} is closed; reopen the month to change its attendance.",
+            )
         raise HTTPException(
             status_code=409,
             detail=f"Payroll for {d.month}/{d.year} is approved; attendance up to "
@@ -953,9 +959,50 @@ def _payroll_inputs(supabase: Client, month: int, year: int) -> tuple[list[dict]
     return employees, unpaid
 
 
-def _compute(supabase: Client, month: int, year: int) -> list[PayLine]:
+def _absences_in_arrears(supabase: Client, month: int, year: int) -> tuple[dict, list[int], Optional[str]]:
+    """
+    Absences recorded by closed months before this one that no approved
+    payroll has deducted yet (month close, migration 029): per employee
+    days, the closes' ids (marked on approval) and a label such as
+    "October 2026". Empty before 029.
+    """
+    try:
+        closes = supabase.table("attendance_month_closes").select("id, close_month, close_year, status, deducted_in_run_id") \
+            .eq("status", "Closed").is_("deducted_in_run_id", "null").execute().data or []
+    except Exception as e:
+        if _no_closes_table(e):
+            return {}, [], None
+        raise
+    closes = sorted((c for c in closes if c.get("status") == "Closed" and not c.get("deducted_in_run_id")
+                     and (c["close_year"], c["close_month"]) < (year, month)),
+                    key=lambda c: (c["close_year"], c["close_month"]))
+    if not closes:
+        return {}, [], None
+    ids = [c["id"] for c in closes]
+    lines = supabase.table("attendance_close_lines").select("close_id, employee_id, absent_days") \
+        .in_("close_id", ids).execute().data or []
+    days: dict[int, Decimal] = {}
+    for l in lines:
+        if l.get("close_id") in ids:
+            days[l["employee_id"]] = days.get(l["employee_id"], Decimal(0)) + Decimal(str(l["absent_days"]))
+    label = ", ".join(_period(c["close_month"], c["close_year"]) for c in closes)
+    return days, ids, label
+
+
+def _no_closes_table(error: Exception) -> bool:
+    text = str(error).lower()
+    return "attendance_month_closes" in text and any(
+        k in text for k in ("42p01", "pgrst205", "does not exist", "could not find the table"))
+
+
+def _compute_full(supabase: Client, month: int, year: int) -> tuple[list[PayLine], list[int], Optional[str]]:
     employees, unpaid = _payroll_inputs(supabase, month, year)
-    return compute_run(employees, unpaid, month, year)
+    absences, close_ids, label = _absences_in_arrears(supabase, month, year)
+    return compute_run(employees, unpaid, month, year, absences), close_ids, label
+
+
+def _compute(supabase: Client, month: int, year: int) -> list[PayLine]:
+    return _compute_full(supabase, month, year)[0]
 
 
 def _stored_lines(supabase: Client, run_id: int) -> list[dict]:
@@ -980,7 +1027,8 @@ def _stored_lines(supabase: Client, run_id: int) -> list[dict]:
         }
         for k in ("days_in_month", "paid_days"):
             line[k] = r.get(k)
-        for k in ("basic", "nopay_days", "nopay_deduction", "gross", "epf_employee", "epf_employer", "etf", "net_payable"):
+        for k in ("basic", "nopay_days", "nopay_deduction", "absent_days", "absence_deduction",
+                  "gross", "epf_employee", "epf_employer", "etf", "net_payable"):
             line[k] = None if r.get(k) is None else float(r[k])
         out.append(line)
     out.sort(key=lambda line: line["employee_name"].lower())
@@ -1118,12 +1166,12 @@ async def generate_monthly_payroll(
     block = _generate_block(month, year)
     if block:
         raise HTTPException(status_code=400, detail=block)
-    lines = _compute(supabase, month, year)
+    lines, _, absence_months = _compute_full(supabase, month, year)
     try:
         result = supabase.rpc(
             "generate_payroll_draft",
             {"p_month": month, "p_year": year, "p_user": str(user["id"]),
-             "p_lines": [line.as_row() for line in lines]},
+             "p_lines": [line.as_row() for line in lines], "p_absence_months": absence_months},
         ).execute()
     except Exception as e:
         raise _rpc_error(e)
@@ -1172,7 +1220,8 @@ async def approve_payroll(
                 detail="Your role was changed in the last 24 hours by the person who generated this payroll, "
                        "so you can't approve it. Ask another approver.",
             )
-        changes = drift(_stored_lines(supabase, run_id), _compute(supabase, month, year))
+        fresh, close_ids, _ = _compute_full(supabase, month, year)
+        changes = drift(_stored_lines(supabase, run_id), fresh)
         if changes:
             raise HTTPException(
                 status_code=409,
@@ -1183,7 +1232,10 @@ async def approve_payroll(
     try:
         result = supabase.rpc(
             "approve_payroll_run",
-            {"p_run_id": run_id, "p_user": str(user["id"]), "p_generated_at": pending.get("generated_at")},
+            # The closed months whose absences this draft deducts, marked
+            # as taken in the same transaction as the approval.
+            {"p_run_id": run_id, "p_user": str(user["id"]), "p_generated_at": pending.get("generated_at"),
+             "p_close_ids": close_ids if pending.get("status") == "Draft" else []},
         ).execute()
     except Exception as e:
         raise _rpc_error(e)

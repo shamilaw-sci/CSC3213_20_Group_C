@@ -193,6 +193,28 @@ export const useRejectCorrection = () =>
   useCorrectionMutation(({ id, note }: { id: number; note: string }) => HRService.rejectCorrection(id, note),
     'Correction rejected', 'Failed to reject the correction');
 
+// --- Month close ---
+
+export const useClosePreview = (year: number, month: number, enabled: boolean) =>
+  useQuery({ queryKey: ['attendance', 'close', { year, month }], queryFn: () => HRService.getClosePreview(year, month), enabled });
+
+// Closing or reopening freezes or frees the month and changes the next payroll.
+function useCloseMutation(fn: (arg: { year: number; month: number }) => Promise<unknown>, success: string, failure: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: fn,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['attendance'] });
+      queryClient.invalidateQueries({ queryKey: ['payroll'] });
+      toast.success(success);
+    },
+    onError: (error) => toast.error(detailText(error, failure)),
+  });
+}
+
+export const useCloseMonth = () => useCloseMutation(HRService.closeMonth, 'Month closed', 'Failed to close the month');
+export const useReopenMonth = () => useCloseMutation(HRService.reopenMonth, 'Month reopened', 'Failed to reopen the month');
+
 export function useUnlockAttendance() {
   const queryClient = useQueryClient();
 
