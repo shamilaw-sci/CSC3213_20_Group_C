@@ -6,6 +6,7 @@ import { Clock, Lock, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { MyScheduleCard } from '@/components/hr/calendar/MyScheduleCard';
 import { MyMonth } from '@/components/hr/attendance/MyMonth';
+import { MyCorrections } from '@/components/hr/attendance/Corrections';
 import { TodayClockCard } from '@/components/hr/attendance/TodayClockCard';
 import { colomboDate, hhmm } from '@/components/hr/attendance/dayStatus';
 
@@ -96,6 +97,8 @@ export default function MyAttendancePage() {
       </div>
 
       <MyMonth />
+
+      <MyCorrections />
 
       <MyScheduleCard />
     </div>

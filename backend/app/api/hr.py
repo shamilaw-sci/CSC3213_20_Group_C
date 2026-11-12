@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends
 from app.core.supabase import get_supabase
-from app.schemas.hr import (EmployeeProfile, EmployeeProfileCreate, EmployeeProfileUpdate, AttendanceLog, AttendanceLogCreate, AttendanceLogUpdate,PayrollLedger, SRI_LANKA)
+from app.schemas.hr import (EmployeeProfile, EmployeeProfileCreate, EmployeeProfileUpdate, AttendanceLog, AttendanceLogCreate, AttendanceLogUpdate,PayrollLedger, SRI_LANKA, CorrectionRequestIn, CorrectionDecisionIn)
 from typing import List, Optional, Dict, Any
 from datetime import date, datetime, timedelta, timezone
 from supabase import Client
@@ -577,6 +577,249 @@ async def unlock_attendance(attendance_id: int, user = Depends(require_permissio
     )
 
     return response.data[0]
+
+
+# --- ATTENDANCE CORRECTION REQUESTS ---
+#
+# Staff ask for a past day's times to be corrected; HR approves or rejects
+# (confirmed 2026-10-29, details 2026-11-12). Schema: migration 028.
+
+_CORRECTIONS = "attendance_correction_requests"
+
+
+def _no_corrections_table(error: Exception) -> bool:
+    """Migration 028 isn't applied yet."""
+    text = str(error).lower()
+    return "attendance_correction_requests" in text and any(
+        k in text for k in ("42p01", "pgrst205", "does not exist", "could not find the table"))
+
+
+def _corrections_unavailable() -> HTTPException:
+    return HTTPException(status_code=503, detail="Attendance corrections aren't set up yet (database migration 028).")
+
+
+def _tracked_from(supabase: Client, employee: dict) -> Optional[date]:
+    """The employee's attendance tracked-from date: their override, or the organisation's."""
+    own = employee.get("attendance_tracked_from")
+    if own:
+        return date_cls.fromisoformat(str(own)[:10])
+    try:
+        rows = supabase.table("attendance_settings").select("tracking_start_date").eq("id", 1).execute().data or []
+    except Exception:
+        return None  # before migration 027: tracked throughout
+    return date_cls.fromisoformat(str(rows[0]["tracking_start_date"])[:10]) if rows and rows[0].get("tracking_start_date") else None
+
+
+def _day_record(supabase: Client, employee_id: int, target: date) -> Optional[dict]:
+    rows = supabase.table("attendance_log").select("*").eq("employee_id", employee_id) \
+        .eq("target_date", target.isoformat()).execute().data or []
+    return next((r for r in rows if r.get("employee_id") == employee_id
+                 and str(r.get("target_date"))[:10] == target.isoformat()), None)
+
+
+def _correction(supabase: Client, request_id: int) -> dict:
+    rows = supabase.table(_CORRECTIONS).select("*").eq("id", request_id).execute().data or []
+    row = next((r for r in rows if r.get("id") == request_id), None)
+    if not row:
+        raise HTTPException(status_code=404, detail="Correction request not found.")
+    return row
+
+
+def _merged_times(record: Optional[dict], clock_in, clock_out):
+    """The day's times if the request were applied: requested ends replace stored ones."""
+    stored_in = _parse_ts(record.get("clock_in")) if record else None
+    stored_out = _parse_ts(record.get("clock_out")) if record else None
+    return (_parse_ts(clock_in) if clock_in else stored_in,
+            _parse_ts(clock_out) if clock_out else stored_out)
+
+
+@router.post("/attendance/corrections")
+async def request_correction(body: CorrectionRequestIn, user = Depends(require_permission('hr:attendance:self')),
+                             supabase: Client = Depends(get_supabase)):
+    """
+    Ask HR to correct one's own past day. Any day from one's tracked-from date
+    to yesterday that an approved payroll hasn't frozen; today has the clock
+    buttons.
+    """
+    emp = get_employee_by_user_id(supabase, user['id'])
+    require_active(emp, "request an attendance correction")
+    target = body.target_date
+    if body.clock_in is None and body.clock_out is None:
+        raise HTTPException(status_code=400, detail="Give the clock-in, the clock-out or both.")
+    if target >= _sl_today():
+        raise HTTPException(status_code=400, detail="Corrections are for past days. Use the clock buttons for today.")
+    joined = emp.get("date_joined")
+    if joined and target < date_cls.fromisoformat(str(joined)[:10]):
+        raise HTTPException(status_code=400, detail="That day is before you joined.")
+    tracked = _tracked_from(supabase, emp)
+    if tracked and target < tracked:
+        raise HTTPException(status_code=400, detail=f"Attendance is tracked from {tracked.isoformat()}; earlier days can't be corrected.")
+    _refuse_if_payroll_approved(supabase, target)
+
+    record = _day_record(supabase, emp["id"], target)
+    clock_in, clock_out = _merged_times(record, body.clock_in, body.clock_out)
+    _check_times(target, clock_in, clock_out)
+    if record and clock_in == _parse_ts(record.get("clock_in")) and clock_out == _parse_ts(record.get("clock_out")):
+        raise HTTPException(status_code=400, detail="Those are already the recorded times.")
+
+    try:
+        open_ = [r for r in (supabase.table(_CORRECTIONS).select("id, status, employee_id, target_date")
+                             .eq("employee_id", emp["id"]).eq("target_date", target.isoformat()).eq("status", "Pending")
+                             .execute().data or [])
+                 if r.get("status") == "Pending" and r.get("employee_id") == emp["id"]]
+    except Exception as e:
+        if _no_corrections_table(e):
+            raise _corrections_unavailable()
+        raise
+    if open_:
+        raise HTTPException(status_code=409, detail="You already have a correction waiting for this day. Withdraw it to send a new one.")
+
+    row = {
+        "employee_id": emp["id"],
+        "target_date": target.isoformat(),
+        "requested_clock_in": body.clock_in.isoformat() if body.clock_in else None,
+        "requested_clock_out": body.clock_out.isoformat() if body.clock_out else None,
+        "original_clock_in": record.get("clock_in") if record else None,
+        "original_clock_out": record.get("clock_out") if record else None,
+        "reason": body.reason,
+        "requested_by": str(user["id"]),
+    }
+    try:
+        created = supabase.table(_CORRECTIONS).insert(row).execute().data or []
+    except Exception as e:
+        if _is_unique_violation(e):
+            raise HTTPException(status_code=409, detail="You already have a correction waiting for this day. Withdraw it to send a new one.")
+        raise
+    request = created[0] if created else row
+    await log_audit_action(supabase, user_id=user["id"], action_type="ATTENDANCE_CORRECTION_REQUEST",
+                           table_name=_CORRECTIONS, old_payload=None, new_payload=request)
+    return request
+
+
+@router.get("/attendance/corrections/me")
+async def my_corrections(user = Depends(require_permission('hr:attendance:self')), supabase: Client = Depends(get_supabase)):
+    emp = get_employee_by_user_id(supabase, user['id'])
+    try:
+        rows = supabase.table(_CORRECTIONS).select("*").eq("employee_id", emp["id"]) \
+            .order("target_date", desc=True).limit(100).execute().data or []
+    except Exception as e:
+        if _no_corrections_table(e):
+            return []
+        raise
+    return [r for r in rows if r.get("employee_id") == emp["id"]]
+
+
+@router.post("/attendance/corrections/{request_id}/cancel")
+async def cancel_correction(request_id: int, user = Depends(require_permission('hr:attendance:self')),
+                            supabase: Client = Depends(get_supabase)):
+    """Withdraw one's own request while it is still waiting."""
+    emp = get_employee_by_user_id(supabase, user['id'])
+    req = _correction(supabase, request_id)
+    if req["employee_id"] != emp["id"]:
+        raise HTTPException(status_code=403, detail="You can only withdraw your own requests.")
+    if req["status"] != "Pending":
+        raise HTTPException(status_code=409, detail=f"This request is already {req['status'].lower()}.")
+    updated = supabase.table(_CORRECTIONS).update({"status": "Cancelled"}).eq("id", request_id).execute().data or []
+    await log_audit_action(supabase, user_id=user["id"], action_type="ATTENDANCE_CORRECTION_CANCEL",
+                           table_name=_CORRECTIONS, old_payload=req, new_payload={"status": "Cancelled"})
+    return updated[0] if updated else {**req, "status": "Cancelled"}
+
+
+@router.get("/attendance/corrections")
+async def list_corrections(status: Optional[str] = None, user = Depends(require_permission('hr:attendance:manage')),
+                           supabase: Client = Depends(get_supabase)):
+    """Requests for HR, newest day first, with the employee's name and the day's current times."""
+    q = supabase.table(_CORRECTIONS).select("*, employee_profile(first_name, last_name, user_id)")
+    if status:
+        q = q.eq("status", status)
+    try:
+        fetched = q.order("target_date", desc=True).limit(300).execute().data or []
+    except Exception as e:
+        if _no_corrections_table(e):
+            return []
+        raise
+    rows = [r for r in fetched if not status or r.get("status") == status]
+    for r in rows:
+        p = r.pop("employee_profile", None) or {}
+        r["employee_name"] = f"{p.get('first_name', '')} {p.get('last_name', '')}".strip() or f"Employee {r['employee_id']}"
+        r["employee_user_id"] = p.get("user_id")
+        if r.get("status") == "Pending":
+            current = _day_record(supabase, r["employee_id"], date_cls.fromisoformat(str(r["target_date"])[:10]))
+            r["current_clock_in"] = current.get("clock_in") if current else None
+            r["current_clock_out"] = current.get("clock_out") if current else None
+            r["current_locked"] = bool(current.get("is_locked")) if current else False
+    return rows
+
+
+async def _decide_correction(supabase: Client, user: dict, request_id: int, approve: bool, note: Optional[str]) -> dict:
+    req = _correction(supabase, request_id)
+    # Nobody decides their own request, as with attendance edits and leave.
+    _forbid_own_record(supabase, user, req["employee_id"])
+    if str(req.get("requested_by")) == str(user["id"]):
+        raise HTTPException(status_code=403, detail="You can't decide a request you made.")
+    if req["status"] != "Pending":
+        raise HTTPException(status_code=409, detail=f"This request is already {req['status'].lower()}.")
+    target = date_cls.fromisoformat(str(req["target_date"])[:10])
+    note = (note or "").strip() or None
+
+    log_id = None
+    if approve:
+        _refuse_if_payroll_approved(supabase, target)
+        record = _day_record(supabase, req["employee_id"], target)
+        clock_in, clock_out = _merged_times(record, req.get("requested_clock_in"), req.get("requested_clock_out"))
+        _check_times(target, clock_in, clock_out)
+        times = {
+            "clock_in": clock_in.isoformat() if clock_in else None,
+            "clock_out": clock_out.isoformat() if clock_out else None,
+            "worked_hours": _compute_worked_hours(clock_in, clock_out),
+        }
+        if record:
+            # A locked record stays locked: approving is HR's review.
+            saved = supabase.table("attendance_log").update(times).eq("id", record["id"]).execute().data or []
+            log_id = record["id"]
+            await log_audit_action(supabase, user_id=user["id"], action_type="ATTENDANCE_UPDATE",
+                                   table_name="attendance_log", old_payload=record,
+                                   new_payload=saved[0] if saved else {**record, **times})
+        else:
+            new = {"employee_id": req["employee_id"], "target_date": target.isoformat(), "is_locked": False, **times}
+            try:
+                saved = supabase.table("attendance_log").insert(new).execute().data or []
+            except Exception as e:
+                if _is_unique_violation(e):
+                    raise HTTPException(status_code=409, detail="A record for this day was just created. Reload and try again.")
+                raise
+            log_id = saved[0]["id"] if saved else None
+            await log_audit_action(supabase, user_id=user["id"], action_type="ATTENDANCE_CREATE",
+                                   table_name="attendance_log", old_payload=None, new_payload=saved[0] if saved else new)
+    elif not note:
+        raise HTTPException(status_code=400, detail="Give a reason when rejecting, so the employee knows why.")
+
+    update = {
+        "status": "Approved" if approve else "Rejected",
+        "decided_by": str(user["id"]),
+        "decided_at": datetime.now(timezone.utc).isoformat(),
+        "decision_note": note,
+        **({"attendance_log_id": log_id} if approve else {}),
+    }
+    updated = supabase.table(_CORRECTIONS).update(update).eq("id", request_id).execute().data or []
+    await log_audit_action(supabase, user_id=user["id"],
+                           action_type="ATTENDANCE_CORRECTION_APPROVE" if approve else "ATTENDANCE_CORRECTION_REJECT",
+                           table_name=_CORRECTIONS, old_payload=req, new_payload=update)
+    return updated[0] if updated else {**req, **update}
+
+
+@router.post("/attendance/corrections/{request_id}/approve")
+async def approve_correction(request_id: int, body: CorrectionDecisionIn = CorrectionDecisionIn(),
+                             user = Depends(require_permission('hr:attendance:manage')),
+                             supabase: Client = Depends(get_supabase)):
+    return await _decide_correction(supabase, user, request_id, True, body.note)
+
+
+@router.post("/attendance/corrections/{request_id}/reject")
+async def reject_correction(request_id: int, body: CorrectionDecisionIn,
+                            user = Depends(require_permission('hr:attendance:manage')),
+                            supabase: Client = Depends(get_supabase)):
+    return await _decide_correction(supabase, user, request_id, False, body.note)
 
 
 # --- PAYROLL PIPELINE ---

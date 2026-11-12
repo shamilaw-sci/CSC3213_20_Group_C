@@ -1,5 +1,5 @@
 import api from '@/lib/api-client';
-import { Employee, EmployeeUpdate, LinkableLogin, MyPayslip, AttendanceRecord, AttendanceMonth, PayrollRun, PayrollRunView, TrackingImpact } from '@/types';
+import { CorrectionInput, CorrectionRequest, Employee, EmployeeUpdate, LinkableLogin, MyPayslip, AttendanceRecord, AttendanceMonth, PayrollRun, PayrollRunView, TrackingImpact } from '@/types';
 
 export const HRService = {
   getEmployees: async () => {
@@ -65,6 +65,19 @@ export const HRService = {
     const response = await api.post<AttendanceRecord>(`/hr/attendance/${id}/unlock`);
     return response.data;
   },
+
+  // Attendance correction requests: staff ask, HR decides.
+  requestCorrection: async (body: CorrectionInput) =>
+    (await api.post<CorrectionRequest>('/hr/attendance/corrections', body)).data,
+  getMyCorrections: async () => (await api.get<CorrectionRequest[]>('/hr/attendance/corrections/me')).data,
+  cancelCorrection: async (id: number) =>
+    (await api.post<CorrectionRequest>(`/hr/attendance/corrections/${id}/cancel`)).data,
+  getCorrections: async (status?: string) =>
+    (await api.get<CorrectionRequest[]>('/hr/attendance/corrections', { params: status ? { status } : {} })).data,
+  approveCorrection: async (id: number, note?: string) =>
+    (await api.post<CorrectionRequest>(`/hr/attendance/corrections/${id}/approve`, { note: note || null })).data,
+  rejectCorrection: async (id: number, note: string) =>
+    (await api.post<CorrectionRequest>(`/hr/attendance/corrections/${id}/reject`, { note })).data,
 
   // The monthly grid: everyone (HR, Director) or just oneself.
   getAttendanceMonth: async (year: number, month: number) =>

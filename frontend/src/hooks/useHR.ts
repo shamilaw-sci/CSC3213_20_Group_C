@@ -148,6 +148,51 @@ export function useLockAttendance() {
     }
   });
 }
+// --- Attendance correction requests ---
+
+type DetailError = { response?: { data?: { detail?: unknown } } };
+const detailText = (error: unknown, fallback: string) => {
+  const detail = (error as DetailError)?.response?.data?.detail;
+  if (typeof detail === 'string') return detail;
+  if (Array.isArray(detail) && detail[0]?.msg) return String(detail[0].msg).replace(/^Value error, /, '');
+  return fallback;
+};
+
+// Any decision moves the grid, the attention list and both request lists.
+function useCorrectionMutation<T>(fn: (arg: T) => Promise<unknown>, success: string, failure: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: fn,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['corrections'] });
+      queryClient.invalidateQueries({ queryKey: ['attendance'] });
+      queryClient.invalidateQueries({ queryKey: ['my-attendance'] });
+      toast.success(success);
+    },
+    onError: (error) => toast.error(detailText(error, failure)),
+  });
+}
+
+export const useMyCorrections = () =>
+  useQuery({ queryKey: ['corrections', 'me'], queryFn: HRService.getMyCorrections, retry: false });
+
+export const useCorrections = (status?: string) =>
+  useQuery({ queryKey: ['corrections', 'all', status], queryFn: () => HRService.getCorrections(status) });
+
+export const useRequestCorrection = () =>
+  useCorrectionMutation(HRService.requestCorrection, 'Correction sent to HR', 'Failed to send the correction');
+
+export const useCancelCorrection = () =>
+  useCorrectionMutation(HRService.cancelCorrection, 'Request withdrawn', 'Failed to withdraw the request');
+
+export const useApproveCorrection = () =>
+  useCorrectionMutation(({ id, note }: { id: number; note?: string }) => HRService.approveCorrection(id, note),
+    'Correction approved and applied', 'Failed to approve the correction');
+
+export const useRejectCorrection = () =>
+  useCorrectionMutation(({ id, note }: { id: number; note: string }) => HRService.rejectCorrection(id, note),
+    'Correction rejected', 'Failed to reject the correction');
+
 export function useUnlockAttendance() {
   const queryClient = useQueryClient();
 

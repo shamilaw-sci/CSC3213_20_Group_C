@@ -272,9 +272,45 @@ export interface AttendanceMonth {
   payroll_approved?: boolean;
   // Days up to this date (YYYY-MM-DD) are read-only; later ones stay open.
   payroll_frozen_through?: string | null;
+  // Correction requests still waiting for HR in this month (migration 028).
+  pending_corrections?: { id: number; employee_id: number; date: string }[];
 }
 
 // GET /hr/attendance-tracking/impact: what a new tracked-from date would do.
+// A request to correct a past day's times (migration 028).
+export type CorrectionStatus = 'Pending' | 'Approved' | 'Rejected' | 'Cancelled';
+
+export interface CorrectionRequest {
+  id: number;
+  employee_id: number;
+  target_date: string;
+  requested_clock_in: string | null;
+  requested_clock_out: string | null;
+  original_clock_in: string | null;
+  original_clock_out: string | null;
+  reason: string;
+  status: CorrectionStatus;
+  requested_by: string | null;
+  requested_at: string;
+  decided_by: string | null;
+  decided_at: string | null;
+  decision_note: string | null;
+  attendance_log_id: number | null;
+  // GET /attendance/corrections (HR) only.
+  employee_name?: string;
+  employee_user_id?: string | null;
+  current_clock_in?: string | null;
+  current_clock_out?: string | null;
+  current_locked?: boolean;
+}
+
+export interface CorrectionInput {
+  target_date: string;
+  clock_in?: string;
+  clock_out?: string;
+  reason: string;
+}
+
 export interface TrackingImpact {
   old_date: string | null;
   new_date: string | null;

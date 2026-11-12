@@ -103,7 +103,11 @@ export function MyMonth() {
         )}
       </CardContent>
       {open && row && (
-        <DayDetailDialog key={open.date} cell={open} employeeId={row.employee_id} employeeName="My day" canEdit={false} onClose={() => setOpen(null)} />
+        <DayDetailDialog key={open.date} cell={open} employeeId={row.employee_id} employeeName="My day" canEdit={false}
+          canRequest
+          payrollApproved={!!data?.payroll_frozen_through && open.date <= data.payroll_frozen_through}
+          pendingCorrectionId={data?.pending_corrections?.find((p) => p.date === open.date)?.id ?? null}
+          onClose={() => setOpen(null)} />
       )}
     </Card>
   );

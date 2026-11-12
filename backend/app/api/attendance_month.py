@@ -157,6 +157,31 @@ def _month(
                        attendance, leave_days, today=now.date(), now=now, tracking_start=tracking_start)
 
 
+def _pending_corrections(supabase: Client, year: int, month: int, employee_id: Optional[int] = None) -> list[dict]:
+    """
+    The month's correction requests still waiting for HR (migration 028), as
+    {id, employee_id, date}; the grid marks those days. Empty before 028.
+    """
+    first, last = _bounds(year, month)
+    try:
+        q = supabase.table("attendance_correction_requests").select("id, employee_id, target_date, status")             .eq("status", "Pending").gte("target_date", first.isoformat()).lte("target_date", last.isoformat())
+        if employee_id is not None:
+            q = q.eq("employee_id", employee_id)
+        rows = q.execute().data or []
+    except Exception as e:
+        if not _not_migrated(e):
+            raise
+        return []
+    return [{"id": r["id"], "employee_id": r["employee_id"], "date": str(r["target_date"])[:10]}
+            for r in rows if r.get("status") == "Pending"
+            and (employee_id is None or r.get("employee_id") == employee_id)]
+
+
+def _frozen_through_iso(supabase: Client, year: int, month: int) -> Optional[str]:
+    t = payroll_frozen_through(supabase, month, year)
+    return t.isoformat() if t else None
+
+
 @router.get("/attendance/month")
 async def attendance_month(
     year: int,
@@ -174,8 +199,8 @@ async def attendance_month(
         "my_employee_id": mine[0]["id"] if mine else None,
         "payroll_approved": payroll_approved(supabase, month, year),
         # Days up to this date are read-only; later days stay editable.
-        "payroll_frozen_through": (lambda t: t.isoformat() if t else None)(
-            payroll_frozen_through(supabase, month, year)),
+        "payroll_frozen_through": _frozen_through_iso(supabase, year, month),
+        "pending_corrections": _pending_corrections(supabase, year, month),
     }
 
 
@@ -190,8 +215,14 @@ async def my_attendance_month(
     if not me:
         raise HTTPException(status_code=404, detail="No linked employee profile found for this user.")
     result = _month(supabase, year, month, employee_id=me[0]["id"])
-    # One person's own month: the attention list is about them alone.
-    return {**result, "employee": result["employees"][0] if result["employees"] else None}
+    # One person's own month: the attention list is about them alone. The
+    # frozen date and pending requests decide where a correction can be asked.
+    return {
+        **result,
+        "employee": result["employees"][0] if result["employees"] else None,
+        "payroll_frozen_through": _frozen_through_iso(supabase, year, month),
+        "pending_corrections": _pending_corrections(supabase, year, month, employee_id=me[0]["id"]),
+    }
 
 
 # --------------------------------------------------------------------------
