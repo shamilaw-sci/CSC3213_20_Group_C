@@ -8,6 +8,7 @@ import {
 import { field } from '@/components/leave/LeaveForm';
 import { useLinkableLogins, useUpdateEmployee } from '@/hooks/useHR';
 import { NIC_PATTERN, NIC_RULE } from '@/lib/employees';
+import { colomboDate } from '@/components/hr/attendance/dayStatus';
 import { getErrorMessage } from '@/lib/utils';
 import { Employee, EmployeeUpdate } from '@/types';
 
@@ -31,6 +32,9 @@ export function EditEmployeeDialog({ employee, onClose }: Props) {
   const [salary, setSalary] = useState(String(employee.base_salary));
   const [status, setStatus] = useState(employee.status);
   const [loginId, setLoginId] = useState(employee.user_id ?? '');
+  const [epfNumber, setEpfNumber] = useState(employee.epf_number ?? '');
+  // A leaver's last day: payroll pays their final month up to it.
+  const [dateLeft, setDateLeft] = useState(employee.date_left ?? colomboDate());
   const [error, setError] = useState<string | null>(null);
 
   const { data: logins, isLoading: loadingLogins, isError: loginsFailed } = useLinkableLogins();
@@ -43,12 +47,15 @@ export function EditEmployeeDialog({ employee, onClose }: Props) {
   if (Number(salary) !== Number(employee.base_salary)) changes.base_salary = Number(salary);
   if (status !== employee.status) changes.status = status;
   if (loginId !== (employee.user_id ?? '')) changes.user_id = loginId || null;
+  if (epfNumber.trim() !== (employee.epf_number ?? '')) changes.epf_number = epfNumber.trim() || null;
+  if (status === 'Inactive' && dateLeft !== (employee.date_left ?? '')) changes.date_left = dateLeft || null;
   const changed = Object.keys(changes).length > 0;
 
   const save = () => {
     if (changes.first_name === '' || changes.last_name === '') return setError('Names cannot be blank');
     if (changes.nic !== undefined && !NIC_PATTERN.test(changes.nic)) return setError(NIC_RULE);
     if (changes.base_salary !== undefined && !(changes.base_salary > 0)) return setError('Salary must be a positive number');
+    if (status === 'Inactive' && !dateLeft) return setError('Give the last working day, so the final month is paid up to it.');
     setError(null);
     update({ id: employee.id, changes }, {
       onSuccess: onClose,
@@ -90,6 +97,19 @@ export function EditEmployeeDialog({ employee, onClose }: Props) {
               <option value="Inactive">Inactive</option>
             </select>
           </label>
+          {status === 'Inactive' ? (
+            <label className={label}>
+              Last working day
+              <input type="date" value={dateLeft} min={employee.date_joined ?? undefined}
+                onChange={(e) => setDateLeft(e.target.value)} className={`${field} font-mono`} />
+            </label>
+          ) : (
+            <span className="hidden sm:block" />
+          )}
+          <label className={label}>
+            EPF number <span className="font-normal text-text-muted">(on payslips)</span>
+            <input value={epfNumber} onChange={(e) => setEpfNumber(e.target.value)} maxLength={20} className={`${field} font-mono`} />
+          </label>
           <label className={label}>
             Linked login
             <select value={loginId} onChange={(e) => setLoginId(e.target.value)} className={field} disabled={loadingLogins}>
@@ -108,8 +128,9 @@ export function EditEmployeeDialog({ employee, onClose }: Props) {
 
         {status === 'Inactive' && employee.status !== 'Inactive' && (
           <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-text-primary">
-            Inactive employees are left off payroll, the attendance grid and leave lists, and can&apos;t clock in or
-            request leave. Their login stays linked, and reactivating restores everything.
+            {"Inactive employees can't clock in or request leave, and drop off the attendance grid and leave lists. "
+              + 'Payroll pays their final month up to the last working day, then stops. Their login stays linked, '
+              + 'and reactivating restores everything.'}
           </p>
         )}
         {loginId === '' && employee.user_id && (

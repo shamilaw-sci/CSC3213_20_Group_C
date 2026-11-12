@@ -54,6 +54,11 @@ def _is_missing_source_type_column(error: Exception) -> bool:
     return "source_type" in text and ("42703" in text or "column" in text)
 
 
+def _is_missing_column(error: Exception, column: str) -> bool:
+    text = str(error).lower()
+    return column in text and ("42703" in text or "column" in text)
+
+
 def fetch_ledger(supabase: Client, end: date, *, include_source: bool = False) -> list[dict]:
     """
     Every transaction dated on or before `end`, voided rows included.
@@ -68,6 +73,15 @@ def fetch_ledger(supabase: Client, end: date, *, include_source: bool = False) -
     without it rather than failing.
     """
     if include_source:
+        # memo (026) and source_type (013): each falls away if its migration
+        # is not applied yet, rather than failing the ledger page.
+        try:
+            return _fetch_ledger_rows(supabase, end, _LEDGER_COLUMNS + ", source_type, memo")
+        except Exception as e:
+            if not _is_missing_column(e, "memo"):
+                if not _is_missing_source_type_column(e):
+                    raise
+                return _fetch_ledger_rows(supabase, end, _LEDGER_COLUMNS)
         try:
             return _fetch_ledger_rows(supabase, end, _LEDGER_COLUMNS + ", source_type")
         except Exception as e:

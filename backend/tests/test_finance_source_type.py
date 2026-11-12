@@ -108,8 +108,33 @@ def test_fetch_ledger_default_query_is_unchanged():
 def test_fetch_ledger_reads_source_type_when_asked():
     client = _Client(missing_column=False)
     assert fetch_ledger(client, date.max, include_source=True) == [{"id": 1}]
-    assert client.selects[0].endswith(", source_type")
+    # memo (migration 026) labels the payroll payables.
+    assert client.selects[0].endswith(", source_type, memo")
     assert len(client.selects) == 1
+
+
+def test_fetch_ledger_falls_back_before_migration_026():
+    class NoMemo(_Client):
+        def table(self, name):
+            query = super().table(name)
+            original = query.execute
+
+            def execute():
+                if "memo" in query.columns:
+                    raise Exception("{'code': '42703', 'message': 'column financial_transactions.memo does not exist'}")
+                return original()
+
+            query.execute = execute
+            return query
+
+    client = NoMemo(missing_column=False)
+    assert fetch_ledger(client, date.max, include_source=True) == [{"id": 1}]
+    assert client.selects[-1].endswith(", source_type")
+
+
+def test_a_memo_names_the_entry():
+    row = {"program_id": None, "source_type": "payroll", "memo": "November 2026 ETF (3%)"}
+    assert describe(row) == "Payroll-November 2026 ETF (3%)"
 
 
 def test_fetch_ledger_falls_back_before_migration_013():
