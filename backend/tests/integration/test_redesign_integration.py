@@ -48,8 +48,9 @@ def test_integration_cors_value():
 
 # 9. Test api hr path exists
 def test_integration_hr_route_exists():
+    # The route exists (not 404) and needs a login.
     response = client.get("/api/hr/employees")
-    assert response.status_code == 200
+    assert response.status_code == 401
 
 # 10. Test api finance path status
 def test_integration_finance_route_status():

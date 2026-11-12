@@ -316,8 +316,10 @@ def test_integration_hr_attendance_unauthorized():
     assert response.status_code in [200, 401, 404, 405, 422]
 
 def test_integration_hr_attendance_invalid_method():
+    # POST /hr/attendance is a real route (HR records a day), so an anonymous
+    # call is refused before anything else is looked at.
     response = client.post("/api/hr/attendance?target_date=2026-07-08")
-    assert response.status_code in [404, 405, 422]
+    assert response.status_code == 401
 
 def test_integration_hr_attendance_options_origin_match():
     response = client.options("/api/hr/attendance?target_date=2026-07-08", headers={"Origin": "http://localhost:3000"})
@@ -382,9 +384,10 @@ def test_integration_hr_attendance_not_found_redirect():
     response = client.get("/api/hr/attendances")
     assert response.status_code == 404
 
-def test_integration_hr_attendance_post_not_found():
+def test_integration_hr_attendance_post_wrong_method():
+    # /hr/attendance/log exists, but only for GET.
     response = client.post("/api/hr/attendance/log")
-    assert response.status_code == 404
+    assert response.status_code == 405
 
 def test_integration_hr_attendance_content_length():
     response = client.get("/api/hr/attendance?target_date=2026-07-08")
