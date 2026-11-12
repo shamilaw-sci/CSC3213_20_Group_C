@@ -71,6 +71,9 @@ export interface ScheduleAssignmentRow {
   current_schedule_name: string | null;
   follows_default: boolean;
   history: ScheduleAssignment[];
+  // Their own date if overridden, otherwise the organisation's.
+  tracked_from: string | null;
+  tracking_overridden: boolean;
 }
 
 export interface Holiday {
@@ -192,7 +195,7 @@ export interface EntitlementsView {
 // Mirrors build_month in backend/app/services/attendance_month.py.
 
 export type DayStatus =
-  | 'not_employed' | 'upcoming' | 'leave' | 'holiday' | 'rest' | 'worked_off_day'
+  | 'not_employed' | 'not_tracked' | 'upcoming' | 'leave' | 'holiday' | 'rest' | 'worked_off_day'
   | 'absent' | 'missing_clock_out' | 'in_progress' | 'present';
 
 export interface DayLeave {
@@ -229,6 +232,8 @@ export interface MonthRow {
   employee_name: string;
   status: string | null;
   date_joined: string | null;
+  tracked_from: string | null;
+  tracking_overridden: boolean;
   cells: DayCell[];
   totals: {
     present: number; absent: number; late: number; left_early: number; missing_clock_out: number;
@@ -253,6 +258,7 @@ export interface AttendanceMonth {
   employees: MonthRow[];
   attention: AttentionItem[];
   today: string;
+  tracking_start_date: string | null;
   employee?: MonthRow | null; // /me/month only
   // /month only: the viewer's own employee row (HR can't edit it) and
   // whether this month's payroll is approved (attendance is then frozen).
@@ -260,6 +266,22 @@ export interface AttendanceMonth {
   payroll_approved?: boolean;
   // Days up to this date (YYYY-MM-DD) are read-only; later ones stay open.
   payroll_frozen_through?: string | null;
+}
+
+// GET /hr/attendance-tracking/impact: what a new tracked-from date would do.
+export interface TrackingImpact {
+  old_date: string | null;
+  new_date: string | null;
+  direction: 'earlier' | 'later' | 'same';
+  first: string | null;
+  last: string | null;
+  employees: number;
+  working_days: number;
+  absences: number;
+  missing_clock_outs: number;
+  // Months with approved payroll inside the span: the change is refused.
+  // Months whose payroll approval freezes days in the span, up to frozen_through.
+  blocked_months: { year: number; month: number; frozen_through: string }[];
 }
 
 // --- Payroll (GET /hr/payroll/run) ---

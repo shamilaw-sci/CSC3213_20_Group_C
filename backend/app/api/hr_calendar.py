@@ -248,9 +248,11 @@ async def list_assignments(
     supabase: Client = Depends(get_supabase),
 ):
     """
-    Every employee with the schedule they follow today, and their history.
+    Every employee with the schedule they follow today, their history, and
+    the date their attendance is tracked from.
     """
-    employees = supabase.table("employee_profile").select("id, first_name, last_name, status") \
+    employees = supabase.table("employee_profile") \
+        .select("id, first_name, last_name, status, attendance_tracked_from") \
         .order("first_name").execute().data or []
     assignments = supabase.table("employee_schedule_assignments").select("*") \
         .order("effective_from", desc=True).execute().data or []
@@ -259,6 +261,8 @@ async def list_assignments(
     names = {s["id"]: s["name"] for s in schedules}
     default_id = next((s["id"] for s in schedules if s.get("is_default")), None)
     today = date.today()
+    settings = supabase.table("attendance_settings").select("tracking_start_date").eq("id", 1).execute().data or []
+    org_start = settings[0].get("tracking_start_date") if settings else None
 
     out = []
     for e in employees:
@@ -272,6 +276,8 @@ async def list_assignments(
             "current_schedule_name": names.get(current),
             "follows_default": not any(date.fromisoformat(str(a["effective_from"])[:10]) <= today for a in history),
             "history": [{**a, "schedule_name": names.get(a["schedule_id"])} for a in history],
+            "tracked_from": e.get("attendance_tracked_from") or org_start,
+            "tracking_overridden": bool(e.get("attendance_tracked_from")),
         })
     return out
 

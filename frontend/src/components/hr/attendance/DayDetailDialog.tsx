@@ -43,7 +43,7 @@ export function DayDetailDialog({
   const { mutate: unlock, isPending: isUnlocking } = useUnlockAttendance();
 
   const blocked = isOwn || payrollApproved;
-  const editable = canEdit && !blocked && !cell.locked && cell.status !== 'not_employed' && cell.status !== 'upcoming';
+  const editable = canEdit && !blocked && !cell.locked && !['not_employed', 'not_tracked', 'upcoming'].includes(cell.status);
   const changed = clockIn !== toInput(cell.clock_in) || clockOut !== toInput(cell.clock_out) || (!!clockOut && nextDay !== storedNextDay);
 
   // A clock-out at or before the clock-in is only right for an overnight

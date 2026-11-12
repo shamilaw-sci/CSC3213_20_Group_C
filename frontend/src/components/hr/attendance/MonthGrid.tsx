@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { AlertTriangle, ChevronLeft, ChevronRight, FileSpreadsheet, Info, Search } from 'lucide-react';
+import { AlertTriangle, CalendarCheck, ChevronLeft, ChevronRight, FileSpreadsheet, Info, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -11,6 +11,7 @@ import { cn } from '@/lib/utils';
 import { AttentionItem, DayCell, MonthRow } from '@/types';
 import { DayDetailDialog } from './DayDetailDialog';
 import { LEGEND, TONE_CLASS, hhmm, localDate, lookOf } from './dayStatus';
+import { TrackingDialog, longDate } from './TrackingDialog';
 
 const MONTH = new Intl.DateTimeFormat('en-LK', { month: 'long', year: 'numeric' });
 const SHORT = new Intl.DateTimeFormat('en-LK', { weekday: 'short', day: 'numeric', month: 'short' });
@@ -24,13 +25,14 @@ const KIND_LABEL: Record<AttentionItem['kinds'][number], string> = {
   worked_off_day: 'Worked a day off',
 };
 
-export function MonthGrid({ canEdit }: { canEdit: boolean }) {
+export function MonthGrid({ canEdit, canChangeTracking }: { canEdit: boolean; canChangeTracking: boolean }) {
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [search, setSearch] = useState('');
   const [attentionOnly, setAttentionOnly] = useState(false);
   const [open, setOpen] = useState<{ row: MonthRow; cell: DayCell } | null>(null);
+  const [changingTracking, setChangingTracking] = useState(false);
   const { data, isLoading, isFetching, error } = useAttendanceMonth(year, month);
 
   const step = (delta: number) => {
@@ -99,6 +101,23 @@ export function MonthGrid({ canEdit }: { canEdit: boolean }) {
           <FileSpreadsheet className="h-4 w-4" /> CSV
         </Button>
       </div>
+
+      {/* When tracking started: everything before it is Not tracked. */}
+      {data?.tracking_start_date && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border-brand bg-bg-subtle px-3 py-2 text-xs text-text-secondary">
+          <CalendarCheck className="h-4 w-4 shrink-0 text-accent" />
+          <span>
+            Attendance is tracked from <span className="font-semibold text-text-primary">{longDate(data.tracking_start_date)}</span>.
+            Earlier days show as Not tracked and are not counted or sent to payroll.
+            {data.employees.some((r) => r.tracking_overridden) && ' Some employees have their own date.'}
+          </span>
+          {canChangeTracking && (
+            <Button variant="outline" size="sm" onClick={() => setChangingTracking(true)} className="ml-auto h-7 border-border-brand px-2 text-xs">
+              Change
+            </Button>
+          )}
+        </div>
+      )}
 
       {/* Legend: letters and colours together. */}
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-text-secondary">
@@ -235,6 +254,9 @@ export function MonthGrid({ canEdit }: { canEdit: boolean }) {
           payrollApproved={!!data?.payroll_frozen_through && open.cell.date <= data.payroll_frozen_through}
           onClose={() => setOpen(null)}
         />
+      )}
+      {changingTracking && data && (
+        <TrackingDialog current={data.tracking_start_date} onClose={() => setChangingTracking(false)} />
       )}
     </div>
   );
