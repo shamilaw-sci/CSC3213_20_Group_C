@@ -197,7 +197,12 @@ def _balance(supabase: Client, employee_id: int, leave_type_id: int, year: int,
         .eq("leave_type_id", leave_type_id).eq("year", year).execute().data
     if not rows:
         return None
-    e = rows[0]
+    return _balance_from(rows[0], leave_type_id, year, live, rule, joined)
+
+
+def _balance_from(e: dict, leave_type_id: int, year: int, live: list[dict],
+                  rule: str = "none", joined: Optional[date] = None) -> Balance:
+    """A Balance from an entitlement row already in hand."""
     in_year = [r for r in live if _date(r["leave_date"]).year == year and r["leave_type_id"] == leave_type_id]
     return Balance(
         entitled=_d(e["entitled_days"]),
@@ -312,15 +317,57 @@ async def leave_types(user=Depends(get_current_user), supabase: Client = Depends
     return supabase.table("leave_types").select("*").eq("is_active", True).order("sort_order").execute().data or []
 
 
-def _summary(supabase: Client, employee: dict, year: int) -> list[dict]:
-    """Balance per balance-tracked leave type for one employee and year."""
-    types = supabase.table("leave_types").select("*").eq("is_active", True).eq("uses_balance", True) \
+def _balance_types(supabase: Client) -> list[dict]:
+    return supabase.table("leave_types").select("*").eq("is_active", True).eq("uses_balance", True) \
         .order("sort_order").execute().data or []
-    live = _live_days(supabase, employee["id"])
+
+
+def _entitlements_for_year(supabase: Client, year: int) -> dict[tuple, dict]:
+    """Every entitlement row for `year`, keyed by (employee_id, leave_type_id)."""
+    rows = supabase.table("leave_entitlements").select("*").eq("year", year).execute().data or []
+    return {(r["employee_id"], r["leave_type_id"]): r for r in rows if int(r.get("year", year)) == year}
+
+
+def _live_days_by_employee(supabase: Client) -> dict[int, list[dict]]:
+    """_live_days for everyone at once, grouped by employee: two queries, not two per person."""
+    requests = [r for r in (supabase.table("leave_requests").select("id, status, leave_type_id, employee_id")
+                            .in_("status", list(LIVE)).execute().data or []) if r["status"] in LIVE]
+    if not requests:
+        return {}
+    by_id = {r["id"]: r for r in requests}
+    rows = supabase.table("leave_request_days").select("*").in_("request_id", list(by_id)).execute().data or []
+    out: dict[int, list[dict]] = {}
+    for r in rows:
+        req = by_id.get(r["request_id"])
+        if req is None:
+            continue
+        out.setdefault(req["employee_id"], []).append(
+            {**r, "status": req["status"], "leave_type_id": req["leave_type_id"]})
+    return out
+
+
+def _summary(supabase: Client, employee: dict, year: int, types: Optional[list[dict]] = None,
+             live: Optional[list[dict]] = None, entitlements: Optional[dict[tuple, dict]] = None) -> list[dict]:
+    """
+    Balance per balance-tracked leave type for one employee and year.
+
+    `types`, `live` and `entitlements` are preloaded by callers that run this
+    for everyone (the Entitlements tab): fetched per employee, fifteen people
+    took ninety queries and eighteen seconds.
+    """
+    if types is None:
+        types = _balance_types(supabase)
+    if live is None:
+        live = _live_days(supabase, employee["id"])
     out = []
     joined = _joined(employee)
     for t in types:
-        b = _balance(supabase, employee["id"], t["id"], year, live, t.get("first_year_rule") or "none", joined)
+        rule = t.get("first_year_rule") or "none"
+        if entitlements is None:
+            b = _balance(supabase, employee["id"], t["id"], year, live, rule, joined)
+        else:
+            row = entitlements.get((employee["id"], t["id"]))
+            b = None if row is None else _balance_from(row, t["id"], year, live, rule, joined)
         out.append({
             "leave_type_id": t["id"], "code": t["code"], "name": t["name"],
             "set_up": b is not None,
@@ -553,20 +600,20 @@ def _name(e: dict) -> str:
 async def list_entitlements(year: int, user=Depends(require_permission("leave:approve")),
                             supabase: Client = Depends(get_supabase)):
     employees = _active_employees(supabase)
+    types = _balance_types(supabase)
+    entitlements = _entitlements_for_year(supabase, year)
+    live = _live_days_by_employee(supabase)
     out = []
     for e in employees:
         out.append({
             "employee_id": e["id"],
             "employee_name": _name(e),
             "date_joined": e.get("date_joined"),
-            "balances": _summary(supabase, e, year),
+            "balances": _summary(supabase, e, year, types, live.get(e["id"], []), entitlements),
         })
-    entitlement_rows = supabase.table("leave_entitlements").select("id, employee_id, leave_type_id, note") \
-        .eq("year", year).execute().data or []
-    ids = {(r["employee_id"], r["leave_type_id"]): r for r in entitlement_rows}
     for row in out:
         for b in row["balances"]:
-            hit = ids.get((row["employee_id"], b["leave_type_id"]))
+            hit = entitlements.get((row["employee_id"], b["leave_type_id"]))
             b["entitlement_id"] = hit["id"] if hit else None
             b["note"] = hit.get("note") if hit else None
     return {

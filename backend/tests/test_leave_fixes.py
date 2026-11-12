@@ -224,3 +224,43 @@ def test_a_corrected_join_date_recomputes_this_years_allowance_keeping_adjustmen
     rows = {r["id"]: r for r in db.tables["leave_entitlements"]}
     assert rows[40]["entitled_days"] == 14.0 and rows[40]["adjustment"] == 1
     assert rows[39]["entitled_days"] == 0
+
+
+# --------------------------------------------------------------------------
+# The Entitlements tab loads the year once, not once per employee
+# --------------------------------------------------------------------------
+
+class _CountingDb(_Db):
+    """_Db that counts table() calls, one per query."""
+
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        self.queries = 0
+
+    def table(self, name):
+        self.queries += 1
+        return super().table(name)
+
+
+def test_entitlements_list_runs_a_fixed_number_of_queries_however_many_employees():
+    # Fifteen people used to take ninety queries and eighteen seconds.
+    db = _CountingDb([HR, AMAL, NIMMI] + [
+        {**AMAL, "id": 100 + i, "user_id": None, "first_name": f"Person{i}"} for i in range(12)
+    ])
+    db.tables.update({
+        "leave_types": [dict(t) for t in TYPES],
+        "leave_requests": [_request_row(id=90, status="Approved", start="2026-12-02", end="2026-12-02")],
+        "leave_request_days": [_day(90, "2026-12-02")],
+        "leave_entitlements": [_ent(40, 8, 1, 2026, 14), _ent(41, 8, 3, 2026, 7)],
+        "payroll_runs": [],
+    })
+    response = _send_as(db, "GET", "/api/leave/entitlements?year=2026")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert len(body["employees"]) == 15
+    amal = next(e for e in body["employees"] if e["employee_id"] == 8)
+    annual = next(b for b in amal["balances"] if b["code"] == "ANNUAL")
+    assert annual["available"] == 14.0 and annual["entitlement_id"] == 40
+    # employees, types, entitlements, live requests, their days: five, whoever is listed.
+    assert db.queries <= 6, db.queries
