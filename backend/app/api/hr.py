@@ -8,7 +8,7 @@ from app.core.security import require_any_permission, require_permission
 from app.core.audit import log_audit_action
 from app.core.permissions import UserRole
 from app.services.employees import require_active
-from app.services.payroll_status import payroll_approved
+from app.services.payroll_status import is_frozen
 from fastapi.responses import StreamingResponse
 from datetime import date as date_cls
 from fastapi import HTTPException
@@ -338,10 +338,14 @@ def _refuse_if_payroll_approved(supabase: Client, d: date) -> None:
     # Approved pay was worked out from the month as it stood, so its
     # attendance is history from then. Only unlock used to check this, so a
     # record could still be added, edited and locked, and then never reopened.
-    if payroll_approved(supabase, d.month, d.year):
+    # Only days up to the approval date (confirmed 2026-11-12): payroll can be
+    # approved from the 25th, and the rest of that month is still to happen.
+    through = is_frozen(supabase, d)
+    if through:
         raise HTTPException(
             status_code=409,
-            detail=f"Payroll for {d.month}/{d.year} is approved; its attendance can no longer be changed.",
+            detail=f"Payroll for {d.month}/{d.year} is approved; attendance up to "
+                   f"{through.isoformat()} can no longer be changed.",
         )
 
 

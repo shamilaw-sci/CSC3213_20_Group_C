@@ -138,7 +138,7 @@ def test_no_new_leave_in_an_approved_payroll_month():
                         {"leave_type_id": 3, "start_date": "2026-07-14", "end_date": "2026-07-14"}, "General Staff", OTHER_USER_ID)
 
     assert response.status_code == 400, response.text
-    assert response.json()["detail"] == "Payroll for July 2026 is approved, so leave on its days can no longer be requested."
+    assert response.json()["detail"] == "Payroll for July 2026 is approved, so leave on those days can no longer be requested."
     assert db.tables["leave_requests"] == []
 
 
@@ -264,3 +264,60 @@ def test_entitlements_list_runs_a_fixed_number_of_queries_however_many_employees
     assert annual["available"] == 14.0 and annual["entitlement_id"] == 40
     # employees, types, entitlements, live requests, their days: five, whoever is listed.
     assert db.queries <= 6, db.queries
+
+
+# --------------------------------------------------------------------------
+# Only days up to the approval date are frozen (confirmed 2026-11-12)
+# --------------------------------------------------------------------------
+
+def _approved_on(db, month, year, approved_at):
+    db.tables["payroll_runs"] = [{"id": 1, "payroll_month": month, "payroll_year": year,
+                                  "status": "Approved", "approved_at": approved_at}]
+    return db
+
+
+# 25 Nov 2026, 10:00 in Colombo.
+NOV_25 = "2026-11-25T04:30:00+00:00"
+
+
+def test_leave_after_the_approval_date_is_still_open():
+    db = _approved_on(_db(), 11, 2026, NOV_25)
+    body = _preview(db, {"leave_type_id": 3, "start_date": "2026-11-27", "end_date": "2026-11-27"})
+    assert body["errors"] == []
+
+
+def test_leave_up_to_the_approval_date_is_frozen_and_says_when():
+    db = _approved_on(_db(), 11, 2026, NOV_25)
+    body = _preview(db, {"leave_type_id": 3, "start_date": "2026-11-20", "end_date": "2026-11-20"})
+    assert body["errors"] == [
+        "Payroll for November 2026 was approved on 25 November, so leave on those days can no longer be requested."
+    ]
+
+
+def test_approved_leave_after_the_approval_date_can_still_be_cancelled():
+    db = _approved_on(_db([_request_row(status="Approved", start="2026-11-27", end="2026-11-27")],
+                          [_day(100, "2026-11-27")]), 11, 2026, NOV_25)
+    assert _send_as(db, "POST", "/api/leave/requests/100/cancel").status_code == 200
+
+
+def test_a_month_approved_after_it_ended_is_frozen_whole():
+    db = _approved_on(_db(), 10, 2026, "2026-11-03T06:00:00+00:00")
+    body = _preview(db, {"leave_type_id": 3, "start_date": "2026-10-30", "end_date": "2026-10-30"})
+    assert body["errors"] == ["Payroll for October 2026 is approved, so leave on those days can no longer be requested."]
+
+
+def test_attendance_after_the_approval_date_can_still_be_recorded(monkeypatch):
+    from datetime import datetime
+    from app.api import hr
+    from app.schemas.hr import SRI_LANKA
+    monkeypatch.setattr(hr, "_sl_now", lambda: datetime(2026, 11, 30, 18, 0, tzinfo=SRI_LANKA))
+    db = _approved_on(_db(), 11, 2026, NOV_25)
+    db.tables["attendance_log"] = []
+
+    def log(day):
+        return _send_as(db, "POST", "/api/hr/attendance", {
+            "employee_id": 8, "target_date": f"2026-11-{day}",
+            "clock_in": f"2026-11-{day}T08:30:00+05:30", "clock_out": f"2026-11-{day}T17:00:00+05:30"})
+
+    assert log(20).status_code == 409
+    assert log(27).status_code == 200

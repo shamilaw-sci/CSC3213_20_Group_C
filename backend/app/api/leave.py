@@ -26,7 +26,7 @@ from app.core.permissions import has_permission
 from app.core.security import get_current_user, require_permission
 from app.core.supabase import get_supabase
 from app.services.employees import require_active
-from app.services.payroll_status import payroll_approved
+from app.services.payroll_status import is_frozen
 from app.services.leave_rules import (
     ZERO,
     Balance,
@@ -87,14 +87,30 @@ def _today() -> date:
     return datetime.now(COLOMBO).date()
 
 
-def _frozen_months(supabase: Client, dates) -> list[str]:
+def _frozen(supabase: Client, dates, action: str) -> Optional[str]:
     """
-    The months among `dates` whose payroll is approved. Their attendance is
-    frozen (app/api/hr.py), and leave decides what an attendance day is, so
-    leave on those days is frozen with it (confirmed 2026-11-11).
+    Why leave on `dates` can no longer be `action` (requested, approved,
+    cancelled), or None. A day is frozen once its month's payroll is approved
+    and the day is on or before the approval date (confirmed 2026-11-11, then
+    2026-11-12: later days of that month stay open). Attendance is frozen the
+    same way (app/api/hr.py), and leave decides what an attendance day is.
     """
-    months = sorted({(d.year, d.month) for d in dates})
-    return [f"{_MONTHS[m - 1]} {y}" for y, m in months if payroll_approved(supabase, m, y)]
+    cache: dict = {}
+    through = {}
+    for d in dates:
+        hit = is_frozen(supabase, d, cache)
+        if hit:
+            through[(d.year, d.month)] = hit
+    if not through:
+        return None
+    parts = []
+    for (y, m), last in sorted(through.items()):
+        month = f"{_MONTHS[m - 1]} {y}"
+        whole = last.month != m or last.day == (date(y + (m == 12), m % 12 + 1, 1) - timedelta(days=1)).day
+        parts.append(f"payroll for {month} is approved" if whole
+                     else f"payroll for {month} was approved on {last.day} {_MONTHS[m - 1]}")
+    message = " and ".join(parts)
+    return f"{message[0].upper()}{message[1:]}, so leave on those days can no longer be {action}."
 
 
 def _role(user: dict) -> str:
@@ -254,9 +270,9 @@ def _assess(supabase: Client, employee: dict, body: LeaveIn, exclude_request: Op
     if joined and body.start_date < joined:
         errors.insert(0, f"{subject or 'You'} joined on {joined.day} {_MONTHS[joined.month - 1]} {joined.year}; "
                          "leave can't start before that.")
-    frozen = _frozen_months(supabase, [d for d, _ in days] or [body.start_date])
+    frozen = _frozen(supabase, [d for d, _ in days] or [body.start_date], "requested")
     if frozen:
-        errors.insert(0, f"Payroll for {', '.join(frozen)} is approved, so leave on its days can no longer be requested.")
+        errors.insert(0, frozen)
 
     return {
         "leave_type": lt_row,
@@ -471,10 +487,9 @@ async def cancel_request(request_id: int, user=Depends(get_current_user), supaba
     # whose payroll is approved that is history. A pending request never
     # counted, so it can still be withdrawn.
     if req["status"] == "Approved":
-        frozen = _frozen_months(supabase, _request_dates(supabase, req))
+        frozen = _frozen(supabase, _request_dates(supabase, req), "cancelled")
         if frozen:
-            raise HTTPException(status_code=409, detail=(
-                f"Payroll for {', '.join(frozen)} is approved, so leave on its days can no longer be cancelled."))
+            raise HTTPException(status_code=409, detail=frozen)
 
     updated = supabase.table("leave_requests").update({"status": "Cancelled"}).eq("id", request_id).execute().data
     await log_audit_action(supabase, user_id=user["id"], action_type="LEAVE_CANCEL",
@@ -533,10 +548,9 @@ async def _decide(supabase: Client, user: dict, request_id: int, approve: bool, 
     if approve:
         # Approving makes the days leave rather than absences: not in a month
         # whose payroll is approved. Rejecting changes nothing there.
-        frozen = _frozen_months(supabase, _request_dates(supabase, req))
+        frozen = _frozen(supabase, _request_dates(supabase, req), "approved")
         if frozen:
-            raise HTTPException(status_code=409, detail=(
-                f"Payroll for {', '.join(frozen)} is approved, so leave on its days can no longer be approved."))
+            raise HTTPException(status_code=409, detail=frozen)
         # Balances may have moved since submission (another approval, an HR
         # adjustment). Approved leave alone must fit; pending ones do not
         # block, since this is the one being decided.

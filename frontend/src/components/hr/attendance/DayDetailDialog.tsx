@@ -28,7 +28,7 @@ export function DayDetailDialog({
   cell: DayCell; employeeId: number; employeeName: string; canEdit: boolean;
   // The viewer's own row: HR can't correct its own attendance.
   isOwn?: boolean;
-  // The month's payroll is approved: its attendance is frozen.
+  // This day is on or before its month's payroll approval: frozen.
   payrollApproved?: boolean;
   onClose: () => void;
 }) {
@@ -142,7 +142,7 @@ export function DayDetailDialog({
             <p className="text-xs text-text-muted">This is your own attendance. Another HR officer has to correct it.</p>
           )}
           {canEdit && !isOwn && payrollApproved && (
-            <p className="text-xs text-text-muted">Payroll for this month is approved, so its attendance can no longer be changed.</p>
+            <p className="text-xs text-text-muted">Payroll covering this day is approved, so its attendance can no longer be changed.</p>
           )}
 
           {editable && (

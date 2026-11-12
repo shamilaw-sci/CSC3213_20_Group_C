@@ -258,6 +258,8 @@ export interface AttendanceMonth {
   // whether this month's payroll is approved (attendance is then frozen).
   my_employee_id?: number | null;
   payroll_approved?: boolean;
+  // Days up to this date (YYYY-MM-DD) are read-only; later ones stay open.
+  payroll_frozen_through?: string | null;
 }
 
 // --- Payroll (GET /hr/payroll/run) ---
