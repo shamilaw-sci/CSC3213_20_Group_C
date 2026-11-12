@@ -126,6 +126,11 @@ def entitlement_for(rule: str, joined: Optional[date], year: int, full_days) -> 
     return fixed_entitlement(joined, year, full)
 
 
+def days_text(value) -> str:
+    """A day count for a message: 10, not 1E+1 (what normalize() alone gives)."""
+    return f"{Decimal(str(value)).normalize():f}"
+
+
 def carry_forward(previous_remaining: Decimal, cap) -> Decimal:
     """Unused days moved to next year, never negative, never over the cap."""
     return min(max(Decimal(previous_remaining), ZERO), Decimal(str(cap or 0)))
@@ -240,7 +245,7 @@ def check_request(
     total = sum((f for _, f in days), ZERO)
     cap = leave_type.max_days_per_request
     if cap is not None and total > Decimal(str(cap)):
-        check.errors.append(f"{leave_type.name} is at most {Decimal(str(cap)).normalize()} days per request; this is {total.normalize()}.")
+        check.errors.append(f"{leave_type.name} is at most {days_text(cap)} days per request; this is {days_text(total)}.")
 
     if leave_type.uses_balance:
         for year, wanted in sorted(days_by_year(days).items()):
@@ -251,14 +256,14 @@ def check_request(
                 )
             elif wanted > balance.available:
                 message = (
-                    f"Only {max(balance.available, ZERO).normalize()} days of {leave_type.name.lower()} are available in {year}; "
-                    f"this request needs {wanted.normalize()}."
+                    f"Only {days_text(max(balance.available, ZERO))} days of {leave_type.name.lower()} are available in {year}; "
+                    f"this request needs {days_text(wanted)}."
                 )
                 if balance.earned_to_date is not None and balance.earned_to_date < balance.entitled:
                     message += (
                         f" In the first year casual leave is earned as you go, one day per two complete months "
-                        f"worked (Shop and Office Employees Act s.6(4)(a)): {balance.earned_to_date.normalize()} "
-                        f"earned so far of {balance.entitled.normalize()} by year end."
+                        f"worked (Shop and Office Employees Act s.6(4)(a)): {days_text(balance.earned_to_date)} "
+                        f"earned so far of {days_text(balance.entitled)} by year end."
                     )
                 check.errors.append(message)
     return check

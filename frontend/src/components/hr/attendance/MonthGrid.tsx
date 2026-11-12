@@ -111,9 +111,11 @@ export function MonthGrid({ canEdit }: { canEdit: boolean }) {
         <span className="flex items-center gap-1.5"><span className="inline-block h-4 w-6 rounded bg-bg-subtle" />Weekend / day off</span>
       </div>
 
-      {canEdit && data?.payroll_approved && (
+      {canEdit && data?.payroll_frozen_through && (
         <p className="rounded-lg border border-border-brand bg-bg-subtle px-4 py-2.5 text-xs text-text-secondary">
-          {`Payroll for ${MONTH.format(new Date(year, month - 1, 1))} is approved, so this month's attendance is read-only.`}
+          {data.payroll_frozen_through >= data.days[data.days.length - 1].date
+            ? `Payroll for ${MONTH.format(new Date(year, month - 1, 1))} is approved, so this month's attendance is read-only.`
+            : `Payroll for ${MONTH.format(new Date(year, month - 1, 1))} was approved on ${SHORT.format(localDate(data.payroll_frozen_through))}, so attendance up to that day is read-only.`}
         </p>
       )}
 
@@ -230,7 +232,7 @@ export function MonthGrid({ canEdit }: { canEdit: boolean }) {
           employeeName={open.row.employee_name}
           canEdit={canEdit}
           isOwn={data?.my_employee_id === open.row.employee_id}
-          payrollApproved={!!data?.payroll_approved}
+          payrollApproved={!!data?.payroll_frozen_through && open.cell.date <= data.payroll_frozen_through}
           onClose={() => setOpen(null)}
         />
       )}

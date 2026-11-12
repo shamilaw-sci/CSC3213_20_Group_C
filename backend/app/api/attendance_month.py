@@ -19,7 +19,7 @@ from supabase import Client
 from app.core.security import require_any_permission, require_permission
 from app.core.supabase import get_supabase
 from app.services.attendance_month import build_month, month_days
-from app.services.payroll_status import payroll_approved
+from app.services.payroll_status import payroll_approved, payroll_frozen_through
 from app.services.work_calendar import COLOMBO
 
 router = APIRouter()
@@ -98,6 +98,9 @@ async def attendance_month(
         **result,
         "my_employee_id": mine[0]["id"] if mine else None,
         "payroll_approved": payroll_approved(supabase, month, year),
+        # Days up to this date are read-only; later days stay editable.
+        "payroll_frozen_through": (lambda t: t.isoformat() if t else None)(
+            payroll_frozen_through(supabase, month, year)),
     }
 
 
