@@ -12,7 +12,8 @@ import { RescueCasesService } from '@/services/rescue-cases.service';
 import { getErrorMessage } from '@/lib/utils';
 import { formatLKR } from '@/lib/formatters';
 import { CaseSuppliesForm } from './CaseSuppliesForm';
-import type { CaseAssignee, CaseEvent, CaseOut } from '@/types';
+import { ResolveCaseDialog } from './ResolveCaseDialog';
+import type { CaseAssignee, CaseEvent, CaseOut, CaseOutcome } from '@/types';
 
 const WHEN = new Intl.DateTimeFormat('en-LK', {
   day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit',
@@ -88,6 +89,7 @@ export function CaseTimelineDialog({ c, canManage, canIssueStock, onClose }: {
   const queryClient = useQueryClient();
   const [note, setNote] = useState('');
   const [recordingSupplies, setRecordingSupplies] = useState(false);
+  const [recordingOutcome, setRecordingOutcome] = useState(false);
 
   // Under the ['rescueCases'] prefix on purpose: the live board ping
   // invalidates it, so an open timeline follows moves made elsewhere.
@@ -105,6 +107,21 @@ export function CaseTimelineDialog({ c, canManage, canIssueStock, onClose }: {
     },
     onError: (err) => toast.error(getErrorMessage(err) || "Couldn't add the note."),
   });
+
+  // A case resolved before outcomes were recorded can be given one without
+  // reopening it; its resolve date is estimated by the backend.
+  const recordOutcome = useMutation({
+    mutationFn: ({ outcome, note }: { outcome: CaseOutcome; note: string }) =>
+      RescueCasesService.recordOutcome(c.id, outcome, note || undefined),
+    onSuccess: () => {
+      setRecordingOutcome(false);
+      toast.success('Outcome recorded');
+      // The board, this timeline and the outcome figures all change.
+      return queryClient.invalidateQueries({ queryKey: ['rescueCases'] });
+    },
+    onError: (err) => toast.error(getErrorMessage(err) || "Couldn't record the outcome."),
+  });
+  const needsOutcome = canManage && c.status === 'Resolved' && !c.outcome;
 
   // Stock Outs less their reversals.
   const suppliesCost = (data ?? []).reduce(
@@ -139,6 +156,30 @@ export function CaseTimelineDialog({ c, canManage, canIssueStock, onClose }: {
             </ol>
           )}
         </div>
+
+        {needsOutcome && (
+          <div className="flex items-center justify-between gap-3 rounded-md border border-amber-500/30 bg-amber-500/10 p-3">
+            <p className="text-xs text-text-secondary">
+              Resolved before outcomes were recorded. Add what happened so it counts in the reports.
+            </p>
+            <Button size="sm" onClick={() => setRecordingOutcome(true)}
+              className="shrink-0 bg-accent text-white hover:bg-accent/90">
+              Record outcome
+            </Button>
+          </div>
+        )}
+
+        {recordingOutcome && (
+          <ResolveCaseDialog
+            animalType={c.animal_type}
+            title={`Record outcome: ${c.animal_type} case`}
+            description="This case was resolved before outcomes were recorded. Its resolve date will be estimated from its last update."
+            confirmLabel="Record outcome"
+            busy={recordOutcome.isPending}
+            onConfirm={(outcome, note) => recordOutcome.mutate({ outcome, note })}
+            onClose={() => setRecordingOutcome(false)}
+          />
+        )}
 
         {canRecordSupplies && (
           <div className="border-t border-border-brand pt-3">

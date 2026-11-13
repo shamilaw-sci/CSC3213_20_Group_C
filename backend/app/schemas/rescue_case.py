@@ -112,6 +112,12 @@ class CaseOut(BaseModel):
     updated_at: datetime
 
 
+class OutcomeRecord(BaseModel):
+    """An outcome for a case resolved before outcomes were recorded (030)."""
+    outcome: CaseOutcome
+    outcome_note: Optional[str] = Field(None, max_length=2000)
+
+
 class CaseNoteCreate(BaseModel):
     body: str = Field(..., max_length=2000)
 
