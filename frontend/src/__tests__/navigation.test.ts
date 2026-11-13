@@ -12,7 +12,7 @@ const expectedItemsPerRole: Record<UserRole, string[]> = {
   'Admin': [
     'Overview', 'Employees', 'Attendance', 'Schedules & Holidays', 'Leave', 'Payroll', 'Overview', 'Ledger',
     'Reports', 'Stock', 'Issue', 'Returns',
-    'Upcoming Programs', 'Active Programs', 'Completed Programs', 'Applications', 'Shifts', 'Donation details', 'Case Hotspots', 'Case Triage', 'Field Dispatch', 'My Attendance', 'My Leave', 'System Admin',
+    'Upcoming Programs', 'Active Programs', 'Completed Programs', 'Applications', 'Shifts', 'Donation details', 'Case Hotspots', 'Case Triage', 'Field Dispatch', 'My Attendance', 'My Leave', 'My Payslips', 'System Admin',
     ...PERSONAL
   ],
   // Ledger is read-only for Director: it needs finance:read, while adding,
@@ -23,33 +23,35 @@ const expectedItemsPerRole: Record<UserRole, string[]> = {
   // Attendance: the monthly grid, read-only (hr:attendance:read, 2026-10-31).
   'Director': [
     'Overview', 'Attendance', 'Payroll', 'Overview', 'Ledger', 'Reports', 'Stock',
-    'Upcoming Programs', 'Active Programs', 'Completed Programs', 'Applications', 'Shifts', 'Donation details', 'Case Hotspots', 'Case Triage', 'Field Dispatch', 'My Attendance', 'My Leave', ...PERSONAL
+    'Upcoming Programs', 'Active Programs', 'Completed Programs', 'Applications', 'Shifts', 'Donation details', 'Case Hotspots', 'Case Triage', 'Field Dispatch', 'My Attendance', 'My Leave', 'My Payslips', ...PERSONAL
   ],
   // Applications and Shifts: volunteers:read, because HR vets volunteer
   // applications (volunteers:approve).
   'HR Officer': [
     'Overview', 'Employees', 'Attendance', 'Schedules & Holidays', 'Leave', 'Payroll', 'Applications', 'Shifts',
-    'Case Hotspots', 'Case Triage', 'Field Dispatch', 'My Attendance', 'My Leave', ...PERSONAL
+    'Case Hotspots', 'Case Triage', 'Field Dispatch', 'My Attendance', 'My Leave', 'My Payslips', ...PERSONAL
   ],
   // The three program pages are expected: programs:read was granted so the
   // program picker on the transaction form renders names rather than numeric
   // ids, and every program page is gated on that same permission.
+  // No Payroll: HR generates and the Director approves (confirmed
+  // 2026-11-11); Finance pays the approved payable in the Ledger.
   'Finance Officer': [
-    'Overview', 'Payroll', 'Overview', 'Ledger', 'Reports',
-    'Stock', 'Upcoming Programs', 'Active Programs', 'Completed Programs', 'Donation details', 'My Attendance', 'My Leave', ...PERSONAL
+    'Overview', 'Overview', 'Ledger', 'Reports',
+    'Stock', 'Upcoming Programs', 'Active Programs', 'Completed Programs', 'Donation details', 'My Attendance', 'My Leave', 'My Payslips', ...PERSONAL
   ],
   // Clinic and field operations: inventory, programs and rescue, no HR/finance.
   // Inventory through the Stock page only; Issue and Returns are for General
   // Staff and Admin (decided 2026-11-01).
   'Operations Lead': [
     'Overview', 'Stock', 'Upcoming Programs', 'Active Programs', 'Completed Programs', 'Applications', 'Shifts',
-    'Case Hotspots', 'Case Triage', 'Field Dispatch', 'My Attendance', 'My Leave', ...PERSONAL
+    'Case Hotspots', 'Case Triage', 'Field Dispatch', 'My Attendance', 'My Leave', 'My Payslips', ...PERSONAL
   ],
   // No Stock: General Staff issue and return through the Issue and Returns
   // pages only, and do not browse the catalogue or its movement log.
   'General Staff': [
     'Overview', 'Issue', 'Returns', 'Upcoming Programs', 'Active Programs', 'Completed Programs',
-    'Case Hotspots', 'Case Triage', 'Field Dispatch', 'My Attendance', 'My Leave', ...PERSONAL
+    'Case Hotspots', 'Case Triage', 'Field Dispatch', 'My Attendance', 'My Leave', 'My Payslips', ...PERSONAL
   ],
   // Technical administration only. The short list is the point: no payroll,
   // no ledger, no case data.

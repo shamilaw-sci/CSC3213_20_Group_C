@@ -141,16 +141,6 @@ export default function SettingsPage() {
                 </div>
               </div>
 
-              <div className="flex items-center justify-between p-4 rounded-lg bg-bg-subtle border border-border-brand">
-                <div className="space-y-0.5">
-                  <h4 className="text-sm font-semibold text-text-primary">Tabular Data Font scaling</h4>
-                  <p className="text-xs text-text-secondary">Enforce JetBrains Mono sizing rules for numerical records.</p>
-                </div>
-                <Switch 
-                  defaultChecked={true}
-                  className="data-[state=checked]:bg-[#EF9F27]"
-                />
-              </div>
             </CardContent>
           </Card>
         </TabsContent>
