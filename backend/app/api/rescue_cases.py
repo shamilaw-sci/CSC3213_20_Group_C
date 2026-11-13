@@ -5,7 +5,9 @@ from typing import Optional
 from datetime import date, datetime, time, timedelta, timezone
 from supabase import Client
 from fastapi import UploadFile, File
+from pydantic import BaseModel
 import logging
+from time import monotonic
 import uuid
 from app.core.security import require_permission
 from app.core.security import has_permission
@@ -639,6 +641,98 @@ async def add_case_note(
 
     author = _people(supabase, [current_user["id"]]).get(str(current_user["id"]))
     return {**note, "author": author}
+
+
+# --------------------------------------------------------------------------
+# Public impact numbers (confirmed 2026-11-13)
+# --------------------------------------------------------------------------
+#
+# Live totals for the homepage and the donate page, for anyone, signed in or
+# not. Totals only: no case, place, person or date below the year ever leaves
+# this route, and PublicImpact is the whole response, so adding a field is a
+# deliberate change the tests see. Died and Not found stay in the staff
+# reports; donation totals stay private.
+#
+# Read with get_public_supabase, which is service_role (RLS does not apply),
+# which is why the selects below name only the columns the totals need.
+#
+# Cached per year for IMPACT_CACHE_SECONDS: a busy homepage should not query
+# the database on every visit, and these numbers move slowly.
+
+IMPACT_CACHE_SECONDS = 600
+_impact_cache: dict[int, tuple[float, dict]] = {}
+
+
+class PublicImpact(BaseModel):
+    year: int
+    reported: int            # cases reported to us this year
+    cared_for: int           # of those, taken on by staff (Not found excluded)
+    rehomed: int             # resolved this year with this outcome
+    released: int
+    transferred: int
+    supplies_cost: float     # net cost of supplies used on rescue cases this year
+    as_of: datetime
+
+
+def _public_impact(supabase: Client, year: int) -> dict:
+    start = datetime(year, 1, 1, tzinfo=SRI_LANKA)
+    end = datetime(year + 1, 1, 1, tzinfo=SRI_LANKA)
+    reported = (
+        supabase.table("rescue_cases").select("status, outcome")
+        .gte("reported_at", start.isoformat()).lt("reported_at", end.isoformat())
+        .execute().data or []
+    )
+    resolved = (
+        supabase.table("rescue_cases").select("outcome")
+        .eq("status", CaseStatus.resolved.value)
+        .gte("resolved_at", start.isoformat()).lt("resolved_at", end.isoformat())
+        .execute().data or []
+    )
+    movements = _case_movements_in_year(supabase, year)
+    outcomes = [c.get("outcome") for c in resolved]
+    return {
+        "year": year,
+        "reported": len(reported),
+        "cared_for": sum(
+            1 for c in reported
+            if c.get("status") != CaseStatus.reported.value and c.get("outcome") != CaseOutcome.not_found.value
+        ),
+        "rehomed": outcomes.count(CaseOutcome.rehomed.value),
+        "released": outcomes.count(CaseOutcome.released.value),
+        "transferred": outcomes.count(CaseOutcome.transferred.value),
+        "supplies_cost": round(sum(
+            (-1 if m.get("transaction_type") == "Return" else 1) * float(m.get("total_cost") or 0)
+            for m in movements
+        ), 2),
+        "as_of": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def _case_movements_in_year(supabase: Client, year: int) -> list[dict]:
+    """Stock Outs on rescue cases and their reversals, dated this year."""
+    try:
+        return (
+            supabase.table("inventory_transactions").select("transaction_type, total_cost")
+            .not_.is_("rescue_case_id", "null")
+            .gte("transaction_date", f"{year}-01-01").lte("transaction_date", f"{year}-12-31")
+            .execute().data or []
+        )
+    except APIError as e:
+        if "rescue_case_id" in str(getattr(e, "message", "") or e):
+            return []  # before migration 031
+        raise
+
+
+@router.get("/impact", response_model=PublicImpact)
+async def get_public_impact(supabase: Client = Depends(get_public_supabase)):
+    """This year's rescue totals for the public site. No sign-in."""
+    year = datetime.now(SRI_LANKA).year
+    hit = _impact_cache.get(year)
+    if hit and monotonic() - hit[0] < IMPACT_CACHE_SECONDS:
+        return hit[1]
+    result = _public_impact(supabase, year)
+    _impact_cache[year] = (monotonic(), result)
+    return result
 
 
 @router.get("/outbreak-zones", response_model=list[OutbreakZoneOut])
