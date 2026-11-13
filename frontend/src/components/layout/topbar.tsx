@@ -3,8 +3,9 @@
 import { useState, useEffect, useRef } from 'react';
 import { useAuthStore } from '@/store/useAuthStore';
 import { useThemeStore } from '@/store/useThemeStore';
-import { Bell, Search, User, Menu, Settings, HelpCircle, LogOut, Globe, Sun, Moon } from 'lucide-react';
+import { Search, User, Menu, Settings, HelpCircle, LogOut, Globe, Sun, Moon } from 'lucide-react';
 import { CommandPalette } from '@/components/shared/command-palette';
+import { InboxBell } from '@/components/layout/InboxBell';
 import { useRouter } from 'next/navigation';
 
 interface TopbarProps {
@@ -16,11 +17,9 @@ export function Topbar({ onMenuToggle, title = "Overview" }: TopbarProps) {
   const router = useRouter();
   const { user, logout } = useAuthStore();
   const { theme, toggleTheme } = useThemeStore();
-  const [showNotifications, setShowNotifications] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
   const [showPalette, setShowPalette] = useState(false);
   
-  const notifRef = useRef<HTMLDivElement>(null);
   const profileRef = useRef<HTMLDivElement>(null);
 
   // Keyboard shortcut for ⌘K or Ctrl+K
@@ -38,9 +37,6 @@ export function Topbar({ onMenuToggle, title = "Overview" }: TopbarProps) {
   // Click outside listener
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
-      if (notifRef.current && !notifRef.current.contains(event.target as Node)) {
-        setShowNotifications(false);
-      }
       if (profileRef.current && !profileRef.current.contains(event.target as Node)) {
         setShowProfile(false);
       }
@@ -48,12 +44,6 @@ export function Topbar({ onMenuToggle, title = "Overview" }: TopbarProps) {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
-
-  const notifications = [
-    { id: 1, text: "New transaction approved by Director", time: "5 mins ago" },
-    { id: 2, text: "Annual medical inventory audit scheduled", time: "1 hour ago" },
-    { id: 3, text: "System database backup complete", time: "4 hours ago" }
-  ];
 
   return (
     <>
@@ -96,37 +86,8 @@ export function Topbar({ onMenuToggle, title = "Overview" }: TopbarProps) {
             <Globe className="w-5 h-5" />
           </button>
 
-          {/* Notification Bell */}
-          <div className="relative" ref={notifRef}>
-            <button 
-              onClick={() => setShowNotifications(!showNotifications)}
-              className="relative p-1.5 text-text-secondary hover:text-text-primary rounded-lg hover:bg-bg-subtle transition-colors"
-            >
-              <Bell className="w-5 h-5" />
-              <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-[#EF9F27]" />
-            </button>
-
-            {showNotifications && (
-              <div className="absolute right-0 mt-2 w-80 bg-surface border border-border-brand rounded-xl shadow-xl overflow-hidden animate-in fade-in duration-100">
-                <div className="px-4 py-2 border-b border-border-brand">
-                  <span className="text-xs font-semibold text-text-primary">Notifications</span>
-                </div>
-                <div className="divide-y divide-border-brand">
-                  {notifications.map((n) => (
-                    <div key={n.id} className="p-3 hover:bg-bg-subtle cursor-pointer">
-                      <p className="text-xs text-text-secondary">{n.text}</p>
-                      <span className="text-[10px] text-text-muted mt-1 block">{n.time}</span>
-                    </div>
-                  ))}
-                </div>
-                <div className="p-2 border-t border-border-brand text-center">
-                  <a href="#" className="text-[11px] text-[#EF9F27] hover:underline font-medium">
-                    View all notifications
-                  </a>
-                </div>
-              </div>
-            )}
-          </div>
+          {/* Inbox: what is waiting on you */}
+          <InboxBell />
 
           {/* User Profile Dropdown */}
           <div className="relative" ref={profileRef}>
