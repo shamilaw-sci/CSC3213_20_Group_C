@@ -121,9 +121,13 @@ class CaseEventOut(BaseModel):
 
     "reported" is never stored: it is the case's own reported_at, added to the
     front by GET /cases/{id}/timeline so older cases get one too. Its id is 0.
+
+    "supplies" and "supplies_reversed" are not stored here either: they are
+    the case's Stock Outs and their reversals (inventory_transactions,
+    migration 031), id = the movement's id.
     """
     id: int
-    event_type: Literal["reported", "note", "status", "assign", "outcome"]
+    event_type: Literal["reported", "note", "status", "assign", "outcome", "supplies", "supplies_reversed"]
     body: Optional[str] = None
     from_status: Optional[str] = None
     to_status: Optional[str] = None
@@ -131,7 +135,33 @@ class CaseEventOut(BaseModel):
     assignee: Optional[CaseAssignee] = None
     # Null for the public report and for authors whose account has gone.
     author: Optional[CaseAssignee] = None
+    # Supplies lines only.
+    item_name: Optional[str] = None
+    quantity: Optional[int] = None
+    cost: Optional[float] = None
     created_at: datetime
+
+
+class OutcomeLine(BaseModel):
+    outcome: CaseOutcome
+    cases: int
+    supplies_cost: float
+
+
+class CaseReport(BaseModel):
+    """Cases resolved in one month (Sri Lanka time), by outcome, with what
+    their supplies cost. A case counts in the month it was last resolved, and
+    all its supplies count with it, whenever they were issued."""
+    year: int
+    month: int
+    resolved: int
+    by_outcome: list[OutcomeLine]
+    supplies_cost: float
+    # None when nothing was resolved, rather than a misleading 0.
+    average_cost: Optional[float] = None
+    open_cases: int
+    # Resolved before outcomes were recorded (030); in no month's figures.
+    unrecorded_outcomes: int
 
 
 class RouteStop(BaseModel):

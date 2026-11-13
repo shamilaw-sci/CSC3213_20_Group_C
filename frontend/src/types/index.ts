@@ -478,7 +478,7 @@ export interface Transaction {
 // expense) and becomes the item's stored cost. Never a total.
 export type InventoryTransactionCreate = Omit<
   InventoryTransaction,
-  'id' | 'total_cost' | 'reverses_id' | 'reversed_by' | 'inventory_items' | 'programs'
+  'id' | 'total_cost' | 'reverses_id' | 'reversed_by' | 'inventory_items' | 'programs' | 'rescue_case'
 > & {
   unit_cost?: number;
 };
@@ -573,6 +573,10 @@ export interface InventoryTransaction {
   programs?: {
     program_name: string;
   };
+  // Supplies used on a rescue case (migration 031): Issue only, never with a
+  // program. rescue_case is filled by GET /inventory/transactions.
+  rescue_case_id?: string | null;
+  rescue_case?: { animal_type: string; status: string } | null;
 }
 
 // Response shape for GET /inventory/alerts/low-stock
@@ -671,14 +675,33 @@ export type CaseOutcome = (typeof CASE_OUTCOMES)[number];
 // 'reported' is the case itself, always first, with id 0.
 export interface CaseEvent {
   id: number;
-  event_type: 'reported' | 'note' | 'status' | 'assign' | 'outcome';
+  // 'supplies' / 'supplies_reversed': the case's Stock Outs and their
+  // reversals; id is the movement's id.
+  event_type: 'reported' | 'note' | 'status' | 'assign' | 'outcome' | 'supplies' | 'supplies_reversed';
   body?: string | null;
   from_status?: string | null;
   to_status?: string | null;
   outcome?: CaseOutcome | null;
   assignee?: CaseAssignee | null;
   author?: CaseAssignee | null;
+  // Supplies lines only.
+  item_name?: string | null;
+  quantity?: number | null;
+  cost?: number | null;
   created_at: string;
+}
+
+// GET /rescue_cases/report: cases resolved in one month, by outcome.
+export interface CaseReport {
+  year: number;
+  month: number;
+  resolved: number;
+  by_outcome: { outcome: CaseOutcome; cases: number; supplies_cost: number }[];
+  supplies_cost: number;
+  average_cost: number | null;
+  open_cases: number;
+  // Resolved before outcomes were recorded; in no month's figures.
+  unrecorded_outcomes: number;
 }
 
 export interface CaseAssignee {

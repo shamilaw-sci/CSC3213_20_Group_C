@@ -56,6 +56,12 @@ _MIGRATION_020_MESSAGE = (
     "backend/db/migrations/020_inventory_batches.sql in Supabase, then try again."
 )
 
+# Shown when a feature needs db/migrations/031_case_supplies.sql.
+_MIGRATION_031_MESSAGE = (
+    "Issuing to a rescue case needs the case supplies update. Run "
+    "backend/db/migrations/031_case_supplies.sql in Supabase, then try again."
+)
+
 # Shown when a feature needs db/migrations/019_inventory_fixes.sql.
 _MIGRATION_019_MESSAGE = (
     "This needs the inventory database update. Run "
@@ -413,6 +419,19 @@ async def get_transactions(
             if not _is_missing_019_column(e):
                 raise
 
+    # Name the rescue case a movement was used on (031). Fetched separately
+    # rather than embedded, so the list still loads before the migration.
+    case_ids = sorted({str(row["rescue_case_id"]) for row in rows if row.get("rescue_case_id")})
+    if case_ids:
+        cases = (
+            supabase.table("rescue_cases").select("id, animal_type, status").in_("id", case_ids).execute().data
+            or []
+        )
+        by_id = {c["id"]: {"animal_type": c["animal_type"], "status": c["status"]} for c in cases}
+        for row in rows:
+            if row.get("rescue_case_id"):
+                row["rescue_case"] = by_id.get(str(row["rescue_case_id"]))
+
     # Show each Stock In's batch number. Skipped quietly before migration 020.
     restock_ids = [row["id"] for row in rows if row.get("transaction_type") == "Restock" and row.get("id") is not None]
     if restock_ids:
@@ -485,6 +504,7 @@ def _record_movement(
     expire_date: Optional[str] = None,
     return_cost: Optional[float] = None,
     batch_number: Optional[str] = None,
+    rescue_case_id: Optional[str] = None,
 ) -> tuple[dict, int, int]:
     """
     Move the stock and write the movement row as one step. Returns
@@ -521,6 +541,8 @@ def _record_movement(
         params["p_expire_date"] = expire_date
     if batch_number is not None:
         params["p_batch_number"] = batch_number
+    if rescue_case_id is not None:
+        params["p_rescue_case_id"] = rescue_case_id
     try:
         result = supabase.rpc(_MOVEMENT_RPC, params).execute()
         row = result.data[0] if isinstance(result.data, list) else result.data
@@ -541,7 +563,10 @@ def _record_movement(
             "017_stock_in_price.sql and 019_inventory_fixes.sql",
             _MOVEMENT_RPC,
         )
-        # A batch number needs 020's function, a batch expiry 019's column.
+        # A case needs 031's function, a batch number 020's, a batch expiry
+        # 019's column.
+        if rescue_case_id is not None:
+            raise HTTPException(status_code=503, detail=_MIGRATION_031_MESSAGE)
         if batch_number is not None:
             raise HTTPException(status_code=503, detail=_MIGRATION_020_MESSAGE)
         if expire_date is not None:
@@ -618,6 +643,19 @@ async def create_transaction(
     # Stock In is new stock entering the organisation, never a program's
     # usage. A program_id on it would wrongly count as that program's cost.
     program_id = None if tx_type == "Restock" else transaction.program_id
+    case_id = str(transaction.rescue_case_id) if transaction.rescue_case_id else None
+
+    # Supplies used on a rescue case (confirmed 2026-11-13): Issue only, since
+    # what is used on an animal is consumed, and to a case or a program, not
+    # both. A mistake is undone with Reverse, which keeps the case.
+    if case_id is not None:
+        if tx_type != "Issue":
+            raise HTTPException(
+                status_code=400,
+                detail="Supplies can only be issued to a rescue case. Undo a mistake with Reverse on the Stock page.",
+            )
+        if program_id is not None:
+            raise HTTPException(status_code=400, detail="Issue to a program or to a rescue case, not both.")
 
     # A price paid only exists for stock bought. Issue and Return are always
     # costed at the stored unit cost (programs.total_cost relies on that).
@@ -638,7 +676,7 @@ async def create_transaction(
     if not can_manage:
         if tx_type == "Restock":
             raise HTTPException(status_code=403, detail="Stock In is done from the Stock page.")
-        if tx_type == "Issue" and program_id is None:
+        if tx_type == "Issue" and program_id is None and case_id is None:
             raise HTTPException(status_code=400, detail="Choose the program the stock is issued to.")
     # A return always names the program it comes back from. Unused stock
     # with no program is recorded as Stock In instead.
@@ -649,7 +687,7 @@ async def create_transaction(
         )
     # Stock Out with no program is a stock adjustment (a write-off, a
     # breakage): allowed, but it must say why.
-    if tx_type == "Issue" and program_id is None and not transaction.notes:
+    if tx_type == "Issue" and program_id is None and case_id is None and not transaction.notes:
         raise HTTPException(status_code=400, detail="A stock adjustment needs a reason in the notes.")
 
     # --- Checks that need the database -----------------------------------
@@ -668,6 +706,14 @@ async def create_transaction(
                     f"'{program.get('program_name')}' is {normalize_status(program.get('status'))}."
                 ),
             )
+
+    if case_id is not None:
+        cases = supabase.table("rescue_cases").select("id, status").eq("id", case_id).limit(1).execute().data
+        if not cases:
+            raise HTTPException(status_code=404, detail="Rescue case not found")
+        # Open cases only, as stock goes only to Active programs.
+        if cases[0].get("status") == "Resolved":
+            raise HTTPException(status_code=400, detail="This case is resolved. Reopen it to record more supplies.")
 
     return_cost = None
     if tx_type == "Return":
@@ -703,6 +749,7 @@ async def create_transaction(
         expire_date=transaction.expire_date.isoformat() if transaction.expire_date else None,
         return_cost=return_cost,
         batch_number=transaction.batch_number,
+        rescue_case_id=case_id,
     )
     created = _map_transaction_row(created_row)
 
