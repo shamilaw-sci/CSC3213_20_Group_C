@@ -22,6 +22,7 @@ import Swal from 'sweetalert2';
 import { useThemeStore } from '@/store/useThemeStore';
 import { useAuthStore } from '@/store/useAuthStore';
 import { hasPermission } from '@/lib/permissions';
+import { getErrorMessage } from '@/lib/utils';
 
 export default function AdminPage() {
   const [users, setUsers] = useState<any[]>([]);
@@ -61,7 +62,7 @@ export default function AdminPage() {
       setEditingUser(null);
       fetchUsers();
     } catch (err) {
-      toast.error('Failed to update user role');
+      toast.error(getErrorMessage(err) || 'Failed to update user role');
     }
   };
 
@@ -85,7 +86,7 @@ export default function AdminPage() {
           toast.success('User deleted successfully');
           fetchUsers();
         } catch (err) {
-          toast.error('Failed to delete user');
+          toast.error(getErrorMessage(err) || 'Failed to delete user');
         }
       }
     });
