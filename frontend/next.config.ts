@@ -4,6 +4,7 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: process.cwd(),
   },
+  allowedDevOrigins: ['shout-defuse-flannels.ngrok-free.dev'],
   async redirects() {
     return [
       { source: '/hr', destination: '/hr/employees', permanent: false },
