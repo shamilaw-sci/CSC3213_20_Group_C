@@ -21,6 +21,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from supabase import Client
 
+from app.services.notifications import date_range, notify, users_of_employees
 from app.core.audit import log_audit_action
 from app.core.permissions import has_permission
 from app.core.security import get_current_user, require_permission
@@ -582,7 +583,23 @@ async def _decide(supabase: Client, user: dict, request_id: int, approve: bool, 
     updated = supabase.table("leave_requests").update(update).eq("id", request_id).execute().data
     await log_audit_action(supabase, user_id=user["id"], action_type="LEAVE_APPROVE" if approve else "LEAVE_REJECT",
                            table_name="leave_requests", old_payload=_audit(req), new_payload=update)
+    _notify_leave_decided(supabase, user, req, approve, note)
     return updated[0] if updated else {**req, **update}
+
+
+def _notify_leave_decided(supabase: Client, user: dict, req: dict, approve: bool, note: Optional[str]) -> None:
+    """Tell the employee (migration 032). Fail-soft, like the write itself."""
+    try:
+        kind = _leave_type(supabase, req["leave_type_id"]).get("name") or "Leave"
+    except Exception:
+        kind = "Leave"
+    note = (note or "").strip()
+    body = f"{kind}, {date_range(req['start_date'], req['end_date'])}."
+    if note:
+        body += f" {'Reason' if not approve else 'Note'}: {note}"
+    notify(supabase, users_of_employees(supabase, [req["employee_id"]]), actor_id=user["id"],
+           kind="leave_decided", title=f"Your leave was {'approved' if approve else 'rejected'}",
+           body=body, href="/me/leave")
 
 
 @router.post("/requests/{request_id}/approve")

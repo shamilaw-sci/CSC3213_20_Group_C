@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, HTTPException, Depends
 from app.core.supabase import get_supabase
 from app.schemas.hr import (EmployeeProfile, EmployeeProfileCreate, EmployeeProfileUpdate, AttendanceLog, AttendanceLogCreate, AttendanceLogUpdate,PayrollLedger, SRI_LANKA, CorrectionRequestIn, CorrectionDecisionIn)
@@ -8,6 +10,7 @@ from app.core.security import require_any_permission, require_permission
 from app.core.audit import log_audit_action
 from app.core.permissions import UserRole
 from app.services.employees import require_active
+from app.services.notifications import notify, short_date, users_of_employees
 from app.services.payroll_status import is_frozen, month_close
 from app.services.payroll_engine import PayLine, compute_run, drift, month_bounds
 from app.services.reports import PDFGenerationError, generate_pdf
@@ -18,6 +21,7 @@ from fastapi import HTTPException
 import io
 import csv
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 def get_employee_by_user_id(supabase: Client, user_id: str):
@@ -811,6 +815,11 @@ async def _decide_correction(supabase: Client, user: dict, request_id: int, appr
     await log_audit_action(supabase, user_id=user["id"],
                            action_type="ATTENDANCE_CORRECTION_APPROVE" if approve else "ATTENDANCE_CORRECTION_REJECT",
                            table_name=_CORRECTIONS, old_payload=req, new_payload=update)
+    # Tell the employee (migration 032); fail-soft.
+    notify(supabase, users_of_employees(supabase, [req["employee_id"]]), actor_id=user["id"],
+           kind="correction_decided",
+           title=f"Your attendance correction for {short_date(target)} was {'approved' if approve else 'rejected'}",
+           body=f"{'Note' if approve else 'Reason'}: {note}" if note else None, href="/me/attendance")
     return updated[0] if updated else {**req, **update}
 
 
@@ -1252,6 +1261,17 @@ async def approve_payroll(
         old_payload=None,
         new_payload=_audit_run(run),
     )
+    # A Draft just approved: everyone on it has a payslip (migration 032).
+    if pending.get("status") == "Draft" and run.get("status") == "Approved":
+        try:
+            employee_ids = [line["employee_id"] for line in _stored_lines(supabase, run_id)]
+        except Exception:
+            logger.exception("Could not list payroll run %s to send payslip notices", run_id)
+            employee_ids = []
+        notify(supabase, users_of_employees(supabase, employee_ids), actor_id=user["id"],
+               kind="payslip_ready",
+               title=f"Your payslip for {_period(pending['payroll_month'], pending['payroll_year'])} is ready",
+               href="/me/payslips")
     return run
 
 
