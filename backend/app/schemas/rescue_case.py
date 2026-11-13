@@ -154,6 +154,8 @@ class CaseReport(BaseModel):
     all its supplies count with it, whenever they were issued."""
     year: int
     month: int
+    # Reported in the month, whatever has happened to them since.
+    reported: int = 0
     resolved: int
     by_outcome: list[OutcomeLine]
     supplies_cost: float

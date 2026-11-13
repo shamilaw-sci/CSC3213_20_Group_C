@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+
+{#
+  Renders build_monthly_report() from app/services/monthly_report.py. Each
+  section comes from what the app already computes, so the figures match the
+  dashboard card, Finance > Reports and the Stock page.
+#}
+
+{% macro change(pct) -%}
+  {%- if pct is none -%}&mdash;{%- else -%}{{ "%+.1f" | format(pct) }}%{%- endif -%}
+{%- endmacro %}
+
+{% block styles %}
+    h2 {
+        font-size: 11pt;
+        color: #2c5f2d;
+        margin: 18px 0 2px 0;
+    }
+    .note { font-size: 8pt; color: #666666; margin: 0 0 4px 0; }
+    .num { text-align: right; }
+    th.num { text-align: right; }
+    tr.total td { font-weight: bold; border-top: 1px solid #2c5f2d; }
+    .kpi td { border: 1px solid #dddddd; padding: 8px; }
+    .kpi .value { font-size: 13pt; font-weight: bold; color: #1a1a1a; }
+    .kpi .label { font-size: 7.5pt; color: #666666; }
+    .banner { background-color: #fff4e5; border: 1px solid #f0c27b; padding: 6px 8px; font-size: 8.5pt; }
+{% endblock %}
+
+{% block content %}
+
+<p><strong>Period:</strong> {{ r.first }} to {{ r.last }}
+   &nbsp;&middot;&nbsp; All amounts in Sri Lankan Rupees (LKR).</p>
+{% if r.to_date %}
+<p class="banner"><strong>Month to date.</strong> {{ r.period }} is not over: these figures run to {{ r.last }} and will change.</p>
+{% endif %}
+
+{# ------------------------------------------------------------------ #}
+<h2>Rescue</h2>
+{% set c = r.rescue %}
+<table class="kpi">
+    <tr>
+        <td width="25%"><div class="value">{{ c.reported }}</div><div class="label">CASES REPORTED</div></td>
+        <td width="25%"><div class="value">{{ c.resolved }}</div><div class="label">CASES RESOLVED</div></td>
+        <td width="25%"><div class="value">{{ c.supplies_cost | amount }}</div><div class="label">SUPPLIES COST (RESOLVED CASES)</div></td>
+        <td width="25%"><div class="value">{% if c.average_cost is none %}&mdash;{% else %}{{ c.average_cost | amount }}{% endif %}</div><div class="label">AVERAGE PER RESOLVED CASE</div></td>
+    </tr>
+</table>
+{% if c.by_outcome %}
+<table>
+    <tr><th width="50%">Outcome</th><th width="20%" class="num">Cases</th><th width="30%" class="num">Supplies cost</th></tr>
+    {% for o in c.by_outcome %}
+    <tr><td>{{ o.outcome }}</td><td class="num">{{ o.cases }}</td><td class="num">{{ o.supplies_cost | amount }}</td></tr>
+    {% endfor %}
+</table>
+{% else %}
+<p class="note">No cases were resolved in this period.</p>
+{% endif %}
+<p class="note">A case counts in the month it was resolved, with all its supplies. {{ c.open_cases }} case{{ '' if c.open_cases == 1 else 's' }} open at the time of this report.
+{%- if c.unrecorded_outcomes %} {{ c.unrecorded_outcomes }} older resolved case{{ ' has' if c.unrecorded_outcomes == 1 else 's have' }} no outcome recorded.{% endif %}</p>
+
+{# ------------------------------------------------------------------ #}
+<h2>Finance</h2>
+{% set s = r.finance.summary %}
+<table>
+    <tr>
+        <th width="31%">&nbsp;</th>
+        <th width="25%" class="num">This period</th>
+        <th width="25%" class="num">Previous period</th>
+        <th width="19%" class="num">Change</th>
+    </tr>
+    <tr>
+        <td>Income</td>
+        <td class="num">{{ s.current.income | amount }}</td>
+        <td class="num">{{ s.previous.income | amount }}</td>
+        <td class="num">{{ change(s.change.income_pct) }}</td>
+    </tr>
+    <tr>
+        <td>Expenditure</td>
+        <td class="num">{{ s.current.expense | amount }}</td>
+        <td class="num">{{ s.previous.expense | amount }}</td>
+        <td class="num">{{ change(s.change.expense_pct) }}</td>
+    </tr>
+    <tr class="total">
+        <td>Net</td>
+        <td class="num">{{ s.current.net | amount }}</td>
+        <td class="num">{{ s.previous.net | amount }}</td>
+        <td class="num">&nbsp;</td>
+    </tr>
+</table>
+<p class="note">Compared with {{ r.finance.previous.start }} to {{ r.finance.previous.end }}{% if r.to_date %}, the same days of the previous month{% endif %}.
+Includes pending income and unpaid expenses, as on Finance &gt; Reports.</p>
+
+{% set d = r.finance.donations %}
+<p><strong>Donations received:</strong> {{ d.count }} donation{{ '' if d.count == 1 else 's' }}, {{ d.total | amount }}
+   ({{ d.program | amount }} for programs, {{ d.general | amount }} general).</p>
+
+{% if r.finance.programs %}
+<table>
+    <tr><th width="46%">Program</th><th width="18%" class="num">Income</th><th width="18%" class="num">Expenditure</th><th width="18%" class="num">Net</th></tr>
+    {% for p in r.finance.programs %}
+    <tr><td>{{ p.program_name }}</td><td class="num">{{ p.income | amount }}</td><td class="num">{{ p.expense | amount }}</td><td class="num">{{ p.net | amount }}</td></tr>
+    {% endfor %}
+</table>
+{% if r.finance.more_programs %}<p class="note">And {{ r.finance.more_programs }} more on Finance &gt; Reports.</p>{% endif %}
+{% endif %}
+
+{# ------------------------------------------------------------------ #}
+<h2>People</h2>
+{% set pe = r.people %}
+<table>
+    <tr><td width="60%">Active employees</td><td class="num">{{ pe.headcount }}</td></tr>
+    <tr><td>Joined this period</td><td class="num">{{ pe.joined }}</td></tr>
+    <tr><td>Approved leave taken (days)</td><td class="num">{{ "%g" | format(pe.leave_days) }}</td></tr>
+    <tr><td>Payroll for {{ r.period }}</td>
+        <td class="num">{% if pe.payroll %}{{ pe.payroll.total | amount }} ({{ pe.payroll.status }}){% else %}Not generated yet{% endif %}</td></tr>
+</table>
+
+{# ------------------------------------------------------------------ #}
+<h2>Stock</h2>
+{% set st = r.stock %}
+<table>
+    <tr><td width="60%">Stock issued this period</td><td class="num">{{ st.issued_total | amount }}</td></tr>
+    <tr><td>&nbsp;&nbsp;To programs</td><td class="num">{{ st.issued.programs | amount }}</td></tr>
+    <tr><td>&nbsp;&nbsp;To rescue cases</td><td class="num">{{ st.issued.cases | amount }}</td></tr>
+    <tr><td>&nbsp;&nbsp;Adjustments (write-offs, breakages)</td><td class="num">{{ st.issued.adjustments | amount }}</td></tr>
+    <tr><td>Returned or reversed this period</td><td class="num">{{ st.returned | amount }}</td></tr>
+    <tr class="total"><td>Value on hand now</td><td class="num">{{ st.value_on_hand | amount }}</td></tr>
+</table>
+<p class="note">Now: {{ st.low_stock_count }} item{{ '' if st.low_stock_count == 1 else 's' }} below reorder level;
+{{ st.expiring_count }} expired or expiring within 30 days ({{ st.expired_count }} already expired).
+Value on hand and these alerts are as at the time of this report, not the month end.</p>
+{% if st.low_stock %}
+<table>
+    <tr><th width="60%">Lowest stock</th><th width="20%" class="num">In stock</th><th width="20%" class="num">Reorder level</th></tr>
+    {% for i in st.low_stock %}
+    <tr><td>{{ i.item_name }}</td><td class="num">{{ i.current_stock }}</td><td class="num">{{ i.reorder_level }}</td></tr>
+    {% endfor %}
+</table>
+{% endif %}
+
+{% endblock %}

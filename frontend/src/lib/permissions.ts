@@ -48,7 +48,9 @@ export type Permission =
   // comment silently corrupts what it thinks the backend declared.
   | 'volunteers:read'
   | 'volunteers:approve'
-  | 'volunteers:assign';
+  | 'volunteers:assign'
+  // The monthly management report (Admin and Director).
+  | 'reports:monthly';
 
 // NOTE: Must stay in sync with backend/app/core/permissions.py
 export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
@@ -59,7 +61,8 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'inventory:read', 'inventory:manage', 'inventory:issue',
     'programs:read', 'programs:manage', 'admin:users', 'audit:read',
     'rescue:read', 'rescue:manage', 'rescue:assign',
-    'volunteers:read', 'volunteers:approve', 'volunteers:assign'
+    'volunteers:read', 'volunteers:approve', 'volunteers:assign',
+    'reports:monthly'
   ],
   // volunteers:approve but not :assign — oversight of who the organisation
   // takes on, without running the shift rota. Consistent with this role's
@@ -72,7 +75,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'hr:attendance:read',
     'finance:read', 'payroll:approve', 'programs:read',
     'inventory:read', 'inventory:manage', 'audit:read', 'rescue:read' , 'rescue:assign',
-    'volunteers:read', 'volunteers:approve'
+    'volunteers:read', 'volunteers:approve', 'reports:monthly'
   ],
   // Vetting and onboarding a person is squarely HR, so this role approves
   // volunteer applications. It does not staff shifts — that is operations.

@@ -540,6 +540,12 @@ async def get_case_report(
 ):
     """Rescue outcomes for one month: cases resolved, by outcome, and what
     their supplies cost. Same gate as the board. Pure read, not audited."""
+    return case_report(supabase, year, month)
+
+
+def case_report(supabase: Client, year: int, month: int) -> dict:
+    """GET /report's figures; also the rescue section of the monthly report
+    (app/services/monthly_report.py)."""
     start = datetime(year, month, 1, tzinfo=SRI_LANKA)
     end = datetime(year + (month == 12), month % 12 + 1, 1, tzinfo=SRI_LANKA)
     resolved = (
@@ -574,9 +580,15 @@ async def get_case_report(
         .eq("status", CaseStatus.resolved.value).is_("outcome", "null")
         .execute().data or []
     )
+    reported = (
+        supabase.table("rescue_cases").select("id")
+        .gte("reported_at", start.isoformat()).lt("reported_at", end.isoformat())
+        .execute().data or []
+    )
     return {
         "year": year,
         "month": month,
+        "reported": len(reported),
         "resolved": len(resolved),
         "by_outcome": [
             {**line, "supplies_cost": round(line["supplies_cost"], 2)} for line in by_outcome.values()

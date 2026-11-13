@@ -73,6 +73,10 @@ class Permission(str, Enum):
     # it on either alone creates the dead end where an HR Officer approves
     # someone and then cannot reach them.
     VOLUNTEERS_ASSIGN = 'volunteers:assign'
+    # The monthly management report: finance, payroll totals, rescue and stock
+    # in one PDF. For the roles that see across every department (confirmed
+    # 2026-11-13); Finance Officer keeps the Finance report.
+    REPORTS_MONTHLY = 'reports:monthly'
 
 # NOTE: Must stay in sync with frontend/src/lib/permissions.ts
 ROLE_PERMISSIONS = {
@@ -84,7 +88,8 @@ ROLE_PERMISSIONS = {
         Permission.INVENTORY_READ.value, Permission.INVENTORY_MANAGE.value, Permission.INVENTORY_ISSUE.value,
         Permission.PROGRAMS_READ.value, Permission.PROGRAMS_MANAGE.value, Permission.ADMIN_USERS.value, Permission.AUDIT_READ.value,
         Permission.RESCUE_READ.value, Permission.RESCUE_MANAGE.value, Permission.RESCUE_ASSIGN.value,
-        Permission.VOLUNTEERS_READ.value, Permission.VOLUNTEERS_APPROVE.value, Permission.VOLUNTEERS_ASSIGN.value
+        Permission.VOLUNTEERS_READ.value, Permission.VOLUNTEERS_APPROVE.value, Permission.VOLUNTEERS_ASSIGN.value,
+        Permission.REPORTS_MONTHLY.value
     ],
     # volunteers:approve but not :assign — oversight of who the organisation
     # takes on, without running the shift rota. Consistent with the rest of this
@@ -98,7 +103,8 @@ ROLE_PERMISSIONS = {
         Permission.FINANCE_READ.value, Permission.PAYROLL_APPROVE.value, Permission.PROGRAMS_READ.value,
         Permission.INVENTORY_READ.value, Permission.INVENTORY_MANAGE.value, Permission.AUDIT_READ.value,
         Permission.RESCUE_READ.value, Permission.RESCUE_ASSIGN.value,
-        Permission.VOLUNTEERS_READ.value, Permission.VOLUNTEERS_APPROVE.value
+        Permission.VOLUNTEERS_READ.value, Permission.VOLUNTEERS_APPROVE.value,
+        Permission.REPORTS_MONTHLY.value
     ],
     # Vetting and onboarding a person is squarely HR, so this role approves
     # applications. It does not staff shifts — that is operations.

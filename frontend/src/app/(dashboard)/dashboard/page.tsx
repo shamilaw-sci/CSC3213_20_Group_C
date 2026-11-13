@@ -15,6 +15,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import Link from 'next/link';
 import { hasPermission } from '@/lib/permissions';
 import { RescueOutcomesCard } from '@/components/cases/RescueOutcomesCard';
+import { MonthlyReportCard } from '@/components/reports/MonthlyReportCard';
 
 export default function DashboardPage() {
   const { user } = useAuthStore();
@@ -42,6 +43,12 @@ export default function DashboardPage() {
 function RescueOutcomesForRole() {
   const { user } = useAuthStore();
   return hasPermission(user?.role || '', 'rescue:read') ? <RescueOutcomesCard /> : null;
+}
+
+// The monthly management report download: Admin and Director.
+function MonthlyReportForRole() {
+  const { user } = useAuthStore();
+  return hasPermission(user?.role || '', 'reports:monthly') ? <MonthlyReportCard /> : null;
 }
 
 function AdminDashboard() {
@@ -133,6 +140,7 @@ function AdminDashboard() {
           )}
         </CardContent>
       </Card>
+      <MonthlyReportForRole />
       <RescueOutcomesForRole />
     </div>
   );
@@ -242,6 +250,7 @@ function DirectorDashboard() {
           </CardContent>
         </Card>
       </div>
+      <MonthlyReportForRole />
       <RescueOutcomesForRole />
     </div>
   );
