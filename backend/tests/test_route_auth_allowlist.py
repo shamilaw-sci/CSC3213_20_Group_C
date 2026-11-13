@@ -36,6 +36,8 @@ PUBLIC_ROUTES = {
     ("POST", "/api/rescue_cases/upload-photo"): "photo upload step of the public report form",
     ("GET", "/api/rescue_cases/geo"): "public outbreak map; coordinates rounded to 3 dp, no case details",
     ("GET", "/api/rescue_cases/outbreak-zones"): "public outbreak map; active zones only",
+    ("GET", "/api/rescue_cases/impact"):
+        "public site impact numbers; this year's totals only, no case details",
     ("POST", "/api/volunteers/apply"): "public volunteer application form",
     ("GET", "/api/volunteers/my-assignments/{token}"):
         "volunteers have no login; the link token is the credential",

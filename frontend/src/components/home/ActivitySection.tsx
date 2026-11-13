@@ -1,6 +1,7 @@
 'use client';
 
 import RecentRescueActivity from './RecentRescueActivity';
+import ImpactNumbers from './ImpactNumbers';
 import { useScrollReveal } from './useScrollReveal';
 
 export default function ActivitySection() {
@@ -22,6 +23,8 @@ export default function ActivitySection() {
             Cases reported by the public over the last 30 days, and where they stand today.
           </p>
         </div>
+
+        <ImpactNumbers />
 
         <RecentRescueActivity />
       </div>

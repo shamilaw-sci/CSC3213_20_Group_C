@@ -20,6 +20,18 @@ export interface CaseStatusUpdatePayload {
   outcome_note?: string;
 }
 
+// Matches PublicImpact in backend/app/api/rescue_cases.py: totals only.
+export interface PublicImpact {
+  year: number;
+  reported: number;
+  cared_for: number;
+  rehomed: number;
+  released: number;
+  transferred: number;
+  supplies_cost: number;
+  as_of: string;
+}
+
 export interface OutbreakZone {
   id: string;
   animal_type: string;
@@ -99,6 +111,12 @@ export const RescueCasesService = {
 
   getReport: async (year: number, month: number) => {
     const response = await api.get<CaseReport>('/rescue_cases/report', { params: { year, month } });
+    return response.data;
+  },
+
+  // This year's public totals (GET /rescue_cases/impact, no sign-in).
+  getImpact: async () => {
+    const response = await api.get<PublicImpact>('/rescue_cases/impact');
     return response.data;
   },
 

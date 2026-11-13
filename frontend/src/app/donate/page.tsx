@@ -1,5 +1,6 @@
 "use client";
 
+import ImpactNumbers from "@/components/home/ImpactNumbers";
 import { Suspense, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
@@ -163,6 +164,7 @@ function DonateForm() {
           <p className="text-base md:text-lg text-white/85 max-w-xl leading-relaxed">
             Vets For Future is the first and only organization in Sri Lanka specializing in humane animal population control. Every donation goes directly toward sterilization, vaccination, and free clinic care.
           </p>
+          <ImpactNumbers variant="compact" />
         </div>
       </section>
 
