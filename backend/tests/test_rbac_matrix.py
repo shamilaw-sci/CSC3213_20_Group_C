@@ -664,3 +664,35 @@ def test_system_administrator_cannot_promote_itself_to_admin():
     with acting_as("System Administrator", tables=tables):
         response = _request("PUT", f"/api/auth/users/{USER_ID}/role", json={"role_id": 1})
     assert response.status_code == 403
+
+
+# --------------------------------------------------------------------------
+# Deleting Admin accounts: Admin only
+# --------------------------------------------------------------------------
+
+def _user_row(role_name):
+    return {"id": OTHER_USER_ID, "email": "target@vff.test", "role_id": 1,
+            "created_at": "2026-01-01T00:00:00+00:00", "roles": {"role_name": role_name}}
+
+
+@pytest.mark.parametrize("role", ALL_ROLES)
+def test_only_admin_may_delete_an_admin_account(role):
+    """admin:users reaches the delete route, but an Admin target also needs admin:roles.
+
+    Otherwise a System Administrator could delete every Admin and leave nobody
+    able to change roles.
+    """
+    tables = {"users": {"select": [_user_row("Admin")], "delete": [_user_row("Admin")]}}
+    with acting_as(role, tables=tables):
+        response = _request("DELETE", f"/api/auth/users/{OTHER_USER_ID}")
+    if role == "Admin":
+        assert response.status_code == 200
+    else:
+        assert response.status_code == 403
+
+
+def test_system_administrator_may_still_delete_non_admin_accounts():
+    tables = {"users": {"select": [_user_row("General Staff")], "delete": [_user_row("General Staff")]}}
+    with acting_as("System Administrator", tables=tables):
+        response = _request("DELETE", f"/api/auth/users/{OTHER_USER_ID}")
+    assert response.status_code == 200

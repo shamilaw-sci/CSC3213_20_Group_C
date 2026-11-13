@@ -6,6 +6,7 @@ from app.infrastructure.repositories import SupabaseUserRepository
 from app.application.use_cases import RegisterUseCase, LoginUseCase
 from app.core.security import require_permission
 from app.core.audit import log_audit_action
+from app.core.permissions import Permission, UserRole, has_permission
 
 router = APIRouter()
 
@@ -143,10 +144,18 @@ async def delete_user(
     try:
         # The row is about to stop existing, so the audit entry is the only
         # remaining record of what was deleted.
-        existing = supabase.table("users").select("id, email, role_id, created_at").eq("id", user_id).execute()
+        existing = supabase.table("users").select("id, email, role_id, created_at, roles(role_name)").eq("id", user_id).execute()
         if not existing.data:
             raise HTTPException(status_code=404, detail="User not found")
         old_row = existing.data[0]
+        target_role = (old_row.pop("roles", None) or {}).get("role_name")
+
+        # Only Admin may delete an Admin account. admin:users alone would let a
+        # System Administrator remove every Admin and leave nobody able to
+        # change roles, since that needs admin:roles too.
+        caller_role = (current_user.get("roles") or {}).get("role_name") or ""
+        if target_role == UserRole.ADMIN.value and not has_permission(caller_role, Permission.ADMIN_ROLES.value):
+            raise HTTPException(status_code=403, detail="Only an Admin can delete an Admin account")
 
         response = supabase.table("users").delete().eq("id", user_id).execute()
 

@@ -261,14 +261,17 @@ export default function AdminPage() {
                                     <Edit className="h-3.5 w-3.5" />
                                   </Button>
                                 )}
-                                <Button 
-                                  onClick={() => handleDeleteUser(u.id)}
-                                  size="sm" 
-                                  variant="ghost" 
-                                  className="text-text-secondary hover:text-negative p-1.5 h-7 w-7 rounded-lg hover:bg-red-500/10"
-                                >
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                </Button>
+                                {/* Admin accounts can only be deleted by an Admin. */}
+                                {(canChangeRoles || u.roles?.role_name !== 'Admin') && (
+                                  <Button 
+                                    onClick={() => handleDeleteUser(u.id)}
+                                    size="sm" 
+                                    variant="ghost" 
+                                    className="text-text-secondary hover:text-negative p-1.5 h-7 w-7 rounded-lg hover:bg-red-500/10"
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </Button>
+                                )}
                               </div>
                             )}
                           </TableCell>
