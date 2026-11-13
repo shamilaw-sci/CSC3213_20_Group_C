@@ -104,6 +104,12 @@ export const RescueCasesService = {
     return response.data;
   },
 
+  // An outcome for a case resolved before outcomes were recorded.
+  recordOutcome: async (caseId: string, outcome: CaseOutcome, outcome_note?: string) => {
+    const response = await api.post<CaseOut>(`/rescue_cases/cases/${caseId}/outcome`, { outcome, outcome_note });
+    return response.data;
+  },
+
   addNote: async (caseId: string, body: string) => {
     const response = await api.post<CaseEvent>(`/rescue_cases/cases/${caseId}/notes`, { body });
     return response.data;

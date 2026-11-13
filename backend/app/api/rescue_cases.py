@@ -16,7 +16,7 @@ from app.core.audit import log_audit_action
 from app.schemas.rescue_case import (
     RescueCaseGeo, CaseStatus, CaseCreate, CaseOut, CaseStatusUpdate, AssigneeOption,
     OutbreakZoneCreate, OutbreakZoneOut, OptimizedRoute, CaseNoteCreate, CaseEventOut,
-    CaseOutcome, CaseReport,
+    CaseOutcome, CaseReport, OutcomeRecord,
 )
 from app.schemas.hr import SRI_LANKA
 from postgrest.exceptions import APIError
@@ -600,6 +600,58 @@ def case_report(supabase: Client, year: int, month: int) -> dict:
         "open_cases": len(open_cases),
         "unrecorded_outcomes": len(unrecorded),
     }
+
+
+@router.post("/cases/{case_id}/outcome", response_model=CaseOut)
+async def record_older_outcome(
+    case_id: str,
+    payload: OutcomeRecord,
+    supabase: Client = Depends(get_supabase),
+    current_user: dict = Depends(require_permission("rescue:manage")),
+):
+    """Give an outcome to a case resolved before outcomes were recorded
+    (confirmed 2026-11-13), without reopening it.
+
+    Only for a Resolved case with no outcome: a recorded outcome is changed by
+    reopening, as before. Its resolve date was never stored, so the case's
+    last update stands in for it (for a case nobody touched after resolving,
+    that is when it was resolved) and the timeline says it is an estimate.
+    """
+    case = _get_case(supabase, case_id)
+    if case.get("status") != CaseStatus.resolved.value:
+        raise HTTPException(400, "Only a resolved case can be given an outcome this way. Resolve it instead.")
+    if case.get("outcome"):
+        raise HTTPException(409, "This case already has an outcome. Reopen it to change the outcome.")
+
+    estimated = case.get("updated_at") or case.get("reported_at")
+    update = {"outcome": payload.outcome.value, "resolved_at": estimated}
+    updated = supabase.table("rescue_cases").update(update).eq("id", case_id).execute().data
+    if not updated:
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    note = (payload.outcome_note or "").strip()
+    when = _as_utc(estimated).astimezone(SRI_LANKA).date()
+    body = f"Recorded later. Resolve date estimated from the case's last update: {when.day} {when.strftime('%b')} {when.year}."
+    if note:
+        body = f"{note} ({body})"
+    try:
+        supabase.table("rescue_case_events").insert({
+            "case_id": case_id, "event_type": "outcome", "outcome": payload.outcome.value, "body": body,
+            "author_id": str(current_user["id"]), "from_status": None, "to_status": None, "assignee_id": None,
+        }).execute()
+    except Exception:
+        logger.exception("Could not add the outcome line to the timeline of case %s", case_id)
+
+    await log_audit_action(
+        supabase,
+        user_id=current_user["id"],
+        action_type="RESCUE_CASE_OUTCOME_RECORDED",
+        table_name="rescue_cases",
+        old_payload={"id": case_id, "outcome": None, "resolved_at": case.get("resolved_at")},
+        new_payload={"id": case_id, **update},
+    )
+    await notify_board_changed()
+    return updated[0]
 
 
 @router.post("/cases/{case_id}/notes", response_model=CaseEventOut)

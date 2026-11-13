@@ -26,10 +26,15 @@ const field =
  * Asked for on every move into Resolved, however it is made (drag or the
  * status menu). Cancelling leaves the case where it was.
  */
-export function ResolveCaseDialog({ animalType, onConfirm, onClose }: {
+export function ResolveCaseDialog({ animalType, onConfirm, onClose, title, description, confirmLabel, busy }: {
   animalType: string;
   onConfirm: (outcome: CaseOutcome, note: string) => void;
   onClose: () => void;
+  // Overrides for reuse, e.g. recording the outcome of an older case.
+  title?: string;
+  description?: string;
+  confirmLabel?: string;
+  busy?: boolean;
 }) {
   const [outcome, setOutcome] = useState<CaseOutcome | null>(null);
   const [note, setNote] = useState('');
@@ -38,8 +43,8 @@ export function ResolveCaseDialog({ animalType, onConfirm, onClose }: {
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="bg-surface border-border-brand sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Resolve {animalType} case</DialogTitle>
-          <DialogDescription>What happened to the animal? This goes on the case timeline.</DialogDescription>
+          <DialogTitle>{title ?? `Resolve ${animalType} case`}</DialogTitle>
+          <DialogDescription>{description ?? 'What happened to the animal? This goes on the case timeline.'}</DialogDescription>
         </DialogHeader>
 
         <div role="radiogroup" aria-label="Outcome" className="space-y-1.5">
@@ -77,10 +82,10 @@ export function ResolveCaseDialog({ animalType, onConfirm, onClose }: {
           <Button variant="outline" onClick={onClose}>Cancel</Button>
           <Button
             onClick={() => outcome && onConfirm(outcome, note.trim())}
-            disabled={!outcome}
+            disabled={!outcome || busy}
             className="gap-1.5 bg-accent text-white hover:bg-accent/90"
           >
-            <CheckCircle2 className="h-4 w-4" /> Resolve case
+            <CheckCircle2 className="h-4 w-4" /> {confirmLabel ?? 'Resolve case'}
           </Button>
         </DialogFooter>
       </DialogContent>

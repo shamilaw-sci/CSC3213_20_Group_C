@@ -254,6 +254,7 @@ PERMISSION_ROUTES = [
     ("GET", f"/api/rescue_cases/cases/{CASE_ID}/timeline", "rescue:read"),
     ("GET", "/api/rescue_cases/report?year=2026&month=11", "rescue:read"),
     ("POST", f"/api/rescue_cases/cases/{CASE_ID}/notes", "rescue:manage"),
+    ("POST", f"/api/rescue_cases/cases/{CASE_ID}/outcome", "rescue:manage"),
     ("GET", "/api/auth/users", "admin:users"),
     ("PUT", f"/api/auth/users/{OTHER_USER_ID}/role", "admin:users"),
     ("DELETE", f"/api/auth/users/{OTHER_USER_ID}", "admin:users"),
