@@ -19,6 +19,7 @@ from app.schemas.rescue_case import (
 from app.schemas.hr import SRI_LANKA
 from postgrest.exceptions import APIError
 from app.services.board_events import notify_board_changed
+from app.services.notifications import notify
 from app.services.case_classifier import classify_case_urgency
 from app.services.route_optimizer import optimize_route
 
@@ -358,6 +359,18 @@ async def update_case_status(
             old_payload={"id": case_id, "assigned_to": before.get("assigned_to")},
             new_payload={"id": case_id, "assigned_to": updated.get("assigned_to")},
         )
+
+    # Someone else handed you the case (migration 032). Claiming it yourself
+    # sends nothing: notify() skips the actor.
+    new_assignee = updated.get("assigned_to")
+    if new_assignee and new_assignee != before.get("assigned_to"):
+        actor = _people(supabase, [current_user["id"]]).get(str(current_user["id"])) or {}
+        by = actor.get("display_name") or actor.get("email")
+        notify(supabase, [new_assignee], actor_id=current_user["id"], kind="case_assigned",
+               title=f"You were assigned a {updated.get('animal_type') or 'rescue'} case",
+               body=f"{updated.get('urgency') or 'Unknown'} urgency, {updated.get('status')}."
+                    + (f" Assigned by {by}." if by else ""),
+               href="/case-triage")
 
     _record_events(
         supabase, case_id, current_user["id"], before, updated,
