@@ -52,6 +52,11 @@ class Permission(str, Enum):
     PROGRAMS_READ = 'programs:read'
     PROGRAMS_MANAGE = 'programs:manage'
     ADMIN_USERS = 'admin:users'
+    # Change any account's role. Admin only (decided 2026-11-13): admin:users
+    # lets System Administrator list and manage accounts, but with role changes
+    # under that same permission it could promote itself to Admin and step
+    # outside its own boundary. Every grant now goes through an Admin.
+    ADMIN_ROLES = 'admin:roles'
     AUDIT_READ = 'audit:read'
     RESCUE_READ = 'rescue:read'
     RESCUE_MANAGE = 'rescue:manage'
@@ -86,8 +91,8 @@ ROLE_PERMISSIONS = {
         Permission.PAYROLL_GENERATE.value, Permission.PAYROLL_APPROVE.value, Permission.FINANCE_READ.value,
         Permission.FINANCE_WRITE.value, Permission.FINANCE_RESTRICTED_OVERRIDE.value,
         Permission.INVENTORY_READ.value, Permission.INVENTORY_MANAGE.value, Permission.INVENTORY_ISSUE.value,
-        Permission.PROGRAMS_READ.value, Permission.PROGRAMS_MANAGE.value, Permission.ADMIN_USERS.value, Permission.AUDIT_READ.value,
-        Permission.RESCUE_READ.value, Permission.RESCUE_MANAGE.value, Permission.RESCUE_ASSIGN.value,
+        Permission.PROGRAMS_READ.value, Permission.PROGRAMS_MANAGE.value, Permission.ADMIN_USERS.value, Permission.ADMIN_ROLES.value,
+        Permission.AUDIT_READ.value, Permission.RESCUE_READ.value, Permission.RESCUE_MANAGE.value, Permission.RESCUE_ASSIGN.value,
         Permission.VOLUNTEERS_READ.value, Permission.VOLUNTEERS_APPROVE.value, Permission.VOLUNTEERS_ASSIGN.value,
         Permission.REPORTS_MONTHLY.value
     ],

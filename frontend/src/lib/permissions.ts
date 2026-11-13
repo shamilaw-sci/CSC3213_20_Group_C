@@ -32,6 +32,9 @@ export type Permission =
   | 'programs:read'
   | 'programs:manage'
   | 'admin:users'
+  // Change any account role. Admin only, so System Administrator cannot grant
+  // itself Admin through admin:users.
+  | 'admin:roles'
   | 'audit:read'
   | 'rescue:read'
   | 'rescue:manage'
@@ -59,7 +62,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'payroll:generate', 'payroll:approve', 'finance:read',
     'finance:write', 'finance:restricted:override',
     'inventory:read', 'inventory:manage', 'inventory:issue',
-    'programs:read', 'programs:manage', 'admin:users', 'audit:read',
+    'programs:read', 'programs:manage', 'admin:users', 'admin:roles', 'audit:read',
     'rescue:read', 'rescue:manage', 'rescue:assign',
     'volunteers:read', 'volunteers:approve', 'volunteers:assign',
     'reports:monthly'

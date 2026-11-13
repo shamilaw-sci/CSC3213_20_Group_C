@@ -20,12 +20,18 @@ import { AuthService } from '@/services/auth.service';
 import { toast } from 'sonner';
 import Swal from 'sweetalert2';
 import { useThemeStore } from '@/store/useThemeStore';
+import { useAuthStore } from '@/store/useAuthStore';
+import { hasPermission } from '@/lib/permissions';
 
 export default function AdminPage() {
   const [users, setUsers] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [editingUser, setEditingUser] = useState<any | null>(null);
   const [editRoleId, setEditRoleId] = useState<number>(0);
+  // Only Admin may change roles; System Administrator manages accounts here
+  // but must not be able to grant itself Admin. The backend enforces this too.
+  const { user } = useAuthStore();
+  const canChangeRoles = hasPermission(user?.role || '', 'admin:roles');
   
   // Search & Filters state
   const [searchTerm, setSearchTerm] = useState('');
@@ -242,17 +248,19 @@ export default function AdminPage() {
                               </div>
                             ) : (
                               <div className="flex items-center justify-end gap-2">
-                                <Button 
-                                  onClick={() => {
-                                    setEditingUser(u);
-                                    setEditRoleId(u.role_id || 1);
-                                  }}
-                                  size="sm" 
-                                  variant="ghost" 
-                                  className="text-text-secondary hover:text-accent p-1.5 h-7 w-7 rounded-lg hover:bg-bg-subtle"
-                                >
-                                  <Edit className="h-3.5 w-3.5" />
-                                </Button>
+                                {canChangeRoles && (
+                                  <Button 
+                                    onClick={() => {
+                                      setEditingUser(u);
+                                      setEditRoleId(u.role_id || 1);
+                                    }}
+                                    size="sm" 
+                                    variant="ghost" 
+                                    className="text-text-secondary hover:text-accent p-1.5 h-7 w-7 rounded-lg hover:bg-bg-subtle"
+                                  >
+                                    <Edit className="h-3.5 w-3.5" />
+                                  </Button>
+                                )}
                                 <Button 
                                   onClick={() => handleDeleteUser(u.id)}
                                   size="sm" 
