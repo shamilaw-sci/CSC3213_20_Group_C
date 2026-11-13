@@ -32,6 +32,10 @@ export const useAuthStore = create<AuthState>()(
       logout: () => {
         if (typeof window !== 'undefined') {
           document.cookie = 'token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax; Secure';
+          // Copies older logins left behind, which the API client used to
+          // fall back to, so a signed-out browser still sent the last token.
+          localStorage.removeItem('auth_token');
+          localStorage.removeItem('user_role');
         }
         set({ user: null, token: null, isAuthenticated: false });
       },
