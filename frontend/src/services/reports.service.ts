@@ -1,5 +1,6 @@
 import api from '@/lib/api-client';
 import { FinanceReport } from '@/types';
+import { saveBlob } from '@/lib/download';
 
 export const ReportsService = {
   getFinanceReport: async (startDate: string, endDate: string) => {
@@ -25,5 +26,12 @@ export const ReportsService = {
     link.click();
     link.remove();
     URL.revokeObjectURL(url);
+  },
+
+  // The monthly management report (GET /reports/monthly, reports:monthly).
+  downloadMonthly: async (year: number, month: number) => {
+    const response = await api.get('/reports/monthly', { params: { year, month }, responseType: 'blob' });
+    saveBlob(new Blob([response.data], { type: 'application/pdf' }),
+      `monthly_report_${year}-${String(month).padStart(2, '0')}.pdf`);
   },
 };
