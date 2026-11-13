@@ -161,6 +161,8 @@ PROTECTED_ROUTES = [
     ("GET", "/api/admin/audit-logs"),
     ("GET", "/api/rescue_cases/cases"),
     ("PATCH", f"/api/rescue_cases/cases/{CASE_ID}/status"),
+    ("GET", f"/api/rescue_cases/cases/{CASE_ID}/timeline"),
+    ("POST", f"/api/rescue_cases/cases/{CASE_ID}/notes"),
     # Previously reachable anonymously; see the Known gaps section below.
     ("PUT", f"/api/auth/users/{OTHER_USER_ID}/role"),
     ("DELETE", f"/api/auth/users/{OTHER_USER_ID}"),
@@ -247,6 +249,8 @@ PERMISSION_ROUTES = [
     ("GET", "/api/admin/stats", "admin:users"),
     ("GET", "/api/rescue_cases/cases", "rescue:read"),
     ("GET", "/api/rescue_cases/assignees", "rescue:assign"),
+    ("GET", f"/api/rescue_cases/cases/{CASE_ID}/timeline", "rescue:read"),
+    ("POST", f"/api/rescue_cases/cases/{CASE_ID}/notes", "rescue:manage"),
     ("GET", "/api/auth/users", "admin:users"),
     ("PUT", f"/api/auth/users/{OTHER_USER_ID}/role", "admin:users"),
     ("DELETE", f"/api/auth/users/{OTHER_USER_ID}", "admin:users"),
@@ -555,6 +559,8 @@ def test_rescue_case_status_authorization(
     payload = {"new_status": new_status}
     if payload_assigned_to is not None:
         payload["assigned_to"] = payload_assigned_to
+    if new_status == "Resolved" and current_status != "Resolved":
+        payload["outcome"] = "Released"  # required to resolve (030_case_timeline_outcome.sql)
 
     with acting_as(role, tables=tables):
         response = client.patch(

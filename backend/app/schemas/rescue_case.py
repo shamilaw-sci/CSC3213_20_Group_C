@@ -1,14 +1,24 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from datetime import datetime
 from enum import Enum
 from uuid import UUID
-from typing import Optional
+from typing import Literal, Optional
 
 
 class CaseStatus(str, Enum):
     reported = "Reported"
     in_treatment = "In Treatment"
     resolved = "Resolved"
+
+
+class CaseOutcome(str, Enum):
+    """What "Resolved" meant for the animal. Fixed, so reports can count them;
+    the same five values are CHECKed in 030_case_timeline_outcome.sql."""
+    released = "Released"
+    rehomed = "Rehomed"
+    transferred = "Transferred"  # to a vet or another shelter
+    died = "Died"
+    not_found = "Not found"  # the animal could not be located
 
 
 class RescueCaseGeo(BaseModel):
@@ -32,6 +42,9 @@ class CaseCreate(BaseModel):
 class CaseStatusUpdate(BaseModel):
     new_status: CaseStatus
     assigned_to: Optional[UUID] = None  # staff can self-assign or assign a colleague
+    # Required when moving a case into Resolved, refused on any other move.
+    outcome: Optional[CaseOutcome] = None
+    outcome_note: Optional[str] = Field(None, max_length=2000)
 
 class OutbreakZoneCreate(BaseModel):
     animal_type: str
@@ -91,8 +104,34 @@ class CaseOut(BaseModel):
     # endpoint returning CaseOut — including the public report form, which
     # must never carry staff details.
     assignee: Optional[CaseAssignee] = None
+    # Set only while Resolved. Null on cases resolved before
+    # 030_case_timeline_outcome.sql, which never recorded one.
+    outcome: Optional[CaseOutcome] = None
+    resolved_at: Optional[datetime] = None
     reported_at: datetime
     updated_at: datetime
+
+
+class CaseNoteCreate(BaseModel):
+    body: str = Field(..., max_length=2000)
+
+
+class CaseEventOut(BaseModel):
+    """One line of a case's timeline.
+
+    "reported" is never stored: it is the case's own reported_at, added to the
+    front by GET /cases/{id}/timeline so older cases get one too. Its id is 0.
+    """
+    id: int
+    event_type: Literal["reported", "note", "status", "assign", "outcome"]
+    body: Optional[str] = None
+    from_status: Optional[str] = None
+    to_status: Optional[str] = None
+    outcome: Optional[CaseOutcome] = None
+    assignee: Optional[CaseAssignee] = None
+    # Null for the public report and for authors whose account has gone.
+    author: Optional[CaseAssignee] = None
+    created_at: datetime
 
 
 class RouteStop(BaseModel):

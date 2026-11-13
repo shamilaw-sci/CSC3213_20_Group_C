@@ -5,6 +5,7 @@ from typing import Optional
 from datetime import datetime, timedelta, timezone
 from supabase import Client
 from fastapi import UploadFile, File
+import logging
 import uuid
 from app.core.security import require_permission
 from app.core.security import has_permission
@@ -12,13 +13,14 @@ from app.core.supabase import get_supabase, get_public_supabase
 from app.core.audit import log_audit_action
 from app.schemas.rescue_case import (
     RescueCaseGeo, CaseStatus, CaseCreate, CaseOut, CaseStatusUpdate, AssigneeOption,
-    OutbreakZoneCreate, OutbreakZoneOut, OptimizedRoute,
+    OutbreakZoneCreate, OutbreakZoneOut, OptimizedRoute, CaseNoteCreate, CaseEventOut,
 )
 from app.services.board_events import notify_board_changed
 from app.services.case_classifier import classify_case_urgency
 from app.services.route_optimizer import optimize_route
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.get("/geo", response_model=list[RescueCaseGeo])
@@ -122,19 +124,24 @@ async def list_cases(
     # Fetches only the users actually assigned to these cases.
     assigned_ids = sorted({c["assigned_to"] for c in cases if c.get("assigned_to")})
     if assigned_ids:
-        users = (
-            supabase.table("users").select("id, email").in_("id", assigned_ids).execute().data or []
-        )
-        names = _display_names(supabase, assigned_ids)
-        by_id = {
-            u["id"]: {"email": u["email"], "display_name": names.get(u["id"])} for u in users
-        }
+        by_id = _people(supabase, assigned_ids)
         for c in cases:
             # A deleted user leaves assigned_to pointing at nothing; the card
             # then shows "Assigned" rather than the request failing.
             c["assignee"] = by_id.get(c.get("assigned_to"))
 
     return cases
+
+
+def _people(supabase: Client, user_ids) -> dict[str, dict]:
+    """{user_id: CaseAssignee-shaped dict} for the given users. A deleted user
+    is simply missing, so callers fall back to None."""
+    ids = sorted({str(i) for i in user_ids if i})
+    if not ids:
+        return {}
+    users = supabase.table("users").select("id, email").in_("id", ids).execute().data or []
+    names = _display_names(supabase, ids)
+    return {u["id"]: {"email": u["email"], "display_name": names.get(u["id"])} for u in users}
 
 
 def _display_names(supabase: Client, user_ids: list[str]) -> dict[str, str]:
@@ -281,6 +288,19 @@ async def update_case_status(
         if is_self_assign and not has_permission(role_name, "rescue:manage"):
             raise HTTPException(403, "Claiming a case requires permission to work it (rescue:manage)")
 
+    # Resolving means saying what happened to the animal (confirmed
+    # 2026-11-13), so the outcome is required on the move into Resolved and
+    # refused on every other request. Changing a recorded outcome means
+    # reopening the case, which the timeline then shows.
+    entering_resolved = (
+        payload.new_status == CaseStatus.resolved and current_status != CaseStatus.resolved.value
+    )
+    outcome_note = (payload.outcome_note or "").strip() or None
+    if entering_resolved and payload.outcome is None:
+        raise HTTPException(400, "Choose an outcome to resolve the case")
+    if not entering_resolved and (payload.outcome is not None or outcome_note):
+        raise HTTPException(400, "An outcome can only be recorded when resolving a case")
+
     # Reported is the only stage a case can sit in unclaimed. Leaving it requires
     # an assignee — either one already on the case or one supplied here — so a
     # raw drag or a direct API call can't produce an "In Treatment"/"Resolved"
@@ -295,6 +315,14 @@ async def update_case_status(
         update_data["assigned_to"] = None
     elif payload.assigned_to is not None:
         update_data["assigned_to"] = str(payload.assigned_to)
+    if entering_resolved:
+        update_data["outcome"] = payload.outcome.value
+        update_data["resolved_at"] = datetime.now(timezone.utc).isoformat()
+    elif current_status == CaseStatus.resolved.value and payload.new_status != CaseStatus.resolved:
+        # Reopened: the outcome no longer describes the case. The timeline
+        # keeps the old one.
+        update_data["outcome"] = None
+        update_data["resolved_at"] = None
 
     response = supabase.table("rescue_cases").update(update_data).eq("id", case_id).execute()
     if not response.data:
@@ -328,6 +356,12 @@ async def update_case_status(
             new_payload={"id": case_id, "assigned_to": updated.get("assigned_to")},
         )
 
+    _record_events(
+        supabase, case_id, current_user["id"], before, updated,
+        outcome=payload.outcome.value if entering_resolved else None,
+        outcome_note=outcome_note,
+    )
+
     # Same condition as the audit entries: a no-op request (e.g. Reported ->
     # Reported) changes nothing on the board, so it pings nobody.
     if (updated.get("status") != before.get("status")
@@ -335,6 +369,132 @@ async def update_case_status(
         await notify_board_changed()
 
     return updated
+
+
+def _record_events(supabase: Client, case_id: str, author_id, before: dict, updated: dict,
+                   outcome: Optional[str], outcome_note: Optional[str]) -> None:
+    """Add this change to the case's timeline: the assignment first, then the
+    status move, then the outcome, so a claim reads "assigned to X" before
+    "moved to In Treatment".
+
+    Fail-soft. The case has already changed and the audit log has recorded it;
+    failing the request now would tell staff that a move they can see on the
+    board did not happen.
+    """
+    # Every row carries every column: PostgREST refuses a bulk insert whose
+    # rows have different keys (PGRST102, "All object keys must match").
+    base = {
+        "case_id": case_id, "author_id": str(author_id), "body": None, "from_status": None,
+        "to_status": None, "outcome": None, "assignee_id": None,
+    }
+    events = []
+    if updated.get("assigned_to") != before.get("assigned_to"):
+        events.append({**base, "event_type": "assign", "assignee_id": updated.get("assigned_to")})
+    if updated.get("status") != before.get("status"):
+        events.append({**base, "event_type": "status",
+                       "from_status": before.get("status"), "to_status": updated.get("status")})
+    if outcome:
+        events.append({**base, "event_type": "outcome", "outcome": outcome, "body": outcome_note})
+    if not events:
+        return
+    try:
+        supabase.table("rescue_case_events").insert(events).execute()
+    except Exception:
+        logger.exception("Could not add timeline events for case %s", case_id)
+
+
+def _get_case(supabase: Client, case_id: str) -> dict:
+    rows = supabase.table("rescue_cases").select("*").eq("id", case_id).execute().data
+    if not rows:
+        raise HTTPException(status_code=404, detail="Case not found")
+    return rows[0]
+
+
+@router.get("/cases/{case_id}/timeline", response_model=list[CaseEventOut])
+async def get_case_timeline(
+    case_id: str,
+    supabase: Client = Depends(get_supabase),
+    current_user: dict = Depends(require_permission("rescue:read")),
+):
+    """Everything that has happened on a case, oldest first.
+
+    Same gate as the board: whoever can see a case can see its history. Pure
+    read, so nothing is written to the audit log.
+    """
+    case = _get_case(supabase, case_id)
+    events = (
+        supabase.table("rescue_case_events")
+        .select("*")
+        .eq("case_id", case_id)
+        .order("created_at")
+        .order("id")
+        .execute()
+        .data
+        or []
+    )
+    people = _people(
+        supabase,
+        [case.get("reported_by")]
+        + [e.get("author_id") for e in events]
+        + [e.get("assignee_id") for e in events],
+    )
+
+    reported = {
+        "id": 0,
+        "event_type": "reported",
+        "body": case.get("description"),
+        "author": people.get(case.get("reported_by")),
+        "created_at": case["reported_at"],
+    }
+    return [reported] + [
+        {
+            **e,
+            "author": people.get(e.get("author_id")),
+            "assignee": people.get(e.get("assignee_id")),
+        }
+        for e in events
+    ]
+
+
+@router.post("/cases/{case_id}/notes", response_model=CaseEventOut)
+async def add_case_note(
+    case_id: str,
+    payload: CaseNoteCreate,
+    supabase: Client = Depends(get_supabase),
+    current_user: dict = Depends(require_permission("rescue:manage")),
+):
+    """A note on the case's timeline, from the staff who work cases.
+
+    Append-only (confirmed 2026-11-13): there is no edit or delete, here or in
+    the database, so a mistake is corrected with a follow-up note. Allowed on a
+    resolved case too, for follow-ups after release or rehoming.
+    """
+    body = payload.body.strip()
+    if not body:
+        raise HTTPException(400, "A note cannot be empty")
+    _get_case(supabase, case_id)
+
+    response = supabase.table("rescue_case_events").insert({
+        "case_id": case_id,
+        "event_type": "note",
+        "body": body,
+        "author_id": str(current_user["id"]),
+    }).execute()
+    if not response.data:
+        raise HTTPException(status_code=500, detail="Failed to add the note")
+    note = response.data[0]
+
+    await log_audit_action(
+        supabase,
+        user_id=current_user["id"],
+        action_type="RESCUE_CASE_NOTE",
+        table_name="rescue_case_events",
+        old_payload=None,
+        new_payload=note,
+    )
+
+    author = _people(supabase, [current_user["id"]]).get(str(current_user["id"]))
+    return {**note, "author": author}
 
 
 @router.get("/outbreak-zones", response_model=list[OutbreakZoneOut])

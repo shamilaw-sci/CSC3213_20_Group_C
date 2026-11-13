@@ -654,8 +654,31 @@ export interface CaseOut {
   // Filled by GET /rescue_cases/cases only; null when unassigned or when the
   // assigned user no longer exists.
   assignee?: CaseAssignee | null;
+  // Set only while Resolved; null on cases resolved before outcomes were
+  // recorded (030_case_timeline_outcome.sql).
+  outcome?: CaseOutcome | null;
+  resolved_at?: string | null;
   reported_at: string;
   updated_at: string;
+}
+
+// Mirrors CaseOutcome in backend/app/schemas/rescue_case.py and the CHECK in
+// 030_case_timeline_outcome.sql.
+export const CASE_OUTCOMES = ['Released', 'Rehomed', 'Transferred', 'Died', 'Not found'] as const;
+export type CaseOutcome = (typeof CASE_OUTCOMES)[number];
+
+// One line of a case's timeline (GET /rescue_cases/cases/{id}/timeline).
+// 'reported' is the case itself, always first, with id 0.
+export interface CaseEvent {
+  id: number;
+  event_type: 'reported' | 'note' | 'status' | 'assign' | 'outcome';
+  body?: string | null;
+  from_status?: string | null;
+  to_status?: string | null;
+  outcome?: CaseOutcome | null;
+  assignee?: CaseAssignee | null;
+  author?: CaseAssignee | null;
+  created_at: string;
 }
 
 export interface CaseAssignee {
