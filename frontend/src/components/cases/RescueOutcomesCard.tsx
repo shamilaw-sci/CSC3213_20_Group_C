@@ -66,7 +66,7 @@ export function RescueOutcomesCard() {
         {isLoading ? (
           <Skeleton className="h-40 w-full" />
         ) : error || !data ? (
-          <p className="text-sm text-negative">{getErrorMessage(error) || 'Could not load the report.'}</p>
+          <p className="text-sm text-negative">{(error && getErrorMessage(error)) || 'Could not load the report.'}</p>
         ) : (
           <>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">

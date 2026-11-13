@@ -131,7 +131,7 @@ export function CaseTimelineDialog({ c, canManage, canIssueStock, onClose }: {
               <Loader2 className="h-4 w-4 animate-spin" /> Loading the timeline…
             </p>
           ) : error || !data ? (
-            <p className="text-sm text-negative">{getErrorMessage(error) || 'Could not load the timeline.'}</p>
+            <p className="text-sm text-negative">{(error && getErrorMessage(error)) || 'Could not load the timeline.'}</p>
           ) : (
             // The line behind the icons joins the entries into one history.
             <ol className="relative before:absolute before:left-3 before:top-3 before:bottom-3 before:w-px before:bg-border-brand">
