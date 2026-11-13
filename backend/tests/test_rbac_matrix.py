@@ -682,7 +682,9 @@ def test_only_admin_may_delete_an_admin_account(role):
     Otherwise a System Administrator could delete every Admin and leave nobody
     able to change roles.
     """
-    tables = {"users": {"select": [_user_row("Admin")], "delete": [_user_row("Admin")]}}
+    # A second Admin row, so the last-Admin guard does not fire for Admin.
+    rows = [_user_row("Admin"), {"id": USER_ID, "roles": {"role_name": "Admin"}}]
+    tables = {"users": {"select": rows, "delete": [_user_row("Admin")]}}
     with acting_as(role, tables=tables):
         response = _request("DELETE", f"/api/auth/users/{OTHER_USER_ID}")
     if role == "Admin":
@@ -694,5 +696,57 @@ def test_only_admin_may_delete_an_admin_account(role):
 def test_system_administrator_may_still_delete_non_admin_accounts():
     tables = {"users": {"select": [_user_row("General Staff")], "delete": [_user_row("General Staff")]}}
     with acting_as("System Administrator", tables=tables):
+        response = _request("DELETE", f"/api/auth/users/{OTHER_USER_ID}")
+    assert response.status_code == 200
+
+
+# --------------------------------------------------------------------------
+# The last Admin account cannot be removed
+# --------------------------------------------------------------------------
+# The fake supabase returns the same "select" rows for the target lookup and
+# for the Admin count, so rows[0] is the target and len(Admin rows) the count.
+
+_OTHER_ADMIN = {"id": USER_ID, "role_id": 1, "roles": {"role_name": "Admin"}}
+
+
+def test_last_admin_cannot_be_deleted():
+    tables = {"users": {"select": [_user_row("Admin")], "delete": [_user_row("Admin")]}}
+    with acting_as("Admin", tables=tables):
+        response = _request("DELETE", f"/api/auth/users/{OTHER_USER_ID}")
+    assert response.status_code == 409
+
+
+def test_last_admin_cannot_delete_themselves():
+    me = {**_user_row("Admin"), "id": USER_ID}
+    tables = {"users": {"select": [me], "delete": [me]}}
+    with acting_as("Admin", tables=tables):
+        response = _request("DELETE", f"/api/auth/users/{USER_ID}")
+    assert response.status_code == 409
+
+
+def test_last_admin_cannot_be_demoted():
+    tables = {"users": {"select": [_user_row("Admin")], "update": [_user_row("General Staff")]}}
+    with acting_as("Admin", tables=tables):
+        response = _request("PUT", f"/api/auth/users/{OTHER_USER_ID}/role", json={"role_id": 6})
+    assert response.status_code == 409
+
+
+def test_last_admin_resaving_admin_role_is_allowed():
+    tables = {"users": {"select": [_user_row("Admin")], "update": [_user_row("Admin")]}}
+    with acting_as("Admin", tables=tables):
+        response = _request("PUT", f"/api/auth/users/{OTHER_USER_ID}/role", json={"role_id": 1})
+    assert response.status_code == 200
+
+
+def test_admin_can_be_demoted_while_another_admin_remains():
+    tables = {"users": {"select": [_user_row("Admin"), _OTHER_ADMIN], "update": [_user_row("General Staff")]}}
+    with acting_as("Admin", tables=tables):
+        response = _request("PUT", f"/api/auth/users/{OTHER_USER_ID}/role", json={"role_id": 6})
+    assert response.status_code == 200
+
+
+def test_admin_can_be_deleted_while_another_admin_remains():
+    tables = {"users": {"select": [_user_row("Admin"), _OTHER_ADMIN], "delete": [_user_row("Admin")]}}
+    with acting_as("Admin", tables=tables):
         response = _request("DELETE", f"/api/auth/users/{OTHER_USER_ID}")
     assert response.status_code == 200
