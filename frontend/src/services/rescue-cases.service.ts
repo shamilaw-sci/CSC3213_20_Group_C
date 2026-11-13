@@ -1,6 +1,6 @@
 // frontend/src/services/rescue-cases.service.ts
 import api from '@/lib/api-client';
-import { RescueCaseGeo , CaseOut, OptimizedRoute, AssigneeOption, CaseEvent, CaseOutcome } from '@/types';
+import { RescueCaseGeo , CaseOut, OptimizedRoute, AssigneeOption, CaseEvent, CaseOutcome, CaseReport } from '@/types';
 
 export interface CaseCreatePayload {
   animal_type: string;
@@ -94,6 +94,11 @@ export const RescueCasesService = {
 
   addNote: async (caseId: string, body: string) => {
     const response = await api.post<CaseEvent>(`/rescue_cases/cases/${caseId}/notes`, { body });
+    return response.data;
+  },
+
+  getReport: async (year: number, month: number) => {
+    const response = await api.get<CaseReport>('/rescue_cases/report', { params: { year, month } });
     return response.data;
   },
 

@@ -447,6 +447,8 @@ export default function CaseTriagePage() {
   const { user } = useAuthStore();
   const canManage = hasPermission(user?.role || '', 'rescue:manage');
   const canAssign = hasPermission(user?.role || '', 'rescue:assign');
+  const canIssueStock = hasPermission(user?.role || '', 'inventory:issue')
+    || hasPermission(user?.role || '', 'inventory:manage');
   const queryClient = useQueryClient();
   const [activeId, setActiveId] = useState<string | null>(null);
   // A move into Resolved waits here until an outcome is chosen.
@@ -699,6 +701,7 @@ export default function CaseTriagePage() {
           // The board copy, so the header follows moves made while it is open.
           c={data?.find((c) => c.id === timelineFor.id) ?? timelineFor}
           canManage={canManage}
+          canIssueStock={canIssueStock}
           onClose={() => setTimelineFor(null)}
         />
       )}

@@ -310,6 +310,9 @@ function StockPage() {
   // The label depends on program_id, not on whether a name arrived: a Stock Out
   // is only a "Stock adjustment" when it really has no program.
   const getProgramLabel = (tx: InventoryTransaction) => {
+    if (tx.rescue_case_id != null) {
+      return `Rescue case: ${tx.rescue_case?.animal_type ?? 'unknown'}`;
+    }
     if (tx.program_id == null) {
       if (tx.reverses_id != null) return '—';
       return tx.transaction_type === 'Issue' ? 'Stock adjustment' : '—';

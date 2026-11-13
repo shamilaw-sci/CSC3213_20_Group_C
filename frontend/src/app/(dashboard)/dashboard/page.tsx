@@ -13,6 +13,8 @@ import { Lock, ArrowUpRight, ArrowDownRight, AlertTriangle, Users, Activity, Ext
 import { formatLKR, formatDate } from '@/lib/formatters';
 import { Skeleton } from '@/components/ui/skeleton';
 import Link from 'next/link';
+import { hasPermission } from '@/lib/permissions';
+import { RescueOutcomesCard } from '@/components/cases/RescueOutcomesCard';
 
 export default function DashboardPage() {
   const { user } = useAuthStore();
@@ -33,6 +35,13 @@ export default function DashboardPage() {
     default:
       return <StaffDashboard />;
   }
+}
+
+// Rescue outcomes for whoever can see the case board: Admin, Director and the
+// staff dashboard's roles. Renders nothing for the rest.
+function RescueOutcomesForRole() {
+  const { user } = useAuthStore();
+  return hasPermission(user?.role || '', 'rescue:read') ? <RescueOutcomesCard /> : null;
 }
 
 function AdminDashboard() {
@@ -124,6 +133,7 @@ function AdminDashboard() {
           )}
         </CardContent>
       </Card>
+      <RescueOutcomesForRole />
     </div>
   );
 }
@@ -232,6 +242,7 @@ function DirectorDashboard() {
           </CardContent>
         </Card>
       </div>
+      <RescueOutcomesForRole />
     </div>
   );
 }
@@ -436,6 +447,7 @@ function StaffDashboard() {
           </CardContent>
         </Card>
       </div>
+      <RescueOutcomesForRole />
     </div>
   );
 }

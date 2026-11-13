@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, HTTPException, Query, Depends
 from typing import Optional
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from supabase import Client
 from fastapi import UploadFile, File
 import logging
@@ -14,7 +14,10 @@ from app.core.audit import log_audit_action
 from app.schemas.rescue_case import (
     RescueCaseGeo, CaseStatus, CaseCreate, CaseOut, CaseStatusUpdate, AssigneeOption,
     OutbreakZoneCreate, OutbreakZoneOut, OptimizedRoute, CaseNoteCreate, CaseEventOut,
+    CaseOutcome, CaseReport,
 )
+from app.schemas.hr import SRI_LANKA
+from postgrest.exceptions import APIError
 from app.services.board_events import notify_board_changed
 from app.services.case_classifier import classify_case_urgency
 from app.services.route_optimizer import optimize_route
@@ -432,11 +435,13 @@ async def get_case_timeline(
         .data
         or []
     )
+    supplies = _case_movements(supabase, case_id, "*, inventory_items(item_name)")
     people = _people(
         supabase,
         [case.get("reported_by")]
         + [e.get("author_id") for e in events]
-        + [e.get("assignee_id") for e in events],
+        + [e.get("assignee_id") for e in events]
+        + [m.get("recorded_by") for m in supplies],
     )
 
     reported = {
@@ -446,14 +451,128 @@ async def get_case_timeline(
         "author": people.get(case.get("reported_by")),
         "created_at": case["reported_at"],
     }
-    return [reported] + [
+    lines = [
         {
             **e,
             "author": people.get(e.get("author_id")),
             "assignee": people.get(e.get("assignee_id")),
         }
         for e in events
-    ]
+    ] + [_supplies_line(m, people) for m in supplies]
+    # Stable, so lines saved at the same moment keep their stored order.
+    lines.sort(key=lambda line: _as_utc(line["created_at"]))
+    return [reported] + lines
+
+
+def _as_utc(value) -> datetime:
+    parsed = value if isinstance(value, datetime) else datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _case_movements(supabase: Client, case_id_or_ids, columns: str) -> list[dict]:
+    """The Stock Outs used on one case (or several) and their reversals.
+    Empty before migration 031, which adds the column, so the timeline and
+    the report still work without it."""
+    query = supabase.table("inventory_transactions").select(columns)
+    if isinstance(case_id_or_ids, list):
+        if not case_id_or_ids:
+            return []
+        query = query.in_("rescue_case_id", case_id_or_ids)
+    else:
+        query = query.eq("rescue_case_id", case_id_or_ids)
+    try:
+        return query.execute().data or []
+    except APIError as e:
+        if "rescue_case_id" in str(getattr(e, "message", "") or e):
+            return []
+        raise
+
+
+def _supplies_line(m: dict, people: dict) -> dict:
+    # A reversal of a case's Stock Out is a Return carrying the same case.
+    reversed_ = m.get("transaction_type") == "Return"
+    # created_at is only on movements saved after 031; the movement's date
+    # (midnight, Sri Lanka time) stands in for any older one.
+    when = m.get("created_at") or datetime.combine(
+        date.fromisoformat(str(m["transaction_date"])[:10]), time(), SRI_LANKA
+    ).isoformat()
+    return {
+        "id": m.get("transaction_id") or m.get("id") or 0,
+        "event_type": "supplies_reversed" if reversed_ else "supplies",
+        "body": m.get("notes"),
+        "item_name": (m.get("inventory_items") or {}).get("item_name"),
+        "quantity": m.get("quantity"),
+        "cost": round(float(m.get("total_cost") or 0), 2),
+        "author": people.get(m.get("recorded_by")),
+        "created_at": when,
+    }
+
+
+def _net_supplies_cost(movements: list[dict]) -> dict[str, float]:
+    """{case_id: Stock Outs less their reversals}."""
+    totals: dict[str, float] = {}
+    for m in movements:
+        sign = -1 if m.get("transaction_type") == "Return" else 1
+        key = str(m["rescue_case_id"])
+        totals[key] = totals.get(key, 0.0) + sign * float(m.get("total_cost") or 0)
+    return totals
+
+
+@router.get("/report", response_model=CaseReport)
+async def get_case_report(
+    year: int = Query(..., ge=2000, le=2100),
+    month: int = Query(..., ge=1, le=12),
+    supabase: Client = Depends(get_supabase),
+    current_user: dict = Depends(require_permission("rescue:read")),
+):
+    """Rescue outcomes for one month: cases resolved, by outcome, and what
+    their supplies cost. Same gate as the board. Pure read, not audited."""
+    start = datetime(year, month, 1, tzinfo=SRI_LANKA)
+    end = datetime(year + (month == 12), month % 12 + 1, 1, tzinfo=SRI_LANKA)
+    resolved = (
+        supabase.table("rescue_cases")
+        .select("id, outcome")
+        .eq("status", CaseStatus.resolved.value)
+        .gte("resolved_at", start.isoformat())
+        .lt("resolved_at", end.isoformat())
+        .execute()
+        .data
+        or []
+    )
+    costs = _net_supplies_cost(_case_movements(
+        supabase, [c["id"] for c in resolved], "rescue_case_id, transaction_type, total_cost",
+    ))
+
+    by_outcome = {o: {"outcome": o.value, "cases": 0, "supplies_cost": 0.0} for o in CaseOutcome}
+    for c in resolved:
+        # resolved_at is only set together with an outcome (030), so a case
+        # in a month always has one; guarded anyway.
+        line = by_outcome.get(CaseOutcome(c["outcome"])) if c.get("outcome") else None
+        if line:
+            line["cases"] += 1
+            line["supplies_cost"] += costs.get(str(c["id"]), 0.0)
+    total = sum(costs.get(str(c["id"]), 0.0) for c in resolved)
+
+    open_cases = (
+        supabase.table("rescue_cases").select("id").neq("status", CaseStatus.resolved.value).execute().data or []
+    )
+    unrecorded = (
+        supabase.table("rescue_cases").select("id")
+        .eq("status", CaseStatus.resolved.value).is_("outcome", "null")
+        .execute().data or []
+    )
+    return {
+        "year": year,
+        "month": month,
+        "resolved": len(resolved),
+        "by_outcome": [
+            {**line, "supplies_cost": round(line["supplies_cost"], 2)} for line in by_outcome.values()
+        ],
+        "supplies_cost": round(total, 2),
+        "average_cost": round(total / len(resolved), 2) if resolved else None,
+        "open_cases": len(open_cases),
+        "unrecorded_outcomes": len(unrecorded),
+    }
 
 
 @router.post("/cases/{case_id}/notes", response_model=CaseEventOut)

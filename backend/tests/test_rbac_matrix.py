@@ -162,6 +162,7 @@ PROTECTED_ROUTES = [
     ("GET", "/api/rescue_cases/cases"),
     ("PATCH", f"/api/rescue_cases/cases/{CASE_ID}/status"),
     ("GET", f"/api/rescue_cases/cases/{CASE_ID}/timeline"),
+    ("GET", "/api/rescue_cases/report?year=2026&month=11"),
     ("POST", f"/api/rescue_cases/cases/{CASE_ID}/notes"),
     # Previously reachable anonymously; see the Known gaps section below.
     ("PUT", f"/api/auth/users/{OTHER_USER_ID}/role"),
@@ -250,6 +251,7 @@ PERMISSION_ROUTES = [
     ("GET", "/api/rescue_cases/cases", "rescue:read"),
     ("GET", "/api/rescue_cases/assignees", "rescue:assign"),
     ("GET", f"/api/rescue_cases/cases/{CASE_ID}/timeline", "rescue:read"),
+    ("GET", "/api/rescue_cases/report?year=2026&month=11", "rescue:read"),
     ("POST", f"/api/rescue_cases/cases/{CASE_ID}/notes", "rescue:manage"),
     ("GET", "/api/auth/users", "admin:users"),
     ("PUT", f"/api/auth/users/{OTHER_USER_ID}/role", "admin:users"),

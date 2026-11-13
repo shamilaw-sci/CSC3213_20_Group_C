@@ -631,7 +631,11 @@ function ReverseForm({
           {movement.quantity.toLocaleString()} x {itemName}, {movement.transaction_date}
           {Number(movement.total_cost) > 0 ? `, ${formatLKR(Number(movement.total_cost))}` : ''}
         </p>
-        <p className="mt-1">{REVERSE_EFFECT[movement.transaction_type] ?? ''}</p>
+        <p className="mt-1">
+          {movement.rescue_case_id != null && movement.transaction_type === 'Issue'
+            ? 'The stock comes back into the store, and the rescue case is no longer charged for it.'
+            : REVERSE_EFFECT[movement.transaction_type] ?? ''}
+        </p>
       </div>
       <div>
         <label htmlFor="inv-rev-reason" className={LABEL_CLASS}>

@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2, Loader2, MessageSquare, MoveRight, Siren, UserRound } from 'lucide-react';
+import { CheckCircle2, Loader2, MessageSquare, MoveRight, Package, PackageX, Siren, UserRound } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
@@ -10,6 +10,8 @@ import {
 } from '@/components/ui/dialog';
 import { RescueCasesService } from '@/services/rescue-cases.service';
 import { getErrorMessage } from '@/lib/utils';
+import { formatLKR } from '@/lib/formatters';
+import { CaseSuppliesForm } from './CaseSuppliesForm';
 import type { CaseAssignee, CaseEvent, CaseOut } from '@/types';
 
 const WHEN = new Intl.DateTimeFormat('en-LK', {
@@ -27,6 +29,8 @@ const ICON = {
   status: MoveRight,
   assign: UserRound,
   outcome: CheckCircle2,
+  supplies: Package,
+  supplies_reversed: PackageX,
 } as const;
 
 function headline(e: CaseEvent): string {
@@ -41,6 +45,10 @@ function headline(e: CaseEvent): string {
       return e.assignee ? `Assigned to ${nameOf(e.assignee)}` : 'Released, now unassigned';
     case 'outcome':
       return `Outcome: ${e.outcome}`;
+    case 'supplies':
+      return `Used ${e.quantity} × ${e.item_name ?? 'item'} · ${formatLKR(e.cost ?? 0)}`;
+    case 'supplies_reversed':
+      return `Reversed ${e.quantity} × ${e.item_name ?? 'item'} · −${formatLKR(e.cost ?? 0)}`;
   }
 }
 
@@ -70,13 +78,16 @@ function EventRow({ e }: { e: CaseEvent }) {
  * staff who work cases. Notes are append-only: a mistake is corrected with a
  * follow-up note.
  */
-export function CaseTimelineDialog({ c, canManage, onClose }: {
+export function CaseTimelineDialog({ c, canManage, canIssueStock, onClose }: {
   c: CaseOut;
   canManage: boolean;
+  // inventory:issue or inventory:manage: may record supplies on an open case.
+  canIssueStock: boolean;
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
   const [note, setNote] = useState('');
+  const [recordingSupplies, setRecordingSupplies] = useState(false);
 
   // Under the ['rescueCases'] prefix on purpose: the live board ping
   // invalidates it, so an open timeline follows moves made elsewhere.
@@ -95,6 +106,13 @@ export function CaseTimelineDialog({ c, canManage, onClose }: {
     onError: (err) => toast.error(getErrorMessage(err) || "Couldn't add the note."),
   });
 
+  // Stock Outs less their reversals.
+  const suppliesCost = (data ?? []).reduce(
+    (sum, e) => sum + (e.event_type === 'supplies' ? 1 : e.event_type === 'supplies_reversed' ? -1 : 0) * (e.cost ?? 0),
+    0,
+  );
+  const canRecordSupplies = canIssueStock && c.status !== 'Resolved';
+
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="bg-surface border-border-brand sm:max-w-lg">
@@ -103,6 +121,7 @@ export function CaseTimelineDialog({ c, canManage, onClose }: {
           <DialogDescription>
             {c.status}
             {c.outcome ? ` · ${c.outcome}` : ''}
+            {suppliesCost > 0 ? ` · Supplies ${formatLKR(suppliesCost)}` : ''}
           </DialogDescription>
         </DialogHeader>
 
@@ -112,7 +131,7 @@ export function CaseTimelineDialog({ c, canManage, onClose }: {
               <Loader2 className="h-4 w-4 animate-spin" /> Loading the timeline…
             </p>
           ) : error || !data ? (
-            <p className="text-sm text-negative">{getErrorMessage(error) || 'Could not load the timeline.'}</p>
+            <p className="text-sm text-negative">{(error && getErrorMessage(error)) || 'Could not load the timeline.'}</p>
           ) : (
             // The line behind the icons joins the entries into one history.
             <ol className="relative before:absolute before:left-3 before:top-3 before:bottom-3 before:w-px before:bg-border-brand">
@@ -120,6 +139,18 @@ export function CaseTimelineDialog({ c, canManage, onClose }: {
             </ol>
           )}
         </div>
+
+        {canRecordSupplies && (
+          <div className="border-t border-border-brand pt-3">
+            {recordingSupplies ? (
+              <CaseSuppliesForm caseId={c.id} onRecorded={() => setRecordingSupplies(false)} />
+            ) : (
+              <Button variant="outline" size="sm" onClick={() => setRecordingSupplies(true)} className="gap-1.5">
+                <Package className="h-3.5 w-3.5" aria-hidden="true" /> Record supplies used
+              </Button>
+            )}
+          </div>
+        )}
 
         {canManage && (
           <form
