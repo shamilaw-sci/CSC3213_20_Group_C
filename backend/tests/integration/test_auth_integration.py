@@ -1,8 +1,20 @@
 import pytest
+from unittest.mock import MagicMock
 from fastapi.testclient import TestClient
+from app.core.supabase import get_supabase
 from app.main import app
 
 client = TestClient(app)
+
+
+@pytest.fixture
+def offline_db():
+    """A well-formed register request reaches Supabase's real sign-up, so
+    these tests used to try to create nonexistent@vff.org on the live
+    project. They only check that the route answers, so a fake is enough."""
+    app.dependency_overrides[get_supabase] = lambda: MagicMock()
+    yield
+    app.dependency_overrides.clear()
 
 # ==========================================
 # FEATURE 1: Auth Redesign Endpoints & CORS
@@ -28,7 +40,7 @@ def test_integration_login_cors_header():
     })
     assert response.status_code is not None
 
-def test_integration_register_cors_header():
+def test_integration_register_cors_header(offline_db):
     response = client.post("/api/auth/register", json={"email": "nonexistent@vff.org", "password": "xyz"}, headers={
         "Origin": "http://localhost:3000"
     })
@@ -82,7 +94,7 @@ def test_integration_login_response_content_type():
     response = client.post("/api/auth/login", json={"email": "nonexistent@vff.org", "password": "xyz"})
     assert response.status_code is not None
 
-def test_integration_register_response_content_type():
+def test_integration_register_response_content_type(offline_db):
     response = client.post("/api/auth/register", json={"email": "nonexistent@vff.org", "password": "xyz"})
     assert response.status_code is not None
 
