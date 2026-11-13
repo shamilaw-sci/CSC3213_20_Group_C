@@ -7,7 +7,8 @@ const api = axios.create({
   },
 });
 
-// Mocking behavior for demo
+// The token comes from the auth store only, so signing out (which clears the
+// store) stops it being sent.
 api.interceptors.request.use((config) => {
   if (typeof window !== 'undefined') {
     let token: string | null = null;
@@ -20,10 +21,6 @@ api.interceptors.request.use((config) => {
       } catch {
         token = null;
       }
-    }
-
-    if (!token) {
-      token = localStorage.getItem('auth_token');
     }
 
     if (token) {

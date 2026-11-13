@@ -2,11 +2,10 @@ import api from '@/lib/api-client';
 
 export const AuthService = {
   login: async (credentials: any) => {
+    // The caller hands the token to useAuthStore.setAuth, the one place it is
+    // kept. It used to be copied to localStorage here as well, and sign-out
+    // never removed that copy.
     const response = await api.post('/auth/login', credentials);
-    if (response.data.access_token) {
-      localStorage.setItem('auth_token', response.data.access_token);
-      localStorage.setItem('user_role', response.data.user.role);
-    }
     return response.data;
   },
   
@@ -15,11 +14,6 @@ export const AuthService = {
     return response.data;
   },
   
-  logout: () => {
-    localStorage.removeItem('auth_token');
-    localStorage.removeItem('user_role');
-  },
-
   getUsers: async () => {
     const response = await api.get('/auth/users');
     return response.data;
