@@ -30,10 +30,14 @@ NOW = "2026-11-13T09:00:00+00:00"
 
 
 class _EventsQuery(_Query):
-    """Fills created_at on new timeline lines, as the column default does."""
+    """Fills created_at on new timeline lines, as the column default does, and
+    refuses a bulk insert whose rows have different keys, as PostgREST does
+    (PGRST102). That second rule is what broke the first live run."""
 
     def insert(self, data, *a, **k):
         rows = data if isinstance(data, list) else [data]
+        if len({frozenset(r) for r in rows}) > 1:
+            self._db.fail_inserts.setdefault(self._name, RuntimeError("PGRST102: All object keys must match"))
         return super().insert([{**r, "created_at": NOW} for r in rows])
 
 
@@ -62,7 +66,7 @@ def _case(db):
 
 
 def _events(db):
-    return [{k: v for k, v in e.items() if k not in ("id", "case_id", "created_at")}
+    return [{k: v for k, v in e.items() if k not in ("id", "case_id", "created_at") and v is not None}
             for e in db.tables["rescue_case_events"]]
 
 
@@ -148,7 +152,7 @@ def test_releasing_to_reported_records_the_unassignment():
     assert _move(db, new_status="Reported").status_code == 200
 
     assign, status = _events(db)
-    assert assign == {"event_type": "assign", "author_id": USER_ID, "assignee_id": None}
+    assert assign == {"event_type": "assign", "author_id": USER_ID}  # assignee_id NULL: unassigned
     assert status["to_status"] == "Reported"
 
 

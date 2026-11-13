@@ -381,7 +381,12 @@ def _record_events(supabase: Client, case_id: str, author_id, before: dict, upda
     failing the request now would tell staff that a move they can see on the
     board did not happen.
     """
-    base = {"case_id": case_id, "author_id": str(author_id)}
+    # Every row carries every column: PostgREST refuses a bulk insert whose
+    # rows have different keys (PGRST102, "All object keys must match").
+    base = {
+        "case_id": case_id, "author_id": str(author_id), "body": None, "from_status": None,
+        "to_status": None, "outcome": None, "assignee_id": None,
+    }
     events = []
     if updated.get("assigned_to") != before.get("assigned_to"):
         events.append({**base, "event_type": "assign", "assignee_id": updated.get("assigned_to")})
