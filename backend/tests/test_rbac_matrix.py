@@ -256,7 +256,7 @@ PERMISSION_ROUTES = [
     ("POST", f"/api/rescue_cases/cases/{CASE_ID}/notes", "rescue:manage"),
     ("POST", f"/api/rescue_cases/cases/{CASE_ID}/outcome", "rescue:manage"),
     ("GET", "/api/auth/users", "admin:users"),
-    ("PUT", f"/api/auth/users/{OTHER_USER_ID}/role", "admin:users"),
+    ("PUT", f"/api/auth/users/{OTHER_USER_ID}/role", "admin:roles"),
     ("DELETE", f"/api/auth/users/{OTHER_USER_ID}", "admin:users"),
     ("POST", "/api/inventory/items", "inventory:manage"),
     ("PATCH", "/api/inventory/items/1", "inventory:manage"),
@@ -642,3 +642,25 @@ def test_rescue_read_gate_blocks_finance_officer():
             f"/api/rescue_cases/cases/{CASE_ID}/status",
             json={"new_status": "Reported"},
         ).status_code == 403
+
+
+# --------------------------------------------------------------------------
+# Role changes: Admin only
+# --------------------------------------------------------------------------
+
+def test_only_admin_may_change_roles():
+    """System Administrator manages accounts but must not grant roles.
+
+    It holds admin:users, which used to be the only gate on PUT /role, so it
+    could promote itself (or anyone) to Admin. The matrix row above proves the
+    gate is admin:roles; this pins down who holds that.
+    """
+    holders = sorted(r for r, perms in ROLE_PERMISSIONS.items() if "admin:roles" in perms)
+    assert holders == ["Admin"]
+
+
+def test_system_administrator_cannot_promote_itself_to_admin():
+    tables = {"users": {"select": [{"id": USER_ID, "email": "rbac@vff.test", "role_id": 7}]}}
+    with acting_as("System Administrator", tables=tables):
+        response = _request("PUT", f"/api/auth/users/{USER_ID}/role", json={"role_id": 1})
+    assert response.status_code == 403

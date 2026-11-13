@@ -5,21 +5,21 @@ import { cn } from '@/lib/utils';
 import { useScrollReveal } from '@/components/home/useScrollReveal';
 
 // Same full-bleed treatment as the homepage hero: the photo renders at its
-// natural aspect via next/image rather than a fixed-height bg-cover box, so
-// nothing gets cropped, and the gradient is weighted to the bottom where the
-// text sits.
+// natural aspect but is capped at the viewport height so the headline stays
+// above the fold, and the gradient is weighted to the bottom where the text
+// sits.
 export default function WhoWeAreHero() {
   const { ref, revealed } = useScrollReveal<HTMLElement>();
 
   return (
-    <section ref={ref} className="relative overflow-hidden">
+    <section ref={ref} className="relative overflow-hidden aspect-[3/2] max-h-[calc(100svh-4rem)] min-h-[560px] w-full">
       <Image
         src="/images/new3.jpg"
         alt="A rescued kitten held by a Vets For Future volunteer"
-        width={5184}
-        height={3456}
+        fill
+        sizes="100vw"
         priority
-        className="w-full h-auto"
+        className="object-cover object-[50%_40%]"
       />
 
       <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent" />

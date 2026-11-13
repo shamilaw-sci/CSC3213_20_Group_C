@@ -10,7 +10,7 @@ from app.core.audit import log_audit_action
 router = APIRouter()
 
 # Every self-service signup gets this role. Role changes go through
-# PUT /users/{id}/role, which requires admin:users.
+# PUT /users/{id}/role, which requires admin:roles (Admin only).
 SIGNUP_ROLE = "General Staff"
 
 
@@ -93,7 +93,9 @@ class UpdateRoleRequest(BaseModel):
 async def update_user_role(
     user_id: str,
     data: UpdateRoleRequest,
-    current_user: dict = Depends(require_permission('admin:users')),
+    # admin:roles, not admin:users: System Administrator holds admin:users and
+    # would otherwise be able to grant itself Admin.
+    current_user: dict = Depends(require_permission('admin:roles')),
     supabase: Client = Depends(get_supabase),
 ):
     try:
