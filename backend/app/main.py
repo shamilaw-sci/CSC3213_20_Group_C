@@ -36,6 +36,7 @@ from app.api import (
     chat,
     volunteers,
     donations,
+    inbox,
 )
 
 
@@ -99,6 +100,7 @@ app.include_router(programs.router, prefix="/api/programs", tags=["Programs"])
 app.include_router(chat.router, prefix="/api/chat", tags=["Chat"])
 app.include_router(volunteers.router, prefix="/api/volunteers", tags=["Volunteers"])
 app.include_router(donations.router, prefix="/api/donations", tags=["Donations"])
+app.include_router(inbox.router, prefix="/api/inbox", tags=["Inbox"])
 
 
 if __name__ == "__main__":

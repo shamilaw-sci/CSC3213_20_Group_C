@@ -943,6 +943,12 @@ async def get_low_stock_items(
     user=Depends(_ANY_INVENTORY),
     supabase: Client = Depends(get_supabase),
 ):
+    return low_stock_items(supabase, threshold)
+
+
+def low_stock_items(supabase: Client, threshold: int = DEFAULT_REORDER_LEVEL) -> list[dict]:
+    """Items below their reorder level, lowest first. Also counted by the
+    inbox (app/api/inbox.py)."""
     # Each item is compared with its own reorder level. PostgREST cannot
     # compare two columns, so the (small) item list is filtered here. "*"
     # keeps this working before migration 019 adds reorder_level.
@@ -969,6 +975,12 @@ async def get_expiring_items(
     user=Depends(_ANY_INVENTORY),
     supabase: Client = Depends(get_supabase),
 ):
+    return expiring_items(supabase, days)
+
+
+def expiring_items(supabase: Client, days: int = 30) -> list[dict]:
+    """Items on the shelf that have expired or expire within `days`. Also
+    counted by the inbox (app/api/inbox.py)."""
     # "Expiring" = already expired OR expiring within the next `days` days.
     # We don't filter out already-expired items here on purpose: those are
     # arguably the MOST urgent ones to show, not something to hide.
