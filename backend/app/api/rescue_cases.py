@@ -140,6 +140,10 @@ async def list_cases(
     return cases
 
 
+# Shown in a case timeline for someone whose account has since been deleted.
+DELETED_USER = {"email": "", "display_name": "Deleted user"}
+
+
 def _people(supabase: Client, user_ids) -> dict[str, dict]:
     """{user_id: CaseAssignee-shaped dict} for the given users. A deleted user
     is simply missing, so callers fall back to None."""
@@ -460,18 +464,27 @@ async def get_case_timeline(
         + [m.get("recorded_by") for m in supplies],
     )
 
+    # A stored id whose account is gone (migration 034 keeps it) is shown as a
+    # deleted user. Falling back to None would say something false: no author
+    # on the first line reads "Reported by the public", and no assignee on an
+    # assign line reads "Released, now unassigned".
+    def person(user_id):
+        if not user_id:
+            return None
+        return people.get(str(user_id)) or DELETED_USER
+
     reported = {
         "id": 0,
         "event_type": "reported",
         "body": case.get("description"),
-        "author": people.get(case.get("reported_by")),
+        "author": person(case.get("reported_by")),
         "created_at": case["reported_at"],
     }
     lines = [
         {
             **e,
-            "author": people.get(e.get("author_id")),
-            "assignee": people.get(e.get("assignee_id")),
+            "author": person(e.get("author_id")),
+            "assignee": person(e.get("assignee_id")),
         }
         for e in events
     ] + [_supplies_line(m, people) for m in supplies]
