@@ -4,7 +4,7 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
-import { AlertTriangle, ArrowRight, CalendarHeart, PawPrint, RefreshCw, Search } from 'lucide-react';
+import { AlertTriangle, ArrowRight, CalendarHeart, RefreshCw, Search } from 'lucide-react';
 import { ProgramService } from '@/services/program.service';
 import { PROGRAM_TYPES, type ProgramType } from '@/types';
 import { ClinicCard } from '@/components/clinics/ClinicCard';
@@ -41,14 +41,19 @@ export default function PublicClinicsPage() {
       <HomeHeader />
 
       <main className="flex-grow pt-16">
-        <section className="relative overflow-hidden bg-[#0B0D12]">
-          <PawPrint
-            className="absolute -right-12 -bottom-20 text-white/[0.04] rotate-12 pointer-events-none select-none"
-            size={300}
-            strokeWidth={1}
-            aria-hidden="true"
+        {/* Hero — public_page.jpg was supplied directly (resized for the web
+            from the 6904px original). Same photo-plus-bottom-gradient shape as
+            the donate and volunteer pages; the extra bottom padding leaves room
+            for the search card that floats up over it. */}
+        <section className="relative h-[460px] md:h-[520px] overflow-hidden bg-[#0B0D12]">
+          <div
+            className="absolute inset-0 bg-cover bg-[center_40%]"
+            style={{ backgroundImage: "url('/images/public_page.jpg')" }}
+            role="img"
+            aria-label="A vet giving medicine to a litter of puppies"
           />
-          <div className="relative max-w-[1280px] mx-auto px-6 md:px-12 pt-14 pb-24 text-center space-y-4">
+          <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/40 to-black/10" />
+          <div className="relative h-full max-w-[1280px] mx-auto px-6 md:px-12 pb-24 flex flex-col items-center justify-end text-center space-y-4">
             <span className="inline-flex items-center gap-2 text-xs font-bold tracking-wider text-[#EF9F27] uppercase">
               <CalendarHeart size={14} />
               Clinics & Drives
@@ -56,7 +61,7 @@ export default function PublicClinicsPage() {
             <h1 className="text-3xl md:text-5xl font-bold font-heading text-white tracking-tight">
               Free clinics near you
             </h1>
-            <p className="text-sm md:text-lg text-white/80 max-w-2xl mx-auto leading-relaxed">
+            <p className="text-sm md:text-lg text-white/85 max-w-2xl mx-auto leading-relaxed">
               Sterilization drives, vaccination camps and free animal health clinics
               that VFF is running now or soon. Bring your own animals, or the street
               dogs and cats you look after.
