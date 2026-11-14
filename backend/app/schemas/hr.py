@@ -49,6 +49,9 @@ def _clean_name(value: str) -> str:
 class EmployeeProfileCreate(EmployeeProfileBase):
     base_salary: float = Field(gt=0)
     status: EmployeeStatus = "Active"
+    # Set here so a new hire starts with the right first-year leave and payroll
+    # pro-rating; changed later via PATCH /leave/employees/{id}/date-joined.
+    date_joined: Optional[date] = None
 
     _names = field_validator("first_name", "last_name")(_clean_name)
     _nic = field_validator("nic")(_clean_nic)

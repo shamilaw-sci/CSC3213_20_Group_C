@@ -113,15 +113,20 @@ def _is_unique_violation(e: Exception) -> bool:
 
 @router.post("/employees", response_model=EmployeeProfile)
 async def create_employee(employee: EmployeeProfileCreate, user = Depends(require_permission('hr:manage')), supabase: Client = Depends(get_supabase)):
+    # The same limit as PATCH /leave/employees/{id}/date-joined.
+    if employee.date_joined and employee.date_joined > _sl_today() + timedelta(days=366):
+        raise HTTPException(status_code=400, detail="That join date is more than a year away.")
     _ensure_nic_free(supabase, employee.nic)
     if employee.user_id:
         _check_login(supabase, employee.user_id)
     try:
-        payload = employee.model_dump()
+        payload = employee.model_dump(mode="json")
         # Only sent when set, so creating an employee keeps working before
         # migration 026 adds the column.
         if not (payload.get("epf_number") or "").strip():
             payload.pop("epf_number", None)
+        if not payload.get("date_joined"):
+            payload.pop("date_joined", None)
         response = supabase.table("employee_profile").insert(payload).execute()
     except Exception as e:
         if _is_unique_violation(e):

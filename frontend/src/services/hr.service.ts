@@ -1,5 +1,5 @@
 import api from '@/lib/api-client';
-import { CorrectionInput, CorrectionRequest, MonthClosePreview, Employee, EmployeeUpdate, LinkableLogin, MyPayslip, AttendanceRecord, AttendanceMonth, PayrollRun, PayrollRunView, TrackingImpact } from '@/types';
+import { CorrectionInput, CorrectionRequest, MonthClosePreview, Employee, EmployeeCreate, EmployeeUpdate, LinkableLogin, MyPayslip, AttendanceRecord, AttendanceMonth, PayrollRun, PayrollRunView, TrackingImpact } from '@/types';
 
 export const HRService = {
   getEmployees: async () => {
@@ -7,7 +7,7 @@ export const HRService = {
     return response.data;
   },
   
-  createEmployee: async (employee: Omit<Employee, 'id'>) => {
+  createEmployee: async (employee: EmployeeCreate) => {
     const response = await api.post<Employee>('/hr/employees', employee);
     return response.data;
   },

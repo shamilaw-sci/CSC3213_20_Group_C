@@ -159,6 +159,45 @@ def test_invalid_employee_details_are_refused_before_any_write(changes):
     assert len(db.tables["employee_profile"]) == 1
 
 
+def test_create_takes_the_login_epf_number_and_join_date_in_one_step():
+    db = _Db([KAMALA])
+    db.tables["users"] = [{"id": LOGIN_ID, "roles": {"role_name": "General Staff"}}]
+    response = _send(db, "POST", "/api/hr/employees",
+                     _new(user_id=LOGIN_ID, epf_number="KY/12345", date_joined="2026-11-03"))
+
+    assert response.status_code == 200, response.text
+    saved = db.tables["employee_profile"][-1]
+    assert saved["user_id"] == LOGIN_ID
+    assert saved["epf_number"] == "KY/12345"
+    assert saved["date_joined"] == "2026-11-03"
+
+
+def test_create_without_a_join_date_leaves_it_unset():
+    db = _Db([KAMALA])
+    response = _send(db, "POST", "/api/hr/employees", _new())
+
+    assert response.status_code == 200, response.text
+    assert "date_joined" not in db.tables["employee_profile"][-1]
+
+
+def test_a_join_date_more_than_a_year_away_is_refused():
+    db = _Db([KAMALA])
+    response = _send(db, "POST", "/api/hr/employees", _new(date_joined="2099-01-01"))
+
+    assert response.status_code == 400, response.text
+    assert "more than a year away" in response.json()["detail"]
+    assert len(db.tables["employee_profile"]) == 1
+
+
+def test_create_cannot_take_a_login_already_linked_to_someone():
+    db = _Db([STAFF])
+    db.tables["users"] = [{"id": LOGIN_ID, "roles": {"role_name": "General Staff"}}]
+    response = _send(db, "POST", "/api/hr/employees", _new(user_id=LOGIN_ID))
+
+    assert response.status_code == 409, response.text
+    assert len(db.tables["employee_profile"]) == 1
+
+
 # --------------------------------------------------------------------------
 # Edit
 # --------------------------------------------------------------------------

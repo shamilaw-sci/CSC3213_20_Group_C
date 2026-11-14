@@ -26,6 +26,13 @@ export interface Employee {
   epf_number?: string | null;
 }
 
+// POST /hr/employees. date_joined is set here or later on the Leave page.
+export type EmployeeCreate = Pick<Employee, 'first_name' | 'last_name' | 'nic' | 'base_salary' | 'status'> & {
+  user_id?: string | null;
+  epf_number?: string | null;
+  date_joined?: string | null;
+};
+
 // PUT /hr/employees/{id} writes only the fields sent. user_id: null unlinks
 // the login; the other fields cannot be cleared.
 export type EmployeeUpdate = Partial<Pick<Employee, 'first_name' | 'last_name' | 'nic' | 'base_salary' | 'status'>> & {
