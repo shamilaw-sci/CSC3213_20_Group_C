@@ -1,5 +1,7 @@
+import asyncio
 import json
 import logging
+import time
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
@@ -21,10 +23,16 @@ MAX_TOOL_ROUNDS = 5
 # staff can act on "try again", not on a provider status code.
 UNAVAILABLE_MESSAGE = "The assistant is temporarily unavailable, please try again."
 
-# Staff will wait longer than a member of the public, so no overall cap like the
-# classifier's — but 60 s per read across up to MAX_TOOL_ROUNDS calls was
-# minutes of spinner before the error above could appear.
+# Staff will wait longer than a member of the public, but not past the proxy in
+# front of the API: Next.js cuts a rewritten request off at 30 s and answers a
+# bare 500, so the message above never reached the widget. A provider 503 took
+# about 15 s per attempt, and with the one retry that was 32 s. The whole
+# request, every tool round included, now has to finish inside this budget,
+# with room left for the sign-in lookups that run before it starts.
+CHAT_BUDGET_S = 20.0
 CHAT_TIMEOUT = httpx.Timeout(30.0, connect=5.0)
+# Not worth starting another model call with less than this left.
+MIN_CALL_S = 2.0
 
 SYSTEM_PROMPT = """You are the assistant for VFF IMS, the internal management \
 system for Vets For Future, a Sri Lankan animal welfare nonprofit.
@@ -64,7 +72,12 @@ async def chat(
         {"role": "user", "content": req.message},
     ]
 
+    deadline = time.monotonic() + CHAT_BUDGET_S
     for _ in range(MAX_TOOL_ROUNDS):
+        remaining = deadline - time.monotonic()
+        if remaining < MIN_CALL_S:
+            logger.warning("chat: out of time after earlier rounds")
+            raise HTTPException(503, UNAVAILABLE_MESSAGE)
         # Upstream failures (Gemini 503/429, timeouts, dropped connections)
         # used to escape as an unhandled 500 with a traceback. They are the
         # provider's problem, not a bug here, so they are logged without one
@@ -72,9 +85,16 @@ async def chat(
         try:
             # One retry on connection errors and 503 (see llm._retry_backoff_s);
             # a 429 only if its requested wait is short, which a spent daily
-            # quota's never is.
-            data = await complete(messages, schemas, timeout=CHAT_TIMEOUT, retry=True)
+            # quota's never is. wait_for is the hard cap; deadline lets
+            # complete() skip a retry that could not finish inside it.
+            data = await asyncio.wait_for(
+                complete(messages, schemas, timeout=CHAT_TIMEOUT, retry=True, deadline=deadline),
+                remaining,
+            )
             msg = data["choices"][0]["message"]
+        except asyncio.TimeoutError:
+            logger.warning("chat: LLM did not answer within the %.0fs budget", CHAT_BUDGET_S)
+            raise HTTPException(503, UNAVAILABLE_MESSAGE)
         except httpx.HTTPStatusError as e:
             logger.warning("chat: LLM returned HTTP %s (%s)",
                            e.response.status_code, type(e).__name__)
