@@ -170,3 +170,42 @@ def test_chat_uses_its_own_shorter_timeout(monkeypatch):
 
     assert calls == [CHAT_TIMEOUT]
     assert CHAT_TIMEOUT.read == 30.0
+
+
+# Overall budget. Next.js cuts a proxied request off at 30 s with a bare 500,
+# so the whole chat request has to give up, cleanly, before that.
+
+def test_a_hung_provider_ends_in_the_clean_message_within_the_budget(monkeypatch):
+    import asyncio
+    import app.api.chat as chat
+
+    monkeypatch.setattr(chat, "CHAT_BUDGET_S", 0.3)
+    monkeypatch.setattr(chat, "MIN_CALL_S", 0.0)
+
+    async def _hangs(*_a, **_k):
+        await asyncio.sleep(5)
+
+    with acting_as(ROLE), patch("app.api.chat.complete", _hangs):
+        r = _request("POST", "/api/chat", json={"message": "hi"})
+
+    assert r.status_code == 503
+    assert r.json()["detail"] == UNAVAILABLE_MESSAGE
+
+
+def test_chat_passes_its_deadline_so_a_doomed_retry_is_skipped():
+    import time
+    from app.api.chat import CHAT_BUDGET_S
+
+    seen = {}
+
+    async def _complete(*_a, **k):
+        seen.update(k)
+        return REPLY
+
+    started = time.monotonic()
+    with acting_as(ROLE), patch("app.api.chat.complete", _complete):
+        _request("POST", "/api/chat", json={"message": "hi"})
+
+    assert seen["retry"] is True
+    assert started < seen["deadline"] <= started + CHAT_BUDGET_S + 1
+    assert CHAT_BUDGET_S < 30
