@@ -25,6 +25,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from supabase import Client
 
 from app.core.audit import log_audit_action
+from app.core.ids import UuidPath
 from app.core.security import require_permission, require_any_permission
 from app.core.supabase import get_public_supabase, get_supabase
 from app.schemas.volunteer import (
@@ -453,7 +454,7 @@ async def list_volunteers(
 
 @router.patch("/{volunteer_id}/review", response_model=VolunteerOut)
 async def review_volunteer(
-    volunteer_id: str,
+    volunteer_id: UuidPath,
     payload: VolunteerReview,
     supabase: Client = Depends(get_supabase),
     current_user: dict = Depends(require_permission("volunteers:approve")),
@@ -530,7 +531,7 @@ async def review_volunteer(
 
 @router.post("/{volunteer_id}/link-shared", response_model=VolunteerOut)
 async def mark_link_shared(
-    volunteer_id: str,
+    volunteer_id: UuidPath,
     supabase: Client = Depends(get_supabase),
     current_user: dict = Depends(
         require_any_permission("volunteers:approve", "volunteers:assign")
@@ -580,7 +581,7 @@ async def mark_link_shared(
 
 @router.post("/{volunteer_id}/reset-link", response_model=VolunteerOut)
 async def reset_volunteer_link(
-    volunteer_id: str,
+    volunteer_id: UuidPath,
     supabase: Client = Depends(get_supabase),
     current_user: dict = Depends(require_permission("volunteers:approve")),
 ):
@@ -736,7 +737,7 @@ async def create_shift(
 
 @router.patch("/shifts/{shift_id}", response_model=ShiftOut)
 async def update_shift(
-    shift_id: str,
+    shift_id: UuidPath,
     payload: ShiftUpdate,
     supabase: Client = Depends(get_supabase),
     current_user: dict = Depends(require_permission("volunteers:assign")),
@@ -924,7 +925,7 @@ async def create_assignment(
 
 @router.delete("/assignments/{assignment_id}")
 async def delete_assignment(
-    assignment_id: str,
+    assignment_id: UuidPath,
     supabase: Client = Depends(get_supabase),
     current_user: dict = Depends(require_permission("volunteers:assign")),
 ):
