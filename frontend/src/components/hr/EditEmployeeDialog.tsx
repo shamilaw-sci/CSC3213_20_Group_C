@@ -7,6 +7,7 @@ import {
 } from '@/components/ui/dialog';
 import { field } from '@/components/leave/LeaveForm';
 import { useLinkableLogins, useUpdateEmployee } from '@/hooks/useHR';
+import { useSetDateJoined } from '@/hooks/useLeave';
 import { NIC_PATTERN, NIC_RULE } from '@/lib/employees';
 import { colomboDate } from '@/components/hr/attendance/dayStatus';
 import { getErrorMessage } from '@/lib/utils';
@@ -22,6 +23,11 @@ type Props = {
  * Sends only what changed (PUT /hr/employees/{id} is a partial update), so a
  * legacy NIC like DEMO5V is left alone unless HR actually edits it.
  *
+ * The join date goes through PATCH /leave/employees/{id}/date-joined instead,
+ * the same call as the Leave page, because a new date recomputes this year's
+ * leave allowances. It is saved first: the PUT checks a last working day
+ * against the join date already on file.
+ *
  * Mounted only while editing, with key={employee.id} so the form starts
  * fresh for each employee.
  */
@@ -35,10 +41,14 @@ export function EditEmployeeDialog({ employee, onClose }: Props) {
   const [epfNumber, setEpfNumber] = useState(employee.epf_number ?? '');
   // A leaver's last day: payroll pays their final month up to it.
   const [dateLeft, setDateLeft] = useState(employee.date_left ?? colomboDate());
+  const [dateJoined, setDateJoined] = useState(employee.date_joined ?? '');
   const [error, setError] = useState<string | null>(null);
 
   const { data: logins, isLoading: loadingLogins, isError: loginsFailed } = useLinkableLogins();
-  const { mutate: update, isPending } = useUpdateEmployee();
+  const { mutate: update, isPending: isUpdating } = useUpdateEmployee();
+  // Its own toast reports a failure, and which leave allowances moved.
+  const { mutateAsync: saveDateJoined, isPending: isSavingDate } = useSetDateJoined();
+  const isPending = isUpdating || isSavingDate;
 
   const changes: EmployeeUpdate = {};
   if (firstName.trim() !== employee.first_name) changes.first_name = firstName.trim();
@@ -49,14 +59,26 @@ export function EditEmployeeDialog({ employee, onClose }: Props) {
   if (loginId !== (employee.user_id ?? '')) changes.user_id = loginId || null;
   if (epfNumber.trim() !== (employee.epf_number ?? '')) changes.epf_number = epfNumber.trim() || null;
   if (status === 'Inactive' && dateLeft !== (employee.date_left ?? '')) changes.date_left = dateLeft || null;
-  const changed = Object.keys(changes).length > 0;
+  // The endpoint takes a date, not a clear, so blanking the field changes nothing.
+  const dateJoinedChanged = dateJoined !== '' && dateJoined !== (employee.date_joined ?? '');
+  const changed = Object.keys(changes).length > 0 || dateJoinedChanged;
 
-  const save = () => {
+  const save = async () => {
     if (changes.first_name === '' || changes.last_name === '') return setError('Names cannot be blank');
     if (changes.nic !== undefined && !NIC_PATTERN.test(changes.nic)) return setError(NIC_RULE);
     if (changes.base_salary !== undefined && !(changes.base_salary > 0)) return setError('Salary must be a positive number');
     if (status === 'Inactive' && !dateLeft) return setError('Give the last working day, so the final month is paid up to it.');
+    const joined = dateJoined || employee.date_joined;
+    if (status === 'Inactive' && joined && dateLeft < joined) return setError("The last working day can't be before the join date.");
     setError(null);
+    if (dateJoinedChanged) {
+      try {
+        await saveDateJoined({ employeeId: employee.id, date: dateJoined });
+      } catch {
+        return; // the hook's toast gives the reason
+      }
+    }
+    if (Object.keys(changes).length === 0) return onClose();
     update({ id: employee.id, changes }, {
       onSuccess: onClose,
       onError: (err) => setError(getErrorMessage(err) || 'Failed to update the employee'),
@@ -91,6 +113,14 @@ export function EditEmployeeDialog({ employee, onClose }: Props) {
             <input type="number" min="1" value={salary} onChange={(e) => setSalary(e.target.value)} className={`${field} font-mono`} />
           </label>
           <label className={label}>
+            Date joined {!employee.date_joined && <span className="font-normal text-text-muted">(not set)</span>}
+            <input type="date" value={dateJoined} onChange={(e) => setDateJoined(e.target.value)} className={`${field} font-mono`} />
+          </label>
+          <label className={label}>
+            EPF number <span className="font-normal text-text-muted">(on payslips)</span>
+            <input value={epfNumber} onChange={(e) => setEpfNumber(e.target.value)} maxLength={20} className={`${field} font-mono`} />
+          </label>
+          <label className={label}>
             Status
             <select value={status} onChange={(e) => setStatus(e.target.value)} className={field}>
               <option value="Active">Active</option>
@@ -100,17 +130,13 @@ export function EditEmployeeDialog({ employee, onClose }: Props) {
           {status === 'Inactive' ? (
             <label className={label}>
               Last working day
-              <input type="date" value={dateLeft} min={employee.date_joined ?? undefined}
+              <input type="date" value={dateLeft} min={dateJoined || undefined}
                 onChange={(e) => setDateLeft(e.target.value)} className={`${field} font-mono`} />
             </label>
           ) : (
             <span className="hidden sm:block" />
           )}
-          <label className={label}>
-            EPF number <span className="font-normal text-text-muted">(on payslips)</span>
-            <input value={epfNumber} onChange={(e) => setEpfNumber(e.target.value)} maxLength={20} className={`${field} font-mono`} />
-          </label>
-          <label className={label}>
+          <label className={`${label} sm:col-span-2`}>
             Linked login
             <select value={loginId} onChange={(e) => setLoginId(e.target.value)} className={field} disabled={loadingLogins}>
               <option value="">Not linked</option>

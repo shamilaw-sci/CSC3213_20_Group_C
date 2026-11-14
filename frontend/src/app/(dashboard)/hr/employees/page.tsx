@@ -7,8 +7,8 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { UserPlus, Download, Pencil } from 'lucide-react';
-import { formatLKR } from '@/lib/formatters';
+import { UserPlus, Download, Pencil, Search } from 'lucide-react';
+import { formatDate, formatLKR } from '@/lib/formatters';
 import { buildCsv, downloadCsv } from '@/lib/csv';
 import ProtectedRoute from '@/components/layout/protected-route';
 import { EditEmployeeDialog } from '@/components/hr/EditEmployeeDialog';
@@ -38,13 +38,18 @@ function HRContent() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [editing, setEditing] = useState<Employee | null>(null);
   const [adding, setAdding] = useState(false);
+  const [search, setSearch] = useState('');
 
   const { data: employees, isLoading: loadingEmployees, isError: employeesFailed } = useEmployees();
 
-  const shown = useMemo(
-    () => (employees ?? []).filter((emp) => statusFilter === 'all' || emp.status === statusFilter),
-    [employees, statusFilter],
-  );
+  // Name, NIC, EPF number or login email; the export follows what is shown.
+  const shown = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    return (employees ?? []).filter((emp) =>
+      (statusFilter === 'all' || emp.status === statusFilter)
+      && (!term || [`${emp.first_name} ${emp.last_name}`, emp.nic, emp.epf_number, emp.login_email]
+        .some((v) => v?.toLowerCase().includes(term))));
+  }, [employees, statusFilter, search]);
 
   const handleExport = () => {
     if (shown.length === 0) {
@@ -52,14 +57,16 @@ function HRContent() {
       return;
     }
     const csv = buildCsv(
-      ['First Name', 'Last Name', 'NIC', 'Base Salary (LKR)', 'Status', 'Date Joined', 'Linked Login'],
+      ['First Name', 'Last Name', 'NIC', 'EPF Number', 'Base Salary (LKR)', 'Status', 'Date Joined', 'Last Working Day', 'Linked Login'],
       shown.map((emp) => [
         emp.first_name,
         emp.last_name,
         emp.nic,
+        emp.epf_number,
         Number(emp.base_salary),
         emp.status,
         emp.date_joined,
+        emp.date_left,
         emp.login_email ?? (emp.user_id ? 'Linked' : ''),
       ]),
     );
@@ -99,23 +106,36 @@ function HRContent() {
         </div>
 
         <Card className="bg-surface border border-border-brand rounded-card shadow-card p-5">
-          <CardHeader className="flex flex-row items-center justify-between p-0 pb-4">
+          <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 p-0 pb-4">
             <div>
               <CardTitle className="text-base font-semibold font-heading text-text-primary">{FILTER_TITLES[statusFilter]}</CardTitle>
               <CardDescription className="text-text-secondary text-xs mt-1">
                 {employees ? `Showing ${shown.length} of ${employees.length} employees.` : 'Directory of all personnel.'}
               </CardDescription>
             </div>
-            <select
-              aria-label="Filter by status"
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
-              className="bg-bg-subtle border border-border-brand rounded-lg px-3 py-2 text-xs text-text-primary focus:outline-none focus:border-accent"
-            >
-              <option value="all">All Statuses</option>
-              <option value="Active">Active</option>
-              <option value="Inactive">Inactive</option>
-            </select>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-text-secondary" size={14} />
+                <input
+                  type="search"
+                  aria-label="Search employees"
+                  placeholder="Search name, NIC, EPF or login"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  className="w-60 bg-bg-subtle border border-border-brand rounded-lg pl-8 pr-3 py-2 text-xs text-text-primary focus:outline-none focus:border-accent"
+                />
+              </div>
+              <select
+                aria-label="Filter by status"
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
+                className="bg-bg-subtle border border-border-brand rounded-lg px-3 py-2 text-xs text-text-primary focus:outline-none focus:border-accent"
+              >
+                <option value="all">All Statuses</option>
+                <option value="Active">Active</option>
+                <option value="Inactive">Inactive</option>
+              </select>
+            </div>
           </CardHeader>
           <CardContent className="p-0 pt-4">
             {loadingEmployees ? (
@@ -131,6 +151,7 @@ function HRContent() {
                       <TableHead className="text-text-secondary font-heading text-xs">Name</TableHead>
                       <TableHead className="text-text-secondary font-heading text-xs">NIC</TableHead>
                       <TableHead className="text-text-secondary font-heading text-xs">Salary</TableHead>
+                      <TableHead className="text-text-secondary font-heading text-xs">Date Joined</TableHead>
                       <TableHead className="text-text-secondary font-heading text-xs">Status</TableHead>
                       <TableHead className="text-text-secondary font-heading text-xs">Login</TableHead>
                       <TableHead className="text-text-secondary font-heading text-xs text-right"><span className="sr-only">Actions</span></TableHead>
@@ -139,9 +160,10 @@ function HRContent() {
                   <TableBody>
                     {shown.length === 0 ? (
                       <TableRow className="hover:bg-transparent border-border-brand">
-                        <TableCell colSpan={6} className="text-center text-text-secondary text-xs py-8">
+                        <TableCell colSpan={7} className="text-center text-text-secondary text-xs py-8">
                           {employeesFailed
                             ? 'Could not load employees. Refresh to try again.'
+                            : search.trim() ? `No employees match "${search.trim()}".`
                             : statusFilter === 'all' ? 'No employees yet.' : `No ${statusFilter.toLowerCase()} employees.`}
                         </TableCell>
                       </TableRow>
@@ -150,6 +172,7 @@ function HRContent() {
                         <TableCell className="font-semibold text-text-primary text-xs">{emp.first_name} {emp.last_name}</TableCell>
                         <TableCell className="text-text-secondary text-xs font-mono">{emp.nic}</TableCell>
                         <TableCell className="text-text-primary font-mono text-xs font-semibold">{formatLKR(emp.base_salary)}</TableCell>
+                        <TableCell className="text-text-secondary text-xs">{emp.date_joined ? formatDate(emp.date_joined) : 'Not set'}</TableCell>
                         <TableCell>
                           <Badge className={
                             emp.status === 'Active'
