@@ -66,6 +66,24 @@ def is_missing_location_column(error: Exception) -> bool:
     return "location" in text and ("pgrst204" in text or "column" in text)
 
 
+# Shown when publishing is tried before migration 035 is run.
+PUBLIC_LISTING_MIGRATION_MESSAGE = (
+    "Public listings are not set up in the database yet. "
+    "Run backend/db/migrations/035_program_public_listing.sql in Supabase, then try again."
+)
+
+_PUBLIC_LISTING_COLUMNS = ("is_public", "program_type", "public_venue", "public_schedule", "public_notes")
+
+
+def is_missing_public_listing_column(error: Exception) -> bool:
+    """True when PostgREST refused a read or write because a migration 035
+    column does not exist yet (PGRST204 on write, 42703 on select)."""
+    text = str(error).lower()
+    return any(c in text for c in _PUBLIC_LISTING_COLUMNS) and (
+        "pgrst204" in text or "42703" in text or "column" in text
+    )
+
+
 # Shown when a feature needs db/migrations/022_program_fixes.sql.
 PROGRAM_FIXES_MIGRATION_MESSAGE = (
     "This needs the programs update. Run backend/db/migrations/022_program_fixes.sql "

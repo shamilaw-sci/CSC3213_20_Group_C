@@ -18,8 +18,72 @@ class ProgramDetail(BaseModel):
     total_cost: Optional[float] = 0
     # NULL on programs created before locations were recorded (migration 011).
     location: Optional[str] = None
+    # The public listing (migration 035). Defaults cover the rows read before
+    # the migration is applied.
+    is_public: bool = False
+    program_type: Optional[str] = None
+    public_venue: Optional[str] = None
+    public_schedule: Optional[str] = None
+    public_notes: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+# What the public is told a program is. Mirrors programs_program_type_known.
+PROGRAM_TYPES = ("Sterilization", "Vaccination", "Free Clinic", "Awareness", "Other")
+
+
+def _squash(v):
+    """Collapse runs of whitespace; a blank string becomes None (cleared)."""
+    if not isinstance(v, str):
+        return v
+    v = " ".join(v.split())
+    return v or None
+
+
+# --- PUT /{id}/public-listing: publish a program on the public /clinics page,
+# change what it says, or take it down. The whole listing is sent each time,
+# so clearing a field is sending it empty. Notes keep their line breaks. ---
+class ProgramPublicListingUpdate(BaseModel):
+    is_public: bool
+    program_type: Optional[str] = None
+    public_venue: Optional[str] = Field(None, max_length=200)
+    public_schedule: Optional[str] = Field(None, max_length=200)
+    public_notes: Optional[str] = Field(None, max_length=1000)
+
+    @field_validator("public_venue", "public_schedule", "program_type", mode="before")
+    @classmethod
+    def _trim(cls, v):
+        return _squash(v)
+
+    @field_validator("public_notes", mode="before")
+    @classmethod
+    def _trim_notes(cls, v):
+        if not isinstance(v, str):
+            return v
+        v = "\n".join(" ".join(line.split()) for line in v.strip().splitlines())
+        return v or None
+
+    @field_validator("program_type")
+    @classmethod
+    def _known_type(cls, v):
+        if v is not None and v not in PROGRAM_TYPES:
+            raise ValueError(f"program_type must be one of: {', '.join(PROGRAM_TYPES)}.")
+        return v
+
+
+# --- GET /public: one card on the public /clinics page. Only what a member of
+# the public needs to turn up; no costs, team, volunteers or counts. ---
+class PublicProgram(BaseModel):
+    id: int
+    program_name: str
+    program_type: Optional[str] = None
+    status: str
+    location: Optional[str] = None
+    public_venue: Optional[str] = None
+    public_schedule: Optional[str] = None
+    public_notes: Optional[str] = None
+    start_date: Optional[date] = None
 
 
 # --- POST /{id}/complete: the final count, recorded as the program closes.
