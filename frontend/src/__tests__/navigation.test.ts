@@ -6,7 +6,7 @@ import { type UserRole } from '../lib/permissions';
 // Hand-written on purpose: deriving these from ROLE_PERMISSIONS would make the
 // test tautological. Because the map is keyed by the UserRole union, adding a
 // role without deciding what it can see is a compile error, not a silent gap.
-const PERSONAL = ['Go to Website Home', 'Edit Profile', 'Account Settings', 'Support'];
+const PERSONAL = ['Go to Website Home', 'My Profile', 'Account Settings', 'Support'];
 
 const expectedItemsPerRole: Record<UserRole, string[]> = {
   'Admin': [

@@ -40,6 +40,18 @@ async def get_employees(user = Depends(require_permission('hr:manage')), supabas
     return rows
 
 
+@router.get("/me", response_model=EmployeeProfile)
+async def get_my_employee(user = Depends(require_permission('hr:attendance:self')), supabase: Client = Depends(get_supabase)):
+    """
+    The caller's own employee record, for the My Profile page. Read-only:
+    HR keeps these details, so a change goes through them. Salary is in it,
+    as it already is on the holder's own payslips.
+    """
+    emp = get_employee_by_user_id(supabase, user['id'])
+    emp["login_email"] = user.get("email")
+    return emp
+
+
 @router.get("/linkable-logins")
 async def get_linkable_logins(user = Depends(require_permission('hr:manage')), supabase: Client = Depends(get_supabase)):
     """

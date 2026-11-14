@@ -367,3 +367,31 @@ def test_hr_cannot_file_leave_for_an_inactive_employee_either():
     assert response.status_code == 403, response.text
     assert "inactive" in response.json()["detail"]
     assert db.tables.get("leave_requests", []) == []
+
+
+# --------------------------------------------------------------------------
+# Own record (My Profile)
+# --------------------------------------------------------------------------
+
+def test_staff_read_their_own_record_and_no_one_elses():
+    db = _Db([KAMALA, _me("Active")])
+    response = _send(db, "GET", "/api/hr/me", role="General Staff")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["id"] == 14
+    assert body["login_email"] == "rbac@vff.test"
+
+
+def test_a_login_with_no_employee_record_gets_404():
+    db = _Db([KAMALA])
+    response = _send(db, "GET", "/api/hr/me", role="General Staff")
+
+    assert response.status_code == 404, response.text
+
+
+def test_system_administrator_has_no_employee_record_to_read():
+    db = _Db([_me("Active")])
+    response = _send(db, "GET", "/api/hr/me", role="System Administrator")
+
+    assert response.status_code == 403, response.text

@@ -20,6 +20,12 @@ export function useLinkableLogins() {
   });
 }
 
+// One's own employee record, for My Profile. Off for roles that aren't
+// employees (System Administrator), which would only get a 403.
+export function useMyEmployee(enabled: boolean) {
+  return useQuery({ queryKey: ['employees', 'me'], queryFn: HRService.getMyEmployee, enabled, retry: false });
+}
+
 export function useUpdateEmployee() {
   const queryClient = useQueryClient();
 
