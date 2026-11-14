@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query
 from typing import List, Optional
 from supabase import Client
 
-from app.core.supabase import get_supabase
+from app.core.supabase import get_public_supabase, get_supabase
 from app.core.security import require_permission
 from app.core.permissions import has_permission
 from app.core.audit import log_audit_action
@@ -12,13 +12,13 @@ from app.schemas.inventory import today_in_sri_lanka
 from app.schemas.programs import (
     AssignableEmployee, ProgramAssignment, ProgramAssignmentCreate, ProgramDetail,
     ProgramFinancials, ProgramCompleteRequest, ProgramOpenItems, ProgramSummary,
-    ProgramUpdate, ProgramVolunteer,
+    ProgramPublicListingUpdate, ProgramUpdate, ProgramVolunteer, PublicProgram,
 )
 from app.services.program_lifecycle import (
     ACTIVE, CANCELLED, COMPLETED, FINISHED, LOCATION_MIGRATION_MESSAGE,
-    PROGRAM_FIXES_MIGRATION_MESSAGE, STORED_VALUES, UPCOMING,
-    is_cancelled_status_refused, is_missing_location_column, normalize_status,
-    transition_error,
+    PROGRAM_FIXES_MIGRATION_MESSAGE, PUBLIC_LISTING_MIGRATION_MESSAGE, STORED_VALUES,
+    UPCOMING, is_cancelled_status_refused, is_missing_location_column,
+    is_missing_public_listing_column, normalize_status, transition_error,
 )
 from app.services.program_volunteers import (
     build_program_volunteers, fetch_program_shifts, shift_belongs_to_program,
@@ -147,6 +147,51 @@ async def list_programs(
             "cost_per_animal": (total_cost / animals) if (animals and show_costs) else None,
         })
     return out
+
+
+# ==========================================
+# PUBLIC LISTING (the /clinics page)
+# ==========================================
+
+# Exactly what the public page may show. Everything else on the row (costs,
+# animal counts, the team) stays behind sign-in.
+PUBLIC_COLUMNS = (
+    "id, program_name, program_type, status, location, public_venue, "
+    "public_schedule, public_notes, start_date, is_public"
+)
+
+
+# Before /{program_id}, so "public" is not read as an id.
+@router.get("/public", response_model=List[PublicProgram])
+async def list_public_programs(supabase: Client = Depends(get_public_supabase)):
+    """
+    Programs staff have published, while they are Upcoming or Active, soonest
+    first. No sign-in. A program drops off once it is completed or cancelled.
+    The filters are repeated in Python so a mistake in the query can never put
+    an unpublished program on the public site.
+    """
+    try:
+        rows = (
+            supabase.table("programs")
+            .select(PUBLIC_COLUMNS)
+            .eq("is_public", True)
+            .in_("status", STORED_VALUES[UPCOMING] + STORED_VALUES[ACTIVE])
+            .execute()
+        ).data or []
+    except Exception as e:
+        if is_missing_public_listing_column(e):
+            return []  # before migration 035: nothing can be published yet
+        raise
+    listed = []
+    for r in rows:
+        status = normalize_status(r.get("status"))
+        if r.get("is_public") is not True or status not in (UPCOMING, ACTIVE):
+            continue
+        listed.append({**r, "status": status})
+    # Running now first, then by start date; undated last (only Active
+    # programs can be published without one).
+    listed.sort(key=lambda r: (r["status"] != ACTIVE, r.get("start_date") or "9999-12-31", r["id"]))
+    return listed
 
 
 # Before /{program_id}, so "assignable-employees" is not read as an id.
@@ -422,6 +467,67 @@ async def update_program(
         supabase,
         user_id=user["id"],
         action_type="PROGRAM_UPDATE",
+        table_name="programs",
+        old_payload=before,
+        new_payload=after,
+    )
+    return _hide_costs({**after, "status": normalize_status(after.get("status"))}, user)
+
+
+@router.put("/{program_id}/public-listing", response_model=ProgramDetail)
+async def update_public_listing(
+    program_id: int,
+    payload: ProgramPublicListingUpdate,
+    user=Depends(require_permission("programs:manage")),
+    supabase: Client = Depends(get_supabase),
+):
+    """
+    Publish a program on the public /clinics page, change what it says, or
+    take it down. Publishing needs a type and a location, plus a start date
+    while Upcoming; only an Upcoming or Active program can be published. Taking a listing
+    down is always allowed.
+    """
+    existing = supabase.table("programs").select("*").eq("id", program_id).execute()
+    if not existing.data:
+        raise HTTPException(status_code=404, detail="Program not found")
+    before = existing.data[0]
+    status = normalize_status(before.get("status"))
+
+    if payload.is_public:
+        if status not in (UPCOMING, ACTIVE):
+            raise HTTPException(
+                status_code=409,
+                detail=f"This program is {status.lower()}; only upcoming or active programs can be published.",
+            )
+        missing = [label for label, value in (
+            ("a type", payload.program_type),
+            ("a location", before.get("location")),
+            # An Upcoming listing has to say when. An Active one is on now;
+            # older Active programs never recorded a start date and it cannot
+            # be set after starting, so it is not asked for.
+            ("a start date", before.get("start_date") or status == ACTIVE),
+        ) if not value]
+        if missing:
+            raise HTTPException(
+                status_code=422,
+                detail="Before publishing, set " + " and ".join(missing) + ".",
+            )
+
+    update = payload.model_dump(mode="json")
+    try:
+        result = supabase.table("programs").update(update).eq("id", program_id).execute()
+    except Exception as e:
+        if is_missing_public_listing_column(e):
+            raise HTTPException(status_code=503, detail=PUBLIC_LISTING_MIGRATION_MESSAGE)
+        raise
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Program not found")
+    after = result.data[0]
+
+    await log_audit_action(
+        supabase,
+        user_id=user["id"],
+        action_type="PROGRAM_PUBLIC_LISTING",
         table_name="programs",
         old_payload=before,
         new_payload=after,

@@ -45,6 +45,8 @@ PUBLIC_ROUTES = {
         "volunteers have no login; the link token is the credential",
     ("GET", "/api/donations/programs"):
         "public donate page; Upcoming and Active program names and dates only",
+    ("GET", "/api/programs/public"):
+        "public clinics page; published Upcoming and Active programs, no costs or team",
     ("POST", "/api/donations/checkout"):
         "public donate form; saves a pending donation, never touches the ledger",
     ("POST", "/api/donations/payhere/notify"):

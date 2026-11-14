@@ -1,5 +1,7 @@
 import api from '@/lib/api-client';
-import { ProgramDetail, ProgramAssignment, CostPerAnimalResult, ProgramFinancials } from '@/types';
+import {
+  ProgramDetail, ProgramAssignment, CostPerAnimalResult, ProgramFinancials, ProgramType, PublicProgram,
+} from '@/types';
 
 // Mirrors ProgramVolunteer in app/schemas/programs.py. No email or phone:
 // programs:read reaches roles that do not hold volunteers:read.
@@ -82,6 +84,26 @@ export const ProgramService = {
     const response = await api.patch<ProgramDetail>(`/programs/${programId}`, {
       total_animals_treated: totalAnimalsTreated,
     });
+    return response.data;
+  },
+
+  // Publish on the public /clinics page, change what it says, or take it
+  // down. The whole listing is sent; an empty field clears it.
+  updatePublicListing: async (programId: number, data: {
+    is_public: boolean;
+    program_type: ProgramType | null;
+    public_venue: string;
+    public_schedule: string;
+    public_notes: string;
+  }) => {
+    const response = await api.put<ProgramDetail>(`/programs/${programId}/public-listing`, data);
+    return response.data;
+  },
+
+  // Public, no sign-in: published Upcoming and Active programs, running ones
+  // first, then soonest.
+  listPublic: async () => {
+    const response = await api.get<PublicProgram[]>('/programs/public');
     return response.data;
   },
 

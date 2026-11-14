@@ -21,6 +21,7 @@ import {
   CancelProgramButton, EditAnimalsTreatedButton, EditProgramDetailsButton, EditableProgramLocation, STAGE_BADGE, STAGE_PATH,
   TransitionButton, asStage, daysBetween, formatDay, moneyAccess,
 } from '@/components/programs/program-lifecycle';
+import { PublicListingCard } from '@/components/programs/public-listing-card';
 import { cn, getErrorMessage } from '@/lib/utils';
 
 // The gate wraps the content rather than sitting inside it, so the content's
@@ -221,6 +222,8 @@ function ProgramDetailsContent() {
                 </>
               )}
             </div>
+
+            <PublicListingCard program={program} stage={stage} canManage={canManage} />
 
             {/* Restricted funds — only rendered when the program actually holds
                 earmarked money, so unrestricted programs are not cluttered

@@ -766,6 +766,30 @@ export interface ProgramDetail {
   total_cost?: number | null;
   // Null on programs created before locations were recorded.
   location?: string | null;
+  // The public listing on /clinics (migration 035). Off until published.
+  is_public?: boolean;
+  program_type?: ProgramType | null;
+  public_venue?: string | null;
+  public_schedule?: string | null;
+  public_notes?: string | null;
+}
+
+// What the public is told a program is. Mirrors PROGRAM_TYPES in
+// app/schemas/programs.py.
+export const PROGRAM_TYPES = ['Sterilization', 'Vaccination', 'Free Clinic', 'Awareness', 'Other'] as const;
+export type ProgramType = (typeof PROGRAM_TYPES)[number];
+
+/** One card on the public /clinics page. Mirrors PublicProgram. */
+export interface PublicProgram {
+  id: number;
+  program_name: string;
+  program_type?: ProgramType | null;
+  status: 'Upcoming' | 'Active';
+  location?: string | null;
+  public_venue?: string | null;
+  public_schedule?: string | null;
+  public_notes?: string | null;
+  start_date?: string | null;
 }
 
 export interface ProgramFinancials {
