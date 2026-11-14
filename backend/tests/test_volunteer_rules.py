@@ -230,6 +230,34 @@ def test_cannot_assign_to_an_ended_program(status, sent):
     assert response.status_code == 409
 
 
+CASE_ID = "33333333-3333-3333-3333-333333333333"
+
+
+def _assign_to_case(cases):
+    created = {**_assignment(shift_id=None), "rescue_case_id": CASE_ID}
+    tables = {"volunteers": {"select": [_volunteer()]},
+              "rescue_cases": {"select": [{**c, "animal_type": "Dog"} for c in cases]},
+              "volunteer_assignments": {"select": [], "insert": [created]}}
+    with acting_as("Operations Lead", tables=tables):
+        return _request("POST", "/api/volunteers/assignments",
+                        json={"volunteer_id": VOL_ID, "rescue_case_id": CASE_ID})
+
+
+def test_cannot_assign_to_a_resolved_case(sent):
+    response = _assign_to_case([{"id": CASE_ID, "status": "Resolved"}])
+    assert response.status_code == 409
+    assert "resolved" in response.json()["detail"]
+
+
+def test_cannot_assign_to_a_case_that_does_not_exist(sent):
+    assert _assign_to_case([]).status_code == 404
+
+
+@pytest.mark.parametrize("status", ["Reported", "In Treatment"])
+def test_can_assign_to_an_open_case(status, sent):
+    assert _assign_to_case([{"id": CASE_ID, "status": status}]).status_code == 200
+
+
 @pytest.mark.parametrize("shift", [_shift(cancelled=True), _shift(date=PAST)])
 def test_volunteer_cannot_answer_a_cancelled_or_past_shift(shift):
     tables = {"volunteers": {"select": [_volunteer()]},
