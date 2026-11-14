@@ -32,13 +32,15 @@ export default function AdminRegisterPage() {
     try {
       // Mock name extraction
       const mockName = email.split('@')[0];
-      const data = await AuthService.register({
+      await AuthService.register({
         email,
         password,
         name: mockName.charAt(0).toUpperCase() + mockName.slice(1) + ' (Admin)',
         role: 'Admin',
       });
 
+      // Registering returns no session; sign in to get one (see register/page).
+      const data = await AuthService.login({ email, password });
       setAuth(data.user, data.access_token);
       toast.success('Administrator registry generated successfully.');
       router.push('/dashboard');

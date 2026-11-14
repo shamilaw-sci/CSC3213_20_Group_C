@@ -43,6 +43,17 @@ export const useAuthStore = create<AuthState>()(
     }),
     {
       name: 'vff-auth-storage',
+      // A saved session without a user or a token is not a session. The old
+      // register flow saved exactly that ({ isAuthenticated: true }), and the
+      // page guards, which check permissions only once there is a user,
+      // rendered every page for it. Treat it as signed out instead.
+      merge: (persisted, current) => {
+        const saved = (persisted ?? {}) as Partial<AuthState>;
+        const complete = Boolean(saved.isAuthenticated && saved.user && saved.token);
+        return complete
+          ? { ...current, ...saved }
+          : { ...current, user: null, token: null, isAuthenticated: false };
+      },
     }
   )
 );
