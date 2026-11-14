@@ -204,6 +204,17 @@ def test_supplies_and_their_reversal_sit_among_the_notes_in_time_order():
     assert used["author"]["display_name"] == "Nimal Perera"
 
 
+def test_supplies_recorded_by_a_deleted_user_name_a_deleted_user():
+    # recorded_by is a plain uuid column, so the id outlives the account; the
+    # line must say so like the timeline's other lines do, not name nobody.
+    db = _timeline_db()
+    db.tables["inventory_transactions"] = [
+        _supply(9, recorded_by="99999999-9999-9999-9999-999999999999")]
+    lines = _send(db, "GET", f"/api/rescue_cases/cases/{CASE_ID}/timeline", role="Admin").json()
+
+    assert lines[1]["author"]["display_name"] == "Deleted user"
+
+
 def test_an_older_movement_without_created_at_sorts_at_the_start_of_its_day():
     db = _timeline_db(events=[{"id": 1, "case_id": CASE_ID, "event_type": "note", "body": "x",
                                "author_id": USER_ID, "created_at": "2026-01-01T09:00:00+00:00"}])
