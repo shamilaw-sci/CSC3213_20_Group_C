@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Query
 from fastapi.responses import Response
 from datetime import date
 from supabase import Client
@@ -7,6 +7,8 @@ from supabase import Client
 from app.core.supabase import get_supabase
 from app.core.security import require_permission
 from app.services.reports import generate_pdf, PDFGenerationError
+from app.services.monthly_report import build_monthly_report
+from app.api.hr import _sl_today
 from app.services.finance_reports import (
     build_finance_report,
     fetch_ledger,
@@ -89,6 +91,38 @@ async def finance_summary_report(
         content=pdf_bytes,
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# ==========================================
+# MONTHLY MANAGEMENT REPORT
+# ==========================================
+
+@router.get("/monthly")
+async def monthly_report(
+    year: int = Query(..., ge=2000, le=2100),
+    month: int = Query(..., ge=1, le=12),
+    user = Depends(require_permission('reports:monthly')),
+    supabase: Client = Depends(get_supabase),
+):
+    """One month across the organisation, as a PDF (confirmed 2026-11-13):
+    rescue, finance, people, stock. The current month is labelled "month to
+    date"; a month that hasn't started is refused. Pure read, not audited."""
+    today = _sl_today()
+    if (year, month) > (today.year, today.month):
+        raise HTTPException(status_code=400, detail="That month hasn't started yet.")
+    report = build_monthly_report(supabase, year, month, today)
+    try:
+        pdf_bytes = generate_pdf("monthly_report.html", {
+            "report_title": f"Monthly Report, {report['period']}" + (" (month to date)" if report["to_date"] else ""),
+            "r": report,
+        })
+    except PDFGenerationError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="monthly_report_{year}-{month:02d}.pdf"'},
     )
 
 

@@ -20,12 +20,29 @@ import { AuthService } from '@/services/auth.service';
 import { toast } from 'sonner';
 import Swal from 'sweetalert2';
 import { useThemeStore } from '@/store/useThemeStore';
+import { useAuthStore } from '@/store/useAuthStore';
+import { hasPermission } from '@/lib/permissions';
+import { getErrorMessage } from '@/lib/utils';
 
+// The gate wraps the content rather than sitting inside it, so the content's
+// requests never fire for a role that would only get 403s back.
 export default function AdminPage() {
+  return (
+    <ProtectedRoute requiredPermission="admin:users">
+      <AdminContent />
+    </ProtectedRoute>
+  );
+}
+
+function AdminContent() {
   const [users, setUsers] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [editingUser, setEditingUser] = useState<any | null>(null);
   const [editRoleId, setEditRoleId] = useState<number>(0);
+  // Only Admin may change roles; System Administrator manages accounts here
+  // but must not be able to grant itself Admin. The backend enforces this too.
+  const { user } = useAuthStore();
+  const canChangeRoles = hasPermission(user?.role || '', 'admin:roles');
   
   // Search & Filters state
   const [searchTerm, setSearchTerm] = useState('');
@@ -55,7 +72,7 @@ export default function AdminPage() {
       setEditingUser(null);
       fetchUsers();
     } catch (err) {
-      toast.error('Failed to update user role');
+      toast.error(getErrorMessage(err) || 'Failed to update user role');
     }
   };
 
@@ -69,7 +86,7 @@ export default function AdminPage() {
       color: isDark ? '#F9FAFB' : '#111318',
       showCancelButton: true,
       confirmButtonColor: '#DC2626',
-      cancelButtonColor: isDark ? '#232730' : '#E5E7EB',
+      cancelButtonColor: isDark ? '#232730' : '#6B7280',
       confirmButtonText: 'Yes, Delete',
       cancelButtonText: 'Cancel'
     }).then(async (result) => {
@@ -79,7 +96,7 @@ export default function AdminPage() {
           toast.success('User deleted successfully');
           fetchUsers();
         } catch (err) {
-          toast.error('Failed to delete user');
+          toast.error(getErrorMessage(err) || 'Failed to delete user');
         }
       }
     });
@@ -106,7 +123,7 @@ export default function AdminPage() {
   }, [users, searchTerm, roleFilter]);
 
   return (
-    <ProtectedRoute requiredPermission="admin:users">
+    <>
       <div className="space-y-8">
         {/* Header */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -199,7 +216,7 @@ export default function AdminPage() {
                       </TableRow>
                     ) : (
                       filteredUsers.map((u) => (
-                        <TableRow key={u.id} className="border-border-brand hover:bg-[#14161C]/40 transition-colors">
+                        <TableRow key={u.id} className="border-border-brand hover:bg-bg-subtle transition-colors">
                           <TableCell className="font-mono text-xs text-text-muted">{u.id.substring(0, 8)}...</TableCell>
                           <TableCell className="text-xs font-semibold text-text-primary">
                             <div>{u.email}</div>
@@ -242,25 +259,30 @@ export default function AdminPage() {
                               </div>
                             ) : (
                               <div className="flex items-center justify-end gap-2">
-                                <Button 
-                                  onClick={() => {
-                                    setEditingUser(u);
-                                    setEditRoleId(u.role_id || 1);
-                                  }}
-                                  size="sm" 
-                                  variant="ghost" 
-                                  className="text-text-secondary hover:text-accent p-1.5 h-7 w-7 rounded-lg hover:bg-bg-subtle"
-                                >
-                                  <Edit className="h-3.5 w-3.5" />
-                                </Button>
-                                <Button 
-                                  onClick={() => handleDeleteUser(u.id)}
-                                  size="sm" 
-                                  variant="ghost" 
-                                  className="text-text-secondary hover:text-negative p-1.5 h-7 w-7 rounded-lg hover:bg-red-500/10"
-                                >
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                </Button>
+                                {canChangeRoles && (
+                                  <Button 
+                                    onClick={() => {
+                                      setEditingUser(u);
+                                      setEditRoleId(u.role_id || 1);
+                                    }}
+                                    size="sm" 
+                                    variant="ghost" 
+                                    className="text-text-secondary hover:text-accent p-1.5 h-7 w-7 rounded-lg hover:bg-bg-subtle"
+                                  >
+                                    <Edit className="h-3.5 w-3.5" />
+                                  </Button>
+                                )}
+                                {/* Admin accounts can only be deleted by an Admin. */}
+                                {(canChangeRoles || u.roles?.role_name !== 'Admin') && (
+                                  <Button 
+                                    onClick={() => handleDeleteUser(u.id)}
+                                    size="sm" 
+                                    variant="ghost" 
+                                    className="text-text-secondary hover:text-negative p-1.5 h-7 w-7 rounded-lg hover:bg-red-500/10"
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </Button>
+                                )}
                               </div>
                             )}
                           </TableCell>
@@ -274,6 +296,6 @@ export default function AdminPage() {
           </CardContent>
         </Card>
       </div>
-    </ProtectedRoute>
+    </>
   );
 }

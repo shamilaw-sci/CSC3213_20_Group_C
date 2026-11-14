@@ -25,6 +25,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from supabase import Client
 
 from app.core.audit import log_audit_action
+from app.core.ids import UuidPath
 from app.core.security import require_permission, require_any_permission
 from app.core.supabase import get_public_supabase, get_supabase
 from app.schemas.volunteer import (
@@ -35,6 +36,7 @@ from app.schemas.volunteer import (
 )
 from app.services import email as email_service
 from app.schemas.inventory import today_in_sri_lanka
+from app.schemas.rescue_case import CaseStatus
 from app.services.program_lifecycle import (
     ACTIVE, CANCELLED, COMPLETED, PROGRAM_FIXES_MIGRATION_MESSAGE, UPCOMING,
     is_missing_shift_program_column, normalize_status,
@@ -104,6 +106,14 @@ def _program_has_ended(supabase: Client, program_id) -> bool:
         supabase.table("programs").select("id, status").eq("id", program_id).execute()
     ).data or []
     return bool(rows) and normalize_status(rows[0].get("status")) in (COMPLETED, CANCELLED)
+
+
+def _case_status(supabase: Client, case_id) -> Optional[str]:
+    """The rescue case's status, or None if there is no such case."""
+    rows = (
+        supabase.table("rescue_cases").select("id, status").eq("id", str(case_id)).execute()
+    ).data or []
+    return rows[0].get("status") if rows else None
 
 
 async def _notify_shift_volunteers(supabase: Client, shift: dict, kind: str) -> None:
@@ -453,7 +463,7 @@ async def list_volunteers(
 
 @router.patch("/{volunteer_id}/review", response_model=VolunteerOut)
 async def review_volunteer(
-    volunteer_id: str,
+    volunteer_id: UuidPath,
     payload: VolunteerReview,
     supabase: Client = Depends(get_supabase),
     current_user: dict = Depends(require_permission("volunteers:approve")),
@@ -530,7 +540,7 @@ async def review_volunteer(
 
 @router.post("/{volunteer_id}/link-shared", response_model=VolunteerOut)
 async def mark_link_shared(
-    volunteer_id: str,
+    volunteer_id: UuidPath,
     supabase: Client = Depends(get_supabase),
     current_user: dict = Depends(
         require_any_permission("volunteers:approve", "volunteers:assign")
@@ -580,7 +590,7 @@ async def mark_link_shared(
 
 @router.post("/{volunteer_id}/reset-link", response_model=VolunteerOut)
 async def reset_volunteer_link(
-    volunteer_id: str,
+    volunteer_id: UuidPath,
     supabase: Client = Depends(get_supabase),
     current_user: dict = Depends(require_permission("volunteers:approve")),
 ):
@@ -736,7 +746,7 @@ async def create_shift(
 
 @router.patch("/shifts/{shift_id}", response_model=ShiftOut)
 async def update_shift(
-    shift_id: str,
+    shift_id: UuidPath,
     payload: ShiftUpdate,
     supabase: Client = Depends(get_supabase),
     current_user: dict = Depends(require_permission("volunteers:assign")),
@@ -862,6 +872,14 @@ async def create_assignment(
             )
     elif payload.program_id is not None and _program_has_ended(supabase, payload.program_id):
         raise HTTPException(status_code=409, detail="This programme has already ended.")
+    elif payload.rescue_case_id:
+        # Like an ended programme: a resolved case needs no more help, and the
+        # volunteer would be asked to answer for work that is already over.
+        status = _case_status(supabase, payload.rescue_case_id)
+        if status is None:
+            raise HTTPException(status_code=404, detail="Rescue case not found")
+        if status == CaseStatus.resolved.value:
+            raise HTTPException(status_code=409, detail="This rescue case is already resolved.")
 
     row = payload.model_dump(mode="json", exclude_none=True)
     row["assigned_by"] = str(current_user["id"])
@@ -924,7 +942,7 @@ async def create_assignment(
 
 @router.delete("/assignments/{assignment_id}")
 async def delete_assignment(
-    assignment_id: str,
+    assignment_id: UuidPath,
     supabase: Client = Depends(get_supabase),
     current_user: dict = Depends(require_permission("volunteers:assign")),
 ):

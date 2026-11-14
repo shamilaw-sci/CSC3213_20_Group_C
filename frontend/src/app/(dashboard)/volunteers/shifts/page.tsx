@@ -9,6 +9,7 @@ import {
 import { FinanceService } from '@/services/finance.service';
 import type { Program } from '@/types';
 import { useAuthStore } from '@/store/useAuthStore';
+import ProtectedRoute from '@/components/layout/protected-route';
 import { hasPermission } from '@/lib/permissions';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -469,7 +470,17 @@ function AssignPanel({
   );
 }
 
+// The sidebar hides this page from roles without volunteers:read, but a URL typed by
+// hand bypasses the sidebar, so the page checks for itself.
 export default function VolunteerShiftsPage() {
+  return (
+    <ProtectedRoute requiredPermission="volunteers:read">
+      <VolunteerShiftsContent />
+    </ProtectedRoute>
+  );
+}
+
+function VolunteerShiftsContent() {
   const { user } = useAuthStore();
   const canAssign = hasPermission(user?.role || '', 'volunteers:assign');
   const queryClient = useQueryClient();

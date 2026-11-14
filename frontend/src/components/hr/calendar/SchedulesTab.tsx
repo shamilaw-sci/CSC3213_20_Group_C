@@ -13,6 +13,7 @@ import {
   useSaveSchedule, useScheduleAssignments, useSchedules,
 } from '@/hooks/useWorkCalendar';
 import { ScheduleAssignmentRow, ScheduleDay, WorkSchedule, WorkScheduleInput } from '@/types';
+import { TrackingDialog, longDate } from '@/components/hr/attendance/TrackingDialog';
 import { toISODate } from '@/lib/finance-periods';
 import { cn } from '@/lib/utils';
 
@@ -271,6 +272,8 @@ export function SchedulesTab({ canEdit }: { canEdit: boolean }) {
   const { mutate: remove, isPending: isDeleting } = useDeleteSchedule();
   const [editing, setEditing] = useState<WorkSchedule | 'new' | null>(null);
   const [assigning, setAssigning] = useState<ScheduleAssignmentRow | null>(null);
+  const [tracking, setTracking] = useState<ScheduleAssignmentRow | null>(null);
+  const orgDate = assignments?.find((a) => !a.tracking_overridden)?.tracked_from ?? null;
 
   const countFor = (id: number) => assignments?.filter((a) => a.current_schedule_id === id).length ?? 0;
 
@@ -352,6 +355,7 @@ export function SchedulesTab({ canEdit }: { canEdit: boolean }) {
                 <tr>
                   <th className="px-4 py-2.5 font-semibold">Employee</th>
                   <th className="px-4 py-2.5 font-semibold">Schedule today</th>
+                  <th className="px-4 py-2.5 font-semibold">Attendance tracked from</th>
                   <th className="px-4 py-2.5"><span className="sr-only">Actions</span></th>
                 </tr>
               </thead>
@@ -365,6 +369,15 @@ export function SchedulesTab({ canEdit }: { canEdit: boolean }) {
                     <td className="px-4 py-2.5 text-text-secondary">
                       {r.current_schedule_name ?? '—'}
                       {r.follows_default && <span className="ml-1 text-xs text-text-muted">(default)</span>}
+                    </td>
+                    <td className="px-4 py-2.5 text-text-secondary">
+                      {canEdit ? (
+                        <button type="button" onClick={() => setTracking(r)} className="text-left hover:text-accent hover:underline"
+                          aria-label={`Change when attendance is tracked from for ${r.employee_name}`}>
+                          {longDate(r.tracked_from)}
+                        </button>
+                      ) : longDate(r.tracked_from)}
+                      <span className="ml-1 text-xs text-text-muted">{r.tracking_overridden ? '(own date)' : '(organisation)'}</span>
                     </td>
                     <td className="px-4 py-2.5 text-right">
                       <Button variant="ghost" size="sm" onClick={() => setAssigning(r)} className="h-7 px-2 text-xs text-accent">
@@ -382,6 +395,14 @@ export function SchedulesTab({ canEdit }: { canEdit: boolean }) {
       {editing && <ScheduleEditor schedule={editing} onClose={() => setEditing(null)} />}
       {assigning && schedules && (
         <AssignDialog row={assigning} schedules={schedules} canEdit={canEdit} onClose={() => setAssigning(null)} />
+      )}
+      {tracking && (
+        <TrackingDialog
+          current={tracking.tracked_from}
+          employee={{ id: tracking.employee_id, name: tracking.employee_name, overridden: tracking.tracking_overridden }}
+          orgDate={orgDate}
+          onClose={() => setTracking(null)}
+        />
       )}
     </div>
   );

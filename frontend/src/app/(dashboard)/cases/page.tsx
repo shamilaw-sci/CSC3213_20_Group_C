@@ -6,6 +6,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { RescueCasesService } from '@/services/rescue-cases.service';
 import CaseHeatmapWrapper from '@/components/heatmap/CaseHeatmapWrapper';
 import { useAuthStore } from '@/store/useAuthStore';
+import ProtectedRoute from '@/components/layout/protected-route';
 import { hasPermission } from '@/lib/permissions';
 import { toast } from 'sonner';
 import {
@@ -57,7 +58,17 @@ function LegendItem({ swatch, label }: { swatch: React.ReactNode; label: string 
   );
 }
 
+// The sidebar hides this page from roles without rescue:read, but a URL typed by
+// hand bypasses the sidebar, so the page checks for itself.
 export default function CaseHotspotsPage() {
+  return (
+    <ProtectedRoute requiredPermission="rescue:read">
+      <CaseHotspotsContent />
+    </ProtectedRoute>
+  );
+}
+
+function CaseHotspotsContent() {
   const { user } = useAuthStore();
   const canDeclare = hasPermission(user?.role || '', 'rescue:assign');
   const queryClient = useQueryClient();

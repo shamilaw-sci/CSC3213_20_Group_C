@@ -125,7 +125,7 @@ def test_status_update_succeeds_when_broadcast_fails(exc, failing_post):
         "update": [_case_row(status="Resolved", assigned_to=USER_ID)],
     }}
     with acting_as("Admin", tables=tables):
-        response = client.patch(f"/api/rescue_cases/cases/{CASE_ID}/status", json={"new_status": "Resolved"})
+        response = client.patch(f"/api/rescue_cases/cases/{CASE_ID}/status", json={"new_status": "Resolved", "outcome": "Released"})
     assert response.status_code == 200, response.text
 
 
@@ -146,7 +146,7 @@ def test_failed_case_create_does_not_ping(board_pings, no_classifier):
 
 
 @pytest.mark.parametrize("before, after, payload", [
-    (("In Treatment", USER_ID), ("Resolved", USER_ID), {"new_status": "Resolved"}),
+    (("In Treatment", USER_ID), ("Resolved", USER_ID), {"new_status": "Resolved", "outcome": "Released"}),
     (("Reported", None), ("In Treatment", USER_ID), {"new_status": "In Treatment", "assigned_to": USER_ID}),
     (("In Treatment", USER_ID), ("In Treatment", OTHER_USER_ID),
      {"new_status": "In Treatment", "assigned_to": OTHER_USER_ID}),

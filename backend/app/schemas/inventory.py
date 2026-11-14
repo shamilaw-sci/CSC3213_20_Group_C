@@ -1,6 +1,7 @@
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from datetime import date, datetime, timedelta, timezone
 from typing import Literal, Optional
+from uuid import UUID
 
 
 # The three stock movements the system records. Anything else is refused at
@@ -105,6 +106,9 @@ class InventoryTransactionBase(BaseModel):
     # The Stock In form sends a free-text note and inventory_transactions has a
     # `notes` column, but this field was missing, so the note was silently dropped.
     notes: Optional[str] = None
+    # Supplies used on a rescue case (migration 031): Issue only, never with a
+    # program.
+    rescue_case_id: Optional[UUID] = None
 
 
 # What the CLIENT sends us to create a transaction. Deliberately has NO
@@ -174,6 +178,11 @@ class TransactionProgramRef(BaseModel):
     program_name: str
 
 
+class TransactionCaseRef(BaseModel):
+    animal_type: str
+    status: str
+
+
 # What we return to the client.
 #
 # IMPORTANT: your live database's primary key column on this table is
@@ -198,6 +207,8 @@ class InventoryTransaction(InventoryTransactionBase):
     batch_number: Optional[str] = None
     inventory_items: Optional[TransactionItemRef] = None
     programs: Optional[TransactionProgramRef] = None
+    # Filled by GET /transactions for a movement on a rescue case.
+    rescue_case: Optional[TransactionCaseRef] = None
     model_config = ConfigDict(from_attributes=True)
 
 

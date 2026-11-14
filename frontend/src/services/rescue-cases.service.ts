@@ -1,6 +1,6 @@
 // frontend/src/services/rescue-cases.service.ts
 import api from '@/lib/api-client';
-import { RescueCaseGeo , CaseOut, OptimizedRoute, AssigneeOption } from '@/types';
+import { RescueCaseGeo , CaseOut, OptimizedRoute, AssigneeOption, CaseEvent, CaseOutcome, CaseReport } from '@/types';
 
 export interface CaseCreatePayload {
   animal_type: string;
@@ -15,6 +15,21 @@ export interface CaseCreatePayload {
 export interface CaseStatusUpdatePayload {
   new_status: string;
   assigned_to?: string;
+  // Required when moving into Resolved, refused otherwise.
+  outcome?: CaseOutcome;
+  outcome_note?: string;
+}
+
+// Matches PublicImpact in backend/app/api/rescue_cases.py: totals only.
+export interface PublicImpact {
+  year: number;
+  reported: number;
+  cared_for: number;
+  rehomed: number;
+  released: number;
+  transferred: number;
+  supplies_cost: number;
+  as_of: string;
 }
 
 export interface OutbreakZone {
@@ -84,6 +99,33 @@ export const RescueCasesService = {
     const response = await api.patch<CaseOut>(`/rescue_cases/cases/${caseId}/status`, payload);
     return response.data;
   },
+  getTimeline: async (caseId: string) => {
+    const response = await api.get<CaseEvent[]>(`/rescue_cases/cases/${caseId}/timeline`);
+    return response.data;
+  },
+
+  // An outcome for a case resolved before outcomes were recorded.
+  recordOutcome: async (caseId: string, outcome: CaseOutcome, outcome_note?: string) => {
+    const response = await api.post<CaseOut>(`/rescue_cases/cases/${caseId}/outcome`, { outcome, outcome_note });
+    return response.data;
+  },
+
+  addNote: async (caseId: string, body: string) => {
+    const response = await api.post<CaseEvent>(`/rescue_cases/cases/${caseId}/notes`, { body });
+    return response.data;
+  },
+
+  getReport: async (year: number, month: number) => {
+    const response = await api.get<CaseReport>('/rescue_cases/report', { params: { year, month } });
+    return response.data;
+  },
+
+  // This year's public totals (GET /rescue_cases/impact, no sign-in).
+  getImpact: async () => {
+    const response = await api.get<PublicImpact>('/rescue_cases/impact');
+    return response.data;
+  },
+
   getOutbreakZones: async () => {
     const response = await api.get<OutbreakZone[]>('/rescue_cases/outbreak-zones');
     return response.data;

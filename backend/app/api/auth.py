@@ -4,13 +4,15 @@ from app.core.supabase import get_supabase
 from supabase import Client
 from app.infrastructure.repositories import SupabaseUserRepository
 from app.application.use_cases import RegisterUseCase, LoginUseCase
+from app.core.ids import UuidPath
 from app.core.security import require_permission
 from app.core.audit import log_audit_action
+from app.core.permissions import Permission, UserRole, has_permission
 
 router = APIRouter()
 
 # Every self-service signup gets this role. Role changes go through
-# PUT /users/{id}/role, which requires admin:users.
+# PUT /users/{id}/role, which requires admin:roles (Admin only).
 SIGNUP_ROLE = "General Staff"
 
 
@@ -86,23 +88,51 @@ async def login(user_data: UserLogin, supabase: Client = Depends(get_supabase)):
     except Exception as e:
         raise HTTPException(status_code=401, detail=str(e))
 
+def _is_last_admin(supabase: Client, target_role: str | None) -> bool:
+    """Whether the target is the only remaining Admin account.
+
+    Role changes and Admin deletions both need admin:roles, which only Admin
+    holds, so losing the last Admin would leave nobody able to manage roles
+    short of editing the database directly.
+    """
+    if target_role != UserRole.ADMIN.value:
+        return False
+    users = supabase.table("users").select("roles(role_name)").execute().data or []
+    admins = sum(1 for u in users if (u.get("roles") or {}).get("role_name") == UserRole.ADMIN.value)
+    return admins <= 1
+
+
 class UpdateRoleRequest(BaseModel):
     role_id: int
 
 @router.put("/users/{user_id}/role")
 async def update_user_role(
-    user_id: str,
+    user_id: UuidPath,
     data: UpdateRoleRequest,
-    current_user: dict = Depends(require_permission('admin:users')),
+    # admin:roles, not admin:users: System Administrator holds admin:users and
+    # would otherwise be able to grant itself Admin.
+    current_user: dict = Depends(require_permission('admin:roles')),
     supabase: Client = Depends(get_supabase),
 ):
     try:
         # Capture the prior role before overwriting it, so the audit row records
         # what the role changed *from* and not merely that it changed.
-        existing = supabase.table("users").select("id, email, role_id").eq("id", user_id).execute()
+        existing = supabase.table("users").select("id, email, role_id, roles(role_name)").eq("id", user_id).execute()
         if not existing.data:
             raise HTTPException(status_code=404, detail="User not found")
-        old_row = existing.data[0]
+        row = existing.data[0]
+        target_role = (row.get("roles") or {}).get("role_name")
+        old_row = {k: v for k, v in row.items() if k != "roles"}
+
+        # Re-saving the same role is a no-op, so only an actual change away
+        # from Admin can remove the last one.
+        if data.role_id != old_row.get("role_id") and _is_last_admin(supabase, target_role):
+            raise HTTPException(status_code=409, detail="Can't change the role of the last Admin account")
+
+        # Checked first so an unknown id is a plain 422, not the database's
+        # foreign-key error passed through verbatim.
+        if not supabase.table("roles").select("id").eq("id", data.role_id).execute().data:
+            raise HTTPException(status_code=422, detail="Unknown role")
 
         response = supabase.table("users").update({"role_id": data.role_id}).eq("id", user_id).execute()
 
@@ -134,17 +164,28 @@ async def get_users(
 
 @router.delete("/users/{user_id}")
 async def delete_user(
-    user_id: str,
+    user_id: UuidPath,
     current_user: dict = Depends(require_permission('admin:users')),
     supabase: Client = Depends(get_supabase),
 ):
     try:
         # The row is about to stop existing, so the audit entry is the only
         # remaining record of what was deleted.
-        existing = supabase.table("users").select("id, email, role_id, created_at").eq("id", user_id).execute()
+        existing = supabase.table("users").select("id, email, role_id, created_at, roles(role_name)").eq("id", user_id).execute()
         if not existing.data:
             raise HTTPException(status_code=404, detail="User not found")
-        old_row = existing.data[0]
+        row = existing.data[0]
+        target_role = (row.get("roles") or {}).get("role_name")
+        old_row = {k: v for k, v in row.items() if k != "roles"}
+
+        # Only Admin may delete an Admin account. admin:users alone would let a
+        # System Administrator remove every Admin and leave nobody able to
+        # change roles, since that needs admin:roles too.
+        caller_role = (current_user.get("roles") or {}).get("role_name") or ""
+        if target_role == UserRole.ADMIN.value and not has_permission(caller_role, Permission.ADMIN_ROLES.value):
+            raise HTTPException(status_code=403, detail="Only an Admin can delete an Admin account")
+        if _is_last_admin(supabase, target_role):
+            raise HTTPException(status_code=409, detail="Can't delete the last Admin account")
 
         response = supabase.table("users").delete().eq("id", user_id).execute()
 

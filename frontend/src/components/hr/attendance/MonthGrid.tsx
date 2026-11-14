@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { AlertTriangle, ChevronLeft, ChevronRight, FileSpreadsheet, Info, Search } from 'lucide-react';
+import { AlertTriangle, CalendarCheck, ChevronLeft, ChevronRight, FileSpreadsheet, Info, Lock, LockOpen, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -11,6 +11,8 @@ import { cn } from '@/lib/utils';
 import { AttentionItem, DayCell, MonthRow } from '@/types';
 import { DayDetailDialog } from './DayDetailDialog';
 import { LEGEND, TONE_CLASS, hhmm, localDate, lookOf } from './dayStatus';
+import { TrackingDialog, longDate } from './TrackingDialog';
+import { CloseMonthDialog } from './CloseMonthDialog';
 
 const MONTH = new Intl.DateTimeFormat('en-LK', { month: 'long', year: 'numeric' });
 const SHORT = new Intl.DateTimeFormat('en-LK', { weekday: 'short', day: 'numeric', month: 'short' });
@@ -24,13 +26,15 @@ const KIND_LABEL: Record<AttentionItem['kinds'][number], string> = {
   worked_off_day: 'Worked a day off',
 };
 
-export function MonthGrid({ canEdit }: { canEdit: boolean }) {
+export function MonthGrid({ canEdit, canChangeTracking }: { canEdit: boolean; canChangeTracking: boolean }) {
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [search, setSearch] = useState('');
   const [attentionOnly, setAttentionOnly] = useState(false);
   const [open, setOpen] = useState<{ row: MonthRow; cell: DayCell } | null>(null);
+  const [changingTracking, setChangingTracking] = useState(false);
+  const [closing, setClosing] = useState(false);
   const { data, isLoading, isFetching, error } = useAttendanceMonth(year, month);
 
   const step = (delta: number) => {
@@ -38,6 +42,12 @@ export function MonthGrid({ canEdit }: { canEdit: boolean }) {
     setYear(d.getFullYear());
     setMonth(d.getMonth() + 1);
   };
+
+  // Days with a correction waiting for HR (migration 028): ringed in amber.
+  const pending = useMemo(
+    () => new Set((data?.pending_corrections ?? []).map((p) => `${p.employee_id}|${p.date}`)),
+    [data],
+  );
 
   const needsAttention = useMemo(
     () => new Set((data?.attention ?? []).filter((a) => !a.info).map((a) => a.employee_id)),
@@ -98,7 +108,31 @@ export function MonthGrid({ canEdit }: { canEdit: boolean }) {
         <Button variant="outline" onClick={exportCsv} disabled={!data} className="gap-2 border-border-brand">
           <FileSpreadsheet className="h-4 w-4" /> CSV
         </Button>
+        {/* A month can be closed once it has ended; a closed one reopened. */}
+        {canEdit && data && (data.month_close_status === 'Closed' || data.days[data.days.length - 1].date < data.today) && (
+          <Button variant="outline" onClick={() => setClosing(true)} className="gap-2 border-border-brand">
+            {data.month_close_status === 'Closed' ? <LockOpen className="h-4 w-4" /> : <Lock className="h-4 w-4" />}
+            {data.month_close_status === 'Closed' ? 'Closed' : 'Close month'}
+          </Button>
+        )}
       </div>
+
+      {/* When tracking started: everything before it is Not tracked. */}
+      {data?.tracking_start_date && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border-brand bg-bg-subtle px-3 py-2 text-xs text-text-secondary">
+          <CalendarCheck className="h-4 w-4 shrink-0 text-accent" />
+          <span>
+            Attendance is tracked from <span className="font-semibold text-text-primary">{longDate(data.tracking_start_date)}</span>.
+            Earlier days show as Not tracked and are not counted or sent to payroll.
+            {data.employees.some((r) => r.tracking_overridden) && ' Some employees have their own date.'}
+          </span>
+          {canChangeTracking && (
+            <Button variant="outline" size="sm" onClick={() => setChangingTracking(true)} className="ml-auto h-7 border-border-brand px-2 text-xs">
+              Change
+            </Button>
+          )}
+        </div>
+      )}
 
       {/* Legend: letters and colours together. */}
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-text-secondary">
@@ -110,6 +144,26 @@ export function MonthGrid({ canEdit }: { canEdit: boolean }) {
         ))}
         <span className="flex items-center gap-1.5"><span className="inline-block h-4 w-6 rounded bg-bg-subtle" />Weekend / day off</span>
       </div>
+
+      {canEdit && !!data?.pending_corrections?.length && (
+        <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-xs text-text-secondary">
+          {`${data.pending_corrections.length} correction request${data.pending_corrections.length === 1 ? ' is' : 's are'} `
+            + 'waiting this month (ringed in amber). Decide them on the Corrections tab.'}
+        </p>
+      )}
+
+      {data?.month_close_status === 'Closed' ? (
+        <p className="rounded-lg border border-border-brand bg-bg-subtle px-4 py-2.5 text-xs text-text-secondary">
+          {`${MONTH.format(new Date(year, month - 1, 1))} is closed: its attendance is read-only, and its absences go `
+            + 'to the next payroll generated.'}
+        </p>
+      ) : canEdit && data?.payroll_frozen_through && (
+        <p className="rounded-lg border border-border-brand bg-bg-subtle px-4 py-2.5 text-xs text-text-secondary">
+          {data.payroll_frozen_through >= data.days[data.days.length - 1].date
+            ? `Payroll for ${MONTH.format(new Date(year, month - 1, 1))} is approved, so this month's attendance is read-only.`
+            : `Payroll for ${MONTH.format(new Date(year, month - 1, 1))} was approved on ${SHORT.format(localDate(data.payroll_frozen_through))}, so attendance up to that day is read-only.`}
+        </p>
+      )}
 
       {error && !data ? (
         <p className="rounded-lg border border-rose-500/20 bg-rose-500/10 p-4 text-sm text-rose-500">Failed to load attendance for this month.</p>
@@ -165,10 +219,10 @@ export function MonthGrid({ canEdit }: { canEdit: boolean }) {
                                 <button
                                   type="button"
                                   onClick={() => setOpen({ row: r, cell: c })}
-                                  title={`${SHORT.format(localDate(c.date))}: ${look.label}`}
-                                  aria-label={`${r.employee_name}, ${SHORT.format(localDate(c.date))}: ${look.label}`}
+                                  title={`${SHORT.format(localDate(c.date))}: ${look.label}${pending.has(`${r.employee_id}|${c.date}`) ? ' · correction requested' : ''}`}
+                                  aria-label={`${r.employee_name}, ${SHORT.format(localDate(c.date))}: ${look.label}${pending.has(`${r.employee_id}|${c.date}`) ? ', correction requested' : ''}`}
                                   className={cn('flex h-7 w-7 items-center justify-center rounded text-[10px] font-bold transition-shadow hover:ring-2 hover:ring-accent/50',
-                                    TONE_CLASS[look.tone])}
+                                    TONE_CLASS[look.tone], pending.has(`${r.employee_id}|${c.date}`) && 'ring-2 ring-amber-400')}
                                 >
                                   {look.code}
                                 </button>
@@ -223,9 +277,15 @@ export function MonthGrid({ canEdit }: { canEdit: boolean }) {
           employeeId={open.row.employee_id}
           employeeName={open.row.employee_name}
           canEdit={canEdit}
+          isOwn={data?.my_employee_id === open.row.employee_id}
+          payrollApproved={!!data?.payroll_frozen_through && open.cell.date <= data.payroll_frozen_through}
           onClose={() => setOpen(null)}
         />
       )}
+      {changingTracking && data && (
+        <TrackingDialog current={data.tracking_start_date} onClose={() => setChangingTracking(false)} />
+      )}
+      {closing && <CloseMonthDialog year={year} month={month} onClose={() => setClosing(false)} />}
     </div>
   );
 }

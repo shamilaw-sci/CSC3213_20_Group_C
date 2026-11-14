@@ -23,7 +23,17 @@ import {
 } from '@/components/programs/program-lifecycle';
 import { cn, getErrorMessage } from '@/lib/utils';
 
+// The gate wraps the content rather than sitting inside it, so the content's
+// requests never fire for a role that would only get 403s back.
 export default function ProgramDetailsPage() {
+  return (
+    <ProtectedRoute requiredPermission="programs:read">
+      <ProgramDetailsContent />
+    </ProtectedRoute>
+  );
+}
+
+function ProgramDetailsContent() {
   const params = useParams();
   const router = useRouter();
   const programId = Number(params.id);
@@ -117,7 +127,7 @@ export default function ProgramDetailsPage() {
   );
 
   return (
-    <ProtectedRoute requiredPermission="programs:read">
+    <>
       <div className="space-y-6 pb-12">
         <Button
           variant="ghost" size="sm"
@@ -387,7 +397,7 @@ export default function ProgramDetailsPage() {
           </>
         )}
       </div>
-    </ProtectedRoute>
+    </>
   );
 }
 

@@ -52,6 +52,11 @@ class Permission(str, Enum):
     PROGRAMS_READ = 'programs:read'
     PROGRAMS_MANAGE = 'programs:manage'
     ADMIN_USERS = 'admin:users'
+    # Change any account's role. Admin only (decided 2026-11-13): admin:users
+    # lets System Administrator list and manage accounts, but with role changes
+    # under that same permission it could promote itself to Admin and step
+    # outside its own boundary. Every grant now goes through an Admin.
+    ADMIN_ROLES = 'admin:roles'
     AUDIT_READ = 'audit:read'
     RESCUE_READ = 'rescue:read'
     RESCUE_MANAGE = 'rescue:manage'
@@ -73,6 +78,10 @@ class Permission(str, Enum):
     # it on either alone creates the dead end where an HR Officer approves
     # someone and then cannot reach them.
     VOLUNTEERS_ASSIGN = 'volunteers:assign'
+    # The monthly management report: finance, payroll totals, rescue and stock
+    # in one PDF. For the roles that see across every department (confirmed
+    # 2026-11-13); Finance Officer keeps the Finance report.
+    REPORTS_MONTHLY = 'reports:monthly'
 
 # NOTE: Must stay in sync with frontend/src/lib/permissions.ts
 ROLE_PERMISSIONS = {
@@ -82,9 +91,10 @@ ROLE_PERMISSIONS = {
         Permission.PAYROLL_GENERATE.value, Permission.PAYROLL_APPROVE.value, Permission.FINANCE_READ.value,
         Permission.FINANCE_WRITE.value, Permission.FINANCE_RESTRICTED_OVERRIDE.value,
         Permission.INVENTORY_READ.value, Permission.INVENTORY_MANAGE.value, Permission.INVENTORY_ISSUE.value,
-        Permission.PROGRAMS_READ.value, Permission.PROGRAMS_MANAGE.value, Permission.ADMIN_USERS.value, Permission.AUDIT_READ.value,
-        Permission.RESCUE_READ.value, Permission.RESCUE_MANAGE.value, Permission.RESCUE_ASSIGN.value,
-        Permission.VOLUNTEERS_READ.value, Permission.VOLUNTEERS_APPROVE.value, Permission.VOLUNTEERS_ASSIGN.value
+        Permission.PROGRAMS_READ.value, Permission.PROGRAMS_MANAGE.value, Permission.ADMIN_USERS.value, Permission.ADMIN_ROLES.value,
+        Permission.AUDIT_READ.value, Permission.RESCUE_READ.value, Permission.RESCUE_MANAGE.value, Permission.RESCUE_ASSIGN.value,
+        Permission.VOLUNTEERS_READ.value, Permission.VOLUNTEERS_APPROVE.value, Permission.VOLUNTEERS_ASSIGN.value,
+        Permission.REPORTS_MONTHLY.value
     ],
     # volunteers:approve but not :assign — oversight of who the organisation
     # takes on, without running the shift rota. Consistent with the rest of this
@@ -98,7 +108,8 @@ ROLE_PERMISSIONS = {
         Permission.FINANCE_READ.value, Permission.PAYROLL_APPROVE.value, Permission.PROGRAMS_READ.value,
         Permission.INVENTORY_READ.value, Permission.INVENTORY_MANAGE.value, Permission.AUDIT_READ.value,
         Permission.RESCUE_READ.value, Permission.RESCUE_ASSIGN.value,
-        Permission.VOLUNTEERS_READ.value, Permission.VOLUNTEERS_APPROVE.value
+        Permission.VOLUNTEERS_READ.value, Permission.VOLUNTEERS_APPROVE.value,
+        Permission.REPORTS_MONTHLY.value
     ],
     # Vetting and onboarding a person is squarely HR, so this role approves
     # applications. It does not staff shifts — that is operations.
@@ -114,7 +125,10 @@ ROLE_PERMISSIONS = {
         # in this role are employees too (confirmed 2026-10-29). It reaches
         # only the holder's own records, so it adds no business-data access.
         Permission.HR_ATTENDANCE_SELF.value,
-        Permission.FINANCE_READ.value, Permission.FINANCE_WRITE.value, Permission.PAYROLL_GENERATE.value,
+        # No payroll:generate: HR generates payroll, Director approves it
+        # (confirmed 2026-11-11). Finance sees an approved payroll as a payable
+        # in the ledger and marks it paid there.
+        Permission.FINANCE_READ.value, Permission.FINANCE_WRITE.value,
         Permission.INVENTORY_READ.value, Permission.INVENTORY_MANAGE.value,
         # Not a widening of what this role can see: GET /finance/transactions
         # already returns programs(program_name) under finance:read, so a

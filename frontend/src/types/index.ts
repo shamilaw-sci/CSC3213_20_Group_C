@@ -16,7 +16,29 @@ export interface Employee {
   nic: string;
   base_salary: number;
   status: string;
-  user_id?: string;
+  user_id?: string | null;
+  date_joined?: string | null;
+  // The linked login's email; sent by GET /hr/employees only.
+  login_email?: string | null;
+  // A leaver's last day (their final month is pro-rated to it) and the
+  // EPF number printed on payslips (migration 026).
+  date_left?: string | null;
+  epf_number?: string | null;
+}
+
+// PUT /hr/employees/{id} writes only the fields sent. user_id: null unlinks
+// the login; the other fields cannot be cleared.
+export type EmployeeUpdate = Partial<Pick<Employee, 'first_name' | 'last_name' | 'nic' | 'base_salary' | 'status'>> & {
+  user_id?: string | null;
+  epf_number?: string | null;
+  date_left?: string | null;
+};
+
+// A login account HR may link to an employee (GET /hr/linkable-logins).
+export interface LinkableLogin {
+  id: string;
+  email: string;
+  role: string | null;
 }
 
 // --- Work schedules and holidays (app/api/hr_calendar.py) ---
@@ -55,6 +77,9 @@ export interface ScheduleAssignmentRow {
   current_schedule_name: string | null;
   follows_default: boolean;
   history: ScheduleAssignment[];
+  // Their own date if overridden, otherwise the organisation's.
+  tracked_from: string | null;
+  tracking_overridden: boolean;
 }
 
 export interface Holiday {
@@ -176,7 +201,7 @@ export interface EntitlementsView {
 // Mirrors build_month in backend/app/services/attendance_month.py.
 
 export type DayStatus =
-  | 'not_employed' | 'upcoming' | 'leave' | 'holiday' | 'rest' | 'worked_off_day'
+  | 'not_employed' | 'not_tracked' | 'upcoming' | 'leave' | 'holiday' | 'rest' | 'worked_off_day'
   | 'absent' | 'missing_clock_out' | 'in_progress' | 'present';
 
 export interface DayLeave {
@@ -213,6 +238,8 @@ export interface MonthRow {
   employee_name: string;
   status: string | null;
   date_joined: string | null;
+  tracked_from: string | null;
+  tracking_overridden: boolean;
   cells: DayCell[];
   totals: {
     present: number; absent: number; late: number; left_early: number; missing_clock_out: number;
@@ -237,7 +264,83 @@ export interface AttendanceMonth {
   employees: MonthRow[];
   attention: AttentionItem[];
   today: string;
+  tracking_start_date: string | null;
   employee?: MonthRow | null; // /me/month only
+  // /month only: the viewer's own employee row (HR can't edit it) and
+  // whether this month's payroll is approved (attendance is then frozen).
+  my_employee_id?: number | null;
+  payroll_approved?: boolean;
+  // Days up to this date (YYYY-MM-DD) are read-only; later ones stay open.
+  payroll_frozen_through?: string | null;
+  // Correction requests still waiting for HR in this month (migration 028).
+  pending_corrections?: { id: number; employee_id: number; date: string }[];
+  // The month's close (migration 029): Closed, Reopened, or never closed.
+  month_close_status?: 'Closed' | 'Reopened' | null;
+}
+
+// GET /hr/attendance-tracking/impact: what a new tracked-from date would do.
+// GET /hr/attendance/close: what closing a month would record and what stops it.
+export interface MonthClosePreview {
+  year: number;
+  month: number;
+  status: 'Open' | 'Closed' | 'Reopened';
+  can_close: boolean;
+  blocks: string[];
+  can_reopen: boolean;
+  reopen_block: string | null;
+  missing_clock_outs: { employee_id: number; employee_name: string; date: string }[];
+  pending_corrections: { id: number; employee_id: number; employee_name: string; date: string }[];
+  absences: { employee_id: number; employee_name: string; absent_days: number; absent_dates: string[] }[];
+  absent_days_total: number;
+}
+
+// A request to correct a past day's times (migration 028).
+export type CorrectionStatus = 'Pending' | 'Approved' | 'Rejected' | 'Cancelled';
+
+export interface CorrectionRequest {
+  id: number;
+  employee_id: number;
+  target_date: string;
+  requested_clock_in: string | null;
+  requested_clock_out: string | null;
+  original_clock_in: string | null;
+  original_clock_out: string | null;
+  reason: string;
+  status: CorrectionStatus;
+  requested_by: string | null;
+  requested_at: string;
+  decided_by: string | null;
+  decided_at: string | null;
+  decision_note: string | null;
+  attendance_log_id: number | null;
+  // GET /attendance/corrections (HR) only.
+  employee_name?: string;
+  employee_user_id?: string | null;
+  current_clock_in?: string | null;
+  current_clock_out?: string | null;
+  current_locked?: boolean;
+}
+
+export interface CorrectionInput {
+  target_date: string;
+  clock_in?: string;
+  clock_out?: string;
+  reason: string;
+}
+
+export interface TrackingImpact {
+  old_date: string | null;
+  new_date: string | null;
+  direction: 'earlier' | 'later' | 'same';
+  first: string | null;
+  last: string | null;
+  employees: number;
+  working_days: number;
+  absences: number;
+  missing_clock_outs: number;
+  // Months with approved payroll inside the span: the change is refused.
+  // Months whose payroll approval freezes days in the span, up to frozen_through.
+  blocked_months: { year: number; month: number; frozen_through: string }[];
 }
 
 // --- Payroll (GET /hr/payroll/run) ---
@@ -257,20 +360,83 @@ export interface PayrollRun {
   finance_transaction_id: number | null;
   generator?: { email: string } | null;
   approver?: { email: string } | null;
+  // Payroll engine (migration 026); null on runs from before it. `total` is
+  // then the employer cost: gross + employer EPF + ETF.
+  gross_total?: number | null;
+  epf_employee_total?: number | null;
+  epf_employer_total?: number | null;
+  etf_total?: number | null;
+  net_total?: number | null;
+  epf_transaction_id?: number | null;
+  etf_transaction_id?: number | null;
+  // Closed months whose absences this run deducts in arrears, e.g. "October 2026".
+  absence_months?: string | null;
 }
 
+// One employee's line. The breakdown is null on lines from before the
+// engine, which were net pay only (the base salary).
 export interface PayrollLine {
   id: number;
   employee_id: number;
   employee_name: string;
   nic: string | null;
+  epf_number?: string | null;
+  days_in_month?: number | null;
+  paid_days?: number | null;
+  basic?: number | null;
+  nopay_days?: number | null;
+  nopay_deduction?: number | null;
+  // Absences from an earlier closed month, deducted in arrears (migration 029).
+  absent_days?: number | null;
+  absence_deduction?: number | null;
+  gross?: number | null;
+  epf_employee?: number | null;
+  epf_employer?: number | null;
+  etf?: number | null;
   net_payable: number;
+}
+
+// An approved run's ledger entry and whether Finance has paid it.
+export interface PayrollPayable {
+  label: string;
+  transaction_id: number;
+  status: 'Cash' | 'Receivable' | 'Voided' | null;
+  amount: number | null;
+}
+
+// A payslip on My Payslips (approved runs only).
+export interface MyPayslip {
+  run_id: number;
+  payroll_month: number;
+  payroll_year: number;
+  approved_at: string | null;
+  gross: number | null;
+  net_payable: number;
+}
+
+// How a draft differs from computing it now (the payroll engine). An approval
+// is refused while there is any.
+export interface PayrollDrift {
+  employee_id: number;
+  employee_name: string;
+  change: 'added' | 'removed' | 'changed';
+  draft_amount: number | null;
+  current_amount: number | null;
 }
 
 export interface PayrollRunView {
   run: PayrollRun | null;
   lines: PayrollLine[];
   incomplete_attendance: number;
+  // Drafts only.
+  drift?: PayrollDrift[] | null;
+  // Approved runs: net salaries, EPF and ETF payables.
+  payables?: PayrollPayable[];
+  // The approved payable's status in the Ledger: 'Cash' once paid.
+  payment_status?: 'Cash' | 'Receivable' | 'Voided' | null;
+  // Why the month can't be generated / approved yet, if it can't.
+  generate_block?: string | null;
+  approve_block?: string | null;
 }
 
 export interface AttendanceRecord {
@@ -284,6 +450,7 @@ export interface AttendanceRecord {
   employee_profile?: {
     first_name: string;
     last_name: string;
+    user_id?: string | null;
   };
 }
 
@@ -311,7 +478,7 @@ export interface Transaction {
 // expense) and becomes the item's stored cost. Never a total.
 export type InventoryTransactionCreate = Omit<
   InventoryTransaction,
-  'id' | 'total_cost' | 'reverses_id' | 'reversed_by' | 'inventory_items' | 'programs'
+  'id' | 'total_cost' | 'reverses_id' | 'reversed_by' | 'inventory_items' | 'programs' | 'rescue_case'
 > & {
   unit_cost?: number;
 };
@@ -406,6 +573,10 @@ export interface InventoryTransaction {
   programs?: {
     program_name: string;
   };
+  // Supplies used on a rescue case (migration 031): Issue only, never with a
+  // program. rescue_case is filled by GET /inventory/transactions.
+  rescue_case_id?: string | null;
+  rescue_case?: { animal_type: string; status: string } | null;
 }
 
 // Response shape for GET /inventory/alerts/low-stock
@@ -487,8 +658,50 @@ export interface CaseOut {
   // Filled by GET /rescue_cases/cases only; null when unassigned or when the
   // assigned user no longer exists.
   assignee?: CaseAssignee | null;
+  // Set only while Resolved; null on cases resolved before outcomes were
+  // recorded (030_case_timeline_outcome.sql).
+  outcome?: CaseOutcome | null;
+  resolved_at?: string | null;
   reported_at: string;
   updated_at: string;
+}
+
+// Mirrors CaseOutcome in backend/app/schemas/rescue_case.py and the CHECK in
+// 030_case_timeline_outcome.sql.
+export const CASE_OUTCOMES = ['Released', 'Rehomed', 'Transferred', 'Died', 'Not found'] as const;
+export type CaseOutcome = (typeof CASE_OUTCOMES)[number];
+
+// One line of a case's timeline (GET /rescue_cases/cases/{id}/timeline).
+// 'reported' is the case itself, always first, with id 0.
+export interface CaseEvent {
+  id: number;
+  // 'supplies' / 'supplies_reversed': the case's Stock Outs and their
+  // reversals; id is the movement's id.
+  event_type: 'reported' | 'note' | 'status' | 'assign' | 'outcome' | 'supplies' | 'supplies_reversed';
+  body?: string | null;
+  from_status?: string | null;
+  to_status?: string | null;
+  outcome?: CaseOutcome | null;
+  assignee?: CaseAssignee | null;
+  author?: CaseAssignee | null;
+  // Supplies lines only.
+  item_name?: string | null;
+  quantity?: number | null;
+  cost?: number | null;
+  created_at: string;
+}
+
+// GET /rescue_cases/report: cases resolved in one month, by outcome.
+export interface CaseReport {
+  year: number;
+  month: number;
+  resolved: number;
+  by_outcome: { outcome: CaseOutcome; cases: number; supplies_cost: number }[];
+  supplies_cost: number;
+  average_cost: number | null;
+  open_cases: number;
+  // Resolved before outcomes were recorded; in no month's figures.
+  unrecorded_outcomes: number;
 }
 
 export interface CaseAssignee {

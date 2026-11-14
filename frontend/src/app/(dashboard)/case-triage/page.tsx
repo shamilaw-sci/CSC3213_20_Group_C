@@ -10,16 +10,19 @@ import {
 import { RescueCasesService } from '@/services/rescue-cases.service';
 import { useRescueBoardLive } from '@/hooks/useRescueBoardLive';
 import { useAuthStore } from '@/store/useAuthStore';
+import ProtectedRoute from '@/components/layout/protected-route';
 import { hasPermission } from '@/lib/permissions';
 import { cardControls } from '@/lib/case-card-controls';
 import { toast } from 'sonner';
-import { AssigneeOption, CaseOut } from '@/types';
+import { AssigneeOption, CaseOut, CaseOutcome } from '@/types';
+import { ResolveCaseDialog } from '@/components/cases/ResolveCaseDialog';
+import { CaseTimelineDialog } from '@/components/cases/CaseTimelineDialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn, getErrorMessage } from '@/lib/utils';
-import { AlertTriangle, GripVertical, User, Inbox, RefreshCw, MoveRight, Info, Sparkles } from 'lucide-react';
+import { AlertTriangle, GripVertical, User, Inbox, RefreshCw, MoveRight, Info, Sparkles, History } from 'lucide-react';
 
 const COLUMNS = ['Reported', 'In Treatment', 'Resolved'] as const;
 type Status = (typeof COLUMNS)[number];
@@ -158,7 +161,7 @@ function UrgencyReason({ source, reason }: {
   );
 }
 
-function CaseCard({ c, canManage, canAssign, staffList, onAssignToMe, onAssignTo, onMove }: {
+function CaseCard({ c, canManage, canAssign, staffList, onAssignToMe, onAssignTo, onMove, onOpenTimeline }: {
   c: CaseOut;
   canManage: boolean;
   canAssign: boolean;
@@ -166,6 +169,7 @@ function CaseCard({ c, canManage, canAssign, staffList, onAssignToMe, onAssignTo
   onAssignToMe: (id: string) => void;
   onAssignTo: (caseId: string, staffId: string) => void;
   onMove: (caseId: string, status: Status) => void;
+  onOpenTimeline: (c: CaseOut) => void;
 }) {
   const controls = cardControls(c, canManage, canAssign, staffList);
 
@@ -231,8 +235,26 @@ function CaseCard({ c, canManage, canAssign, staffList, onAssignToMe, onAssignTo
         <p className="text-xs text-text-secondary leading-relaxed line-clamp-2">{c.description}</p>
       )}
 
+      {c.status === 'Resolved' && c.outcome && (
+        <span className="w-fit rounded border border-green-600/30 bg-green-600/10 px-1.5 py-0.5 text-[10px] font-semibold text-green-700 dark:text-green-400">
+          {c.outcome}
+        </span>
+      )}
+
       <div className="flex items-center justify-between gap-2 pt-0.5">
-        <span className="text-[10px] text-text-muted">{relativeTime(c.reported_at)}</span>
+        <span className="flex items-center gap-2">
+          <span className="text-[10px] text-text-muted">{relativeTime(c.reported_at)}</span>
+          {/* Stops pointer events so opening the timeline never starts a drag. */}
+          <button
+            type="button"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); onOpenTimeline(c); }}
+            className="flex items-center gap-0.5 text-[10px] font-semibold text-accent hover:underline"
+            aria-label={`Timeline for ${c.animal_type} case`}
+          >
+            <History className="h-3 w-3" aria-hidden="true" /> Timeline
+          </button>
+        </span>
 
         {c.assigned_to ? (
           <span
@@ -310,7 +332,7 @@ function CaseCard({ c, canManage, canAssign, staffList, onAssignToMe, onAssignTo
   );
 }
 
-function Column({ status, cases, canManage, canAssign, staffList, onAssignToMe, onAssignTo, onMove }: {
+function Column({ status, cases, canManage, canAssign, staffList, onAssignToMe, onAssignTo, onMove, onOpenTimeline }: {
   status: Status;
   cases: CaseOut[];
   canManage: boolean;
@@ -319,6 +341,7 @@ function Column({ status, cases, canManage, canAssign, staffList, onAssignToMe, 
   onAssignToMe: (id: string) => void;
   onAssignTo: (caseId: string, staffId: string) => void;
   onMove: (caseId: string, status: Status) => void;
+  onOpenTimeline: (c: CaseOut) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: status });
   const accent = STATUS_ACCENT[status];
@@ -375,6 +398,7 @@ function Column({ status, cases, canManage, canAssign, staffList, onAssignToMe, 
               onAssignToMe={onAssignToMe}
               onAssignTo={onAssignTo}
               onMove={onMove}
+              onOpenTimeline={onOpenTimeline}
             />
           ))
         )}
@@ -420,12 +444,27 @@ function BoardSkeleton() {
   );
 }
 
+// The sidebar hides this page from roles without rescue:read, but a URL typed by
+// hand bypasses the sidebar, so the page checks for itself.
 export default function CaseTriagePage() {
+  return (
+    <ProtectedRoute requiredPermission="rescue:read">
+      <CaseTriageContent />
+    </ProtectedRoute>
+  );
+}
+
+function CaseTriageContent() {
   const { user } = useAuthStore();
   const canManage = hasPermission(user?.role || '', 'rescue:manage');
   const canAssign = hasPermission(user?.role || '', 'rescue:assign');
+  const canIssueStock = hasPermission(user?.role || '', 'inventory:issue')
+    || hasPermission(user?.role || '', 'inventory:manage');
   const queryClient = useQueryClient();
   const [activeId, setActiveId] = useState<string | null>(null);
+  // A move into Resolved waits here until an outcome is chosen.
+  const [resolving, setResolving] = useState<CaseOut | null>(null);
+  const [timelineFor, setTimelineFor] = useState<CaseOut | null>(null);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
@@ -453,20 +492,27 @@ export default function CaseTriagePage() {
   });
 
   const statusMutation = useMutation({
-    mutationFn: ({ id, new_status, assigned_to }: { id: string; new_status: string; assigned_to?: string }) =>
-      RescueCasesService.updateCaseStatus(id, { new_status, assigned_to }),
+    mutationFn: ({ id, ...payload }: {
+      id: string; new_status: string; assigned_to?: string; outcome?: CaseOutcome; outcome_note?: string;
+    }) => RescueCasesService.updateCaseStatus(id, payload),
 
     // Move the card immediately and roll back if the server refuses. Waiting
     // for a round trip made every drag look like it had failed and snapped
     // back, which is the single most confusing thing about the board.
-    onMutate: async ({ id, new_status, assigned_to }) => {
+    onMutate: async ({ id, new_status, assigned_to, outcome }) => {
       await queryClient.cancelQueries({ queryKey: ['rescueCases', 'list'] });
       const previous = queryClient.getQueryData<CaseOut[]>(['rescueCases', 'list']);
 
       queryClient.setQueryData<CaseOut[]>(['rescueCases', 'list'], (old) =>
         old?.map((c) =>
           c.id === id
-            ? { ...c, status: new_status as CaseOut['status'], assigned_to: assigned_to ?? c.assigned_to }
+            ? {
+                ...c,
+                status: new_status as CaseOut['status'],
+                assigned_to: assigned_to ?? c.assigned_to,
+                // Reopening clears the outcome on the server too.
+                outcome: new_status === 'Resolved' ? (outcome ?? c.outcome) : null,
+              }
             : c
         )
       );
@@ -498,11 +544,29 @@ export default function CaseTriagePage() {
     const currentCase = data?.find((c) => c.id === caseId);
     if (!currentCase || currentCase.status === newStatus) return;
 
-    const assigned_to = newStatus !== 'Reported' && !currentCase.assigned_to
-      ? user?.id
-      : undefined;
+    // Resolving needs an outcome, so it goes through the dialog first.
+    if (newStatus === 'Resolved') {
+      setResolving(currentCase);
+      return;
+    }
 
-    statusMutation.mutate({ id: caseId, new_status: newStatus, assigned_to });
+    statusMutation.mutate({ id: caseId, new_status: newStatus, assigned_to: claimIfUnassigned(currentCase, newStatus) });
+  }
+
+  function claimIfUnassigned(currentCase: CaseOut, newStatus: Status) {
+    return newStatus !== 'Reported' && !currentCase.assigned_to ? user?.id : undefined;
+  }
+
+  function resolveCase(outcome: CaseOutcome, note: string) {
+    if (!resolving) return;
+    statusMutation.mutate({
+      id: resolving.id,
+      new_status: 'Resolved',
+      assigned_to: claimIfUnassigned(resolving, 'Resolved'),
+      outcome,
+      outcome_note: note || undefined,
+    });
+    setResolving(null);
   }
 
   function handleDragEnd(event: DragEndEvent) {
@@ -612,6 +676,7 @@ export default function CaseTriagePage() {
                 onAssignToMe={handleAssignToMe}
                 onAssignTo={handleAssignTo}
                 onMove={moveCase}
+                onOpenTimeline={setTimelineFor}
               />
             ))}
           </div>
@@ -632,6 +697,24 @@ export default function CaseTriagePage() {
             ) : null}
           </DragOverlay>
         </DndContext>
+      )}
+
+      {resolving && (
+        <ResolveCaseDialog
+          animalType={resolving.animal_type}
+          onConfirm={resolveCase}
+          onClose={() => setResolving(null)}
+        />
+      )}
+
+      {timelineFor && (
+        <CaseTimelineDialog
+          // The board copy, so the header follows moves made while it is open.
+          c={data?.find((c) => c.id === timelineFor.id) ?? timelineFor}
+          canManage={canManage}
+          canIssueStock={canIssueStock}
+          onClose={() => setTimelineFor(null)}
+        />
       )}
     </div>
   );

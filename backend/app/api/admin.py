@@ -15,11 +15,23 @@ async def get_audit_logs(
 ):
     try:
         response = supabase.table("system_audit_logs") \
-            .select("*, users(email, roles(role_name))") \
+            .select("*") \
             .order("timestamp", desc=True) \
             .limit(limit) \
             .execute()
-        return response.data or []
+        rows = response.data or []
+        # Looked up separately rather than embedded: user_id is deliberately not
+        # a foreign key (migration 033), so PostgREST has no relationship to
+        # follow. A deleted account's rows keep their uuid and show no user.
+        ids = sorted({r["user_id"] for r in rows if r.get("user_id")})
+        users = {}
+        if ids:
+            found = supabase.table("users").select("id, email, roles(role_name)") \
+                .in_("id", ids).execute().data or []
+            users = {u["id"]: {"email": u.get("email"), "roles": u.get("roles")} for u in found}
+        for r in rows:
+            r["users"] = users.get(r.get("user_id"))
+        return rows
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

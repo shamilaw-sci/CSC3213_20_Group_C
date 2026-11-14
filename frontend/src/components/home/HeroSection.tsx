@@ -13,20 +13,20 @@ export default function HeroSection() {
   const { ref, revealed } = useScrollReveal<HTMLElement>();
 
   return (
-    <section id="hero" ref={ref} className="relative overflow-hidden">
+    <section id="hero" ref={ref} className="relative overflow-hidden aspect-[3/2] max-h-[calc(100svh-4rem)] min-h-[560px] w-full">
       {/* Full-bleed real photo (new1.jpg, supplied directly — a street dog
-          resting on a wall) at its natural 6000x4000 / 1.5:1 aspect via
-          next/image, not a fixed-height bg-cover box, so nothing gets
-          cropped. At typical desktop widths that renders 800-950px tall —
-          genuinely the first, dominant thing on the page, the way GoFundMe
-          and Humane World lead with photography rather than a text block. */}
+          resting on a wall) at its natural 3:2 aspect, capped at the viewport
+          height below the 4rem header so the headline and CTAs are never
+          pushed below the fold on wide screens; object-cover trims the top
+          and bottom edges instead. Still the first, dominant thing on the
+          page, the way GoFundMe and Humane World lead with photography. */}
       <Image
         src="/images/new1.jpg"
         alt="A street dog cared for by Vets For Future"
-        width={6000}
-        height={4000}
+        fill
+        sizes="100vw"
         priority
-        className="w-full h-auto"
+        className="object-cover object-[50%_65%]"
       />
 
       {/* Gradient concentrated at the bottom, same as every other photo hero
@@ -42,7 +42,7 @@ export default function HeroSection() {
       >
         <div className="max-w-[1280px] mx-auto px-6 md:px-12 pb-10 md:pb-16 pt-24 space-y-6">
           <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold leading-tight tracking-tight text-white font-heading drop-shadow-lg max-w-3xl">
-            A <span className="text-[#EF9F27]">humane future</span> for Sri Lanka&apos;s street animals.
+            A <span className="text-[#EF9F27]">humane future</span>{' '}for Sri Lanka&apos;s street animals.
           </h1>
 
           <p className="text-sm md:text-base text-white/85 leading-relaxed max-w-lg drop-shadow">

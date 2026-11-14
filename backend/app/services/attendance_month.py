@@ -6,6 +6,14 @@ Pure, over rows already fetched: clock-ins (attendance_log), schedules and
 holidays via resolve_day (step 1), and leave days (step 2). Nothing is stored;
 month close (step 5) will freeze these statuses when a month is closed.
 
+Days before a person's tracked-from date (the organisation's attendance
+tracking start, or their own override) are NOT_TRACKED: nobody clocked in
+then, so the grid does not judge them. They count towards no total except
+leave, never need attention, and are never sent to payroll. Approved
+full-day leave still shows as leave on those days, because leave is its own
+record and no-pay leave is paid through payroll whatever the date
+(confirmed 2026-11-02).
+
 Rules (confirmed 2026-10-31):
   * Late: clocked in after the scheduled start plus the schedule's grace.
   * Left early: clocked out before the scheduled end minus the same grace.
@@ -22,6 +30,7 @@ from app.services.work_calendar import COLOMBO, DayPlan, resolve_day, schedule_f
 
 # Statuses, in the order they are decided.
 NOT_EMPLOYED = "not_employed"
+NOT_TRACKED = "not_tracked"
 UPCOMING = "upcoming"
 LEAVE = "leave"
 HOLIDAY = "holiday"
@@ -103,6 +112,7 @@ def day_cell(
     joined: Optional[date],
     today: date,
     now: datetime,
+    tracked_from: Optional[date] = None,
 ) -> DayCell:
     """One employee-day. `now` is Colombo time, for days still in progress."""
     clock_in = _parse_ts(record.get("clock_in")) if record else None
@@ -133,6 +143,10 @@ def day_cell(
 
     if full_leave:
         cell.status, cell.reason = LEAVE, f"{approved.type_name}."
+        return cell
+
+    if tracked_from and d < tracked_from:
+        cell.status, cell.reason = NOT_TRACKED, "Before attendance tracking started."
         return cell
 
     if not plan.working:
@@ -197,6 +211,50 @@ def day_cell(
 # The month
 # --------------------------------------------------------------------------
 
+def tracked_from_for(employee: dict, org_start: Optional[date]) -> Optional[date]:
+    """The employee's override if set, otherwise the organisation's date."""
+    own = employee.get("attendance_tracked_from")
+    return date.fromisoformat(str(own)[:10]) if own else org_start
+
+
+def month_has_tracked_days(year: int, month: int, tracked_from: list[Optional[date]]) -> bool:
+    """
+    Whether anyone is tracked on any day of the month. Month close (step 5)
+    refuses a month where nobody is: with no overrides that is every month
+    ending before the organisation's tracking start. A missing date means
+    tracked throughout.
+    """
+    last = month_days(year, month)[-1]
+    return any(t is None or t <= last for t in tracked_from)
+
+
+def payable_absences(cells: list[dict]) -> list[str]:
+    """
+    The dates month close (step 5) may send to payroll as unpaid absences.
+    Only ABSENT counts, so a not-tracked day can never be one.
+    """
+    return [c["date"] for c in cells if c["status"] == ABSENT]
+
+
+def days_brought_into_tracking(old: Optional[date], new: date) -> Optional[tuple[date, date]]:
+    """
+    The span of days a change of tracked-from date starts tracking, as
+    (first, last), or None when the change only stops tracking days (or
+    changes nothing). `old` None means everything was already tracked.
+    """
+    if old is None or new >= old:
+        return None
+    return (new, old - timedelta(days=1))
+
+
+def months_between(first: date, last: date) -> list[tuple[int, int]]:
+    out, y, m = [], first.year, first.month
+    while (y, m) <= (last.year, last.month):
+        out.append((y, m))
+        y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+    return out
+
+
 def month_days(year: int, month: int) -> list[date]:
     first = date(year, month, 1)
     nxt = date(year + (month == 12), month % 12 + 1, 1)
@@ -217,10 +275,13 @@ def build_month(
     leave_days: list[dict],
     today: date,
     now: datetime,
+    tracking_start: Optional[date] = None,
 ) -> dict:
     """
     `leave_days` rows: {employee_id, leave_date, fraction, status, half_day,
     type_name, type_code, paid}, for Pending and Approved requests only.
+    `tracking_start` is the organisation's date; an employee's
+    `attendance_tracked_from` overrides it.
     """
     days = month_days(year, month)
     by_schedule = {s["id"]: s for s in schedules}
@@ -243,6 +304,7 @@ def build_month(
     out_employees, attention = [], []
     for e in employees:
         joined = date.fromisoformat(str(e["date_joined"])[:10]) if e.get("date_joined") else None
+        tracked_from = tracked_from_for(e, tracking_start)
         cells = []
         totals = dict(present=0, absent=0, late=0, left_early=0, missing_clock_out=0,
                       leave_days=0.0, worked_off_days=0, worked_minutes=0, expected_minutes=0)
@@ -253,8 +315,13 @@ def build_month(
             schedule = by_schedule.get(schedule_for(e["id"], d, assignments, default_id))
             plan = resolve_day(d, schedule, holidays_on.get(iso, []))
             cell = day_cell(d, plan, records.get((e["id"], iso)), approved.get((e["id"], iso)),
-                            pending.get((e["id"], iso)), joined, today, now)
+                            pending.get((e["id"], iso)), joined, today, now, tracked_from)
             cells.append(cell)
+
+            if cell.leave and cell.status != NOT_EMPLOYED:
+                totals["leave_days"] += cell.leave["fraction"]
+            if cell.status in (NOT_TRACKED, NOT_EMPLOYED):
+                continue
 
             if cell.status == PRESENT:
                 totals["present"] += 1
@@ -263,10 +330,8 @@ def build_month(
             totals["late"] += cell.late_minutes > 0
             totals["left_early"] += cell.left_early_minutes > 0
             totals["worked_off_days"] += cell.status == WORKED_OFF_DAY
-            if cell.leave:
-                totals["leave_days"] += cell.leave["fraction"]
             totals["worked_minutes"] += cell.worked_minutes
-            if cell.status not in (UPCOMING, NOT_EMPLOYED):
+            if cell.status != UPCOMING:
                 totals["expected_minutes"] += cell.expected_minutes
 
             if cell.needs_attention:
@@ -294,6 +359,8 @@ def build_month(
             "employee_name": name,
             "status": e.get("status"),
             "date_joined": e.get("date_joined"),
+            "tracked_from": tracked_from.isoformat() if tracked_from else None,
+            "tracking_overridden": bool(e.get("attendance_tracked_from")),
             "cells": [vars(c) for c in cells],
             "totals": totals,
         })
@@ -313,4 +380,19 @@ def build_month(
         "employees": out_employees,
         "attention": attention,
         "today": today.isoformat(),
+        "tracking_start_date": tracking_start.isoformat() if tracking_start else None,
     }
+
+
+def absence_days(cells: list[dict]) -> list[tuple[str, float]]:
+    """
+    (date, fraction) of each payable absence, for month close: a full day,
+    or half a day where approved half-day leave covered the other half
+    (confirmed 2026-11-12). Only ABSENT counts, so a not-tracked day never does.
+    """
+    out = []
+    for c in cells:
+        if c["status"] == ABSENT:
+            leave = c.get("leave")
+            out.append((c["date"], 0.5 if leave and float(leave.get("fraction", 1)) < 1 else 1.0))
+    return out

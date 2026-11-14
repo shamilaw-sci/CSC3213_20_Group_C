@@ -20,6 +20,7 @@ import re
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from app.core import config
 from app.api import (
     hr,
     hr_calendar,
@@ -35,6 +36,8 @@ from app.api import (
     chat,
     volunteers,
     donations,
+    inbox,
+    notifications,
 )
 
 
@@ -72,7 +75,7 @@ app = FastAPI(title="VFF IMS API", version="1.0.0")
 # CORS Configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # In production, replace with frontend URL
+    allow_origins=config.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -98,6 +101,8 @@ app.include_router(programs.router, prefix="/api/programs", tags=["Programs"])
 app.include_router(chat.router, prefix="/api/chat", tags=["Chat"])
 app.include_router(volunteers.router, prefix="/api/volunteers", tags=["Volunteers"])
 app.include_router(donations.router, prefix="/api/donations", tags=["Donations"])
+app.include_router(inbox.router, prefix="/api/inbox", tags=["Inbox"])
+app.include_router(notifications.router, prefix="/api/notifications", tags=["Notifications"])
 
 
 if __name__ == "__main__":

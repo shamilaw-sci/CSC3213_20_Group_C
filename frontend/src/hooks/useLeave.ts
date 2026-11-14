@@ -82,6 +82,25 @@ export const useAdjustEntitlement = () =>
   useLeaveMutation(({ id, adjustment, note }: { id: number; adjustment: number; note?: string }) =>
     LeaveService.adjustEntitlement(id, adjustment, note), 'Entitlement adjusted', 'Failed to adjust the entitlement');
 
-export const useSetDateJoined = () =>
-  useLeaveMutation(({ employeeId, date }: { employeeId: number; date: string }) =>
-    LeaveService.setDateJoined(employeeId, date), 'Join date saved', 'Failed to save the join date');
+type DateJoinedResult = {
+  entitlements_updated?: { year: number; leave_type: string; from: number; to: number }[];
+};
+
+// A join date decides annual and casual allowances, so the server recomputes
+// this year's and later ones; the toast says what moved.
+export function useSetDateJoined() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ employeeId, date }: { employeeId: number; date: string }) =>
+      LeaveService.setDateJoined(employeeId, date) as Promise<DateJoinedResult>,
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: [KEY] });
+      queryClient.invalidateQueries({ queryKey: ['employees'] });
+      const changed = result?.entitlements_updated ?? [];
+      toast.success(changed.length
+        ? `Join date saved. Updated ${changed.map((c) => `${c.year} ${c.leave_type.toLowerCase()}: ${c.from} to ${c.to} days`).join('; ')}.`
+        : 'Join date saved');
+    },
+    onError: (error) => toast.error(leaveErrorText(error, 'Failed to save the join date')),
+  });
+}

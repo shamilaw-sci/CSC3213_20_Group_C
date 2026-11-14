@@ -8,6 +8,7 @@ import {
   type Volunteer, type VolunteerStatus,
 } from '@/services/volunteers.service';
 import { useAuthStore } from '@/store/useAuthStore';
+import ProtectedRoute from '@/components/layout/protected-route';
 import { hasPermission } from '@/lib/permissions';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -70,7 +71,17 @@ function relativeDays(iso?: string | null): string {
   return `Link shared ${days} days ago`;
 }
 
+// The sidebar hides this page from roles without volunteers:read, but a URL typed by
+// hand bypasses the sidebar, so the page checks for itself.
 export default function VolunteersRosterPage() {
+  return (
+    <ProtectedRoute requiredPermission="volunteers:read">
+      <VolunteersRosterContent />
+    </ProtectedRoute>
+  );
+}
+
+function VolunteersRosterContent() {
   const { user } = useAuthStore();
   const canApprove = hasPermission(user?.role || '', 'volunteers:approve');
   const canAssign = hasPermission(user?.role || '', 'volunteers:assign');

@@ -26,7 +26,12 @@ const ANIMAL_TYPES = ['Dog', 'Cat', 'Cow', 'Other'];
 const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
 const ACCEPTED_PHOTO_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 
-const STEPS: { key: Exclude<Step, 'locating' | 'submitting'> | 'confirm-location'; label: string }[] = [
+// Where the map opens when the browser can't give a position: the middle of
+// the island, zoomed out, so the reporter can find the place themselves.
+const SRI_LANKA_CENTRE = { lat: 7.8731, lng: 80.7718 };
+const ISLAND_ZOOM = 7;
+
+const STEPS:{ key: Exclude<Step, 'locating' | 'submitting'> | 'confirm-location'; label: string }[] = [
   { key: 'form', label: 'Details' },
   { key: 'confirm-location', label: 'Location' },
 ];
@@ -39,6 +44,11 @@ export default function ReportCasePage() {
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
   const [pendingFields, setPendingFields] = useState<{ animal_type: string; description?: string } | null>(null);
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
+  // True when location access failed and the pin starts at SRI_LANKA_CENTRE.
+  // The report can't be sent until the reporter has placed the pin, or every
+  // such report would land in the middle of the island.
+  const [manualPin, setManualPin] = useState(false);
+  const [pinPlaced, setPinPlaced] = useState(false);
 
   function handlePhotoChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -86,18 +96,20 @@ export default function ReportCasePage() {
       navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 10000 })
     ).catch(() => null);
 
-    if (!pos) {
-      toast.error("Couldn't get your location. Please enable location access and try again.");
-      setStep('form');
-      return;
-    }
-
-    setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+    // Without a position, ask for the place on the map instead of refusing:
+    // declining the location prompt used to make reporting impossible.
+    setManualPin(!pos);
+    setPinPlaced(false);
+    setCoords(pos ? { lat: pos.coords.latitude, lng: pos.coords.longitude } : SRI_LANKA_CENTRE);
     setStep('confirm-location');
   }
 
   async function handleFinalSubmit() {
     if (!pendingFields || !coords) return;
+    if (manualPin && !pinPlaced) {
+      toast.error('Tap the map where the animal is first.');
+      return;
+    }
     setStep('submitting');
 
     try {
@@ -117,6 +129,8 @@ export default function ReportCasePage() {
       toast.success('Report submitted — thank you for helping!');
       setPendingFields(null);
       setCoords(null);
+      setManualPin(false);
+      setPinPlaced(false);
       setAnimalType('');
       setDescription('');
       clearPhoto();
@@ -288,12 +302,18 @@ export default function ReportCasePage() {
               <div className="space-y-4">
                 <div className="flex items-center gap-2 text-sm font-semibold text-text-primary">
                   <MapPin className="w-4 h-4 text-[#EF9F27]" />
-                  Drag the pin if this isn&apos;t quite right
+                  {manualPin
+                    ? "We couldn't get your location. Tap the map where the animal is."
+                    : <>Drag the pin if this isn&apos;t quite right</>}
                 </div>
                 <LocationPicker
                   initialLat={coords.lat}
                   initialLng={coords.lng}
-                  onChange={(lat, lng) => setCoords({ lat, lng })}
+                  initialZoom={manualPin ? ISLAND_ZOOM : undefined}
+                  onChange={(lat, lng) => {
+                    setCoords({ lat, lng });
+                    setPinPlaced(true);
+                  }}
                 />
                 <div className="flex gap-3">
                   <Button
@@ -308,6 +328,7 @@ export default function ReportCasePage() {
                     type="button"
                     className="flex-1 bg-[#EF9F27] text-white hover:bg-[#EF9F27]/90"
                     onClick={handleFinalSubmit}
+                    disabled={manualPin && !pinPlaced}
                   >
                     Confirm & submit
                   </Button>

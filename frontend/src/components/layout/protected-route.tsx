@@ -31,6 +31,12 @@ export default function ProtectedRoute({ children, requiredPermission }: Protect
     return null; // Or a loading skeleton
   }
 
+  // Render nothing while the redirect above happens, so the page's own
+  // requests never fire for a role that would only get 403s back.
+  if (user && requiredPermission && !hasAnyPermission(user.role, requiredPermission)) {
+    return null;
+  }
+
     return (
     <>
       {children}

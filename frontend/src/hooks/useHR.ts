@@ -1,11 +1,38 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { HRService } from '@/services/hr.service';
+import { EmployeeUpdate } from '@/types';
 import { toast } from 'sonner';
 
 export function useEmployees() {
   return useQuery({
     queryKey: ['employees'],
     queryFn: HRService.getEmployees,
+  });
+}
+
+// Used by the edit dialog, which mounts only while open. Under 'employees'
+// so saving an edit refreshes it: linking one employee takes that login off
+// everyone else's list.
+export function useLinkableLogins() {
+  return useQuery({
+    queryKey: ['employees', 'linkable-logins'],
+    queryFn: HRService.getLinkableLogins,
+  });
+}
+
+export function useUpdateEmployee() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ id, changes }: { id: number; changes: EmployeeUpdate }) =>
+      HRService.updateEmployee(id, changes),
+    onSuccess: () => {
+      // Status decides who appears on the attendance grid, leave and payroll.
+      queryClient.invalidateQueries({ queryKey: ['employees'] });
+      queryClient.invalidateQueries({ queryKey: ['attendance'] });
+      toast.success('Employee record updated');
+    },
+    // No error toast: the edit dialog shows the server's reason in place.
   });
 }
 
@@ -31,6 +58,33 @@ export function useMyAttendanceMonth(year: number, month: number) {
     queryKey: ['attendance', 'me', 'month', { year, month }],
     queryFn: () => HRService.getMyAttendanceMonth(year, month),
     retry: false,
+  });
+}
+
+// What a new tracked-from date would do; only fetched once a date is chosen
+// (or, for an employee, when clearing their override).
+export function useTrackingImpact(start: string | null, employeeId: number | undefined, enabled: boolean) {
+  return useQuery({
+    queryKey: ['attendance', 'tracking-impact', { start, employeeId }],
+    queryFn: () => HRService.getTrackingImpact(start, employeeId),
+    enabled,
+    retry: false,
+  });
+}
+
+export function useSetTracking() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ employeeId, date }: { employeeId?: number; date: string | null }) =>
+      employeeId ? HRService.setEmployeeTracking(employeeId, date) : HRService.setTrackingStart(date as string),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['attendance'] });
+      queryClient.invalidateQueries({ queryKey: ['work-calendar'] });
+      toast.success('Tracking date saved');
+    },
+    onError: (error: { response?: { data?: { detail?: string } } }) => {
+      toast.error(error?.response?.data?.detail || 'Failed to save the tracking date');
+    },
   });
 }
 
@@ -94,6 +148,73 @@ export function useLockAttendance() {
     }
   });
 }
+// --- Attendance correction requests ---
+
+type DetailError = { response?: { data?: { detail?: unknown } } };
+const detailText = (error: unknown, fallback: string) => {
+  const detail = (error as DetailError)?.response?.data?.detail;
+  if (typeof detail === 'string') return detail;
+  if (Array.isArray(detail) && detail[0]?.msg) return String(detail[0].msg).replace(/^Value error, /, '');
+  return fallback;
+};
+
+// Any decision moves the grid, the attention list and both request lists.
+function useCorrectionMutation<T>(fn: (arg: T) => Promise<unknown>, success: string, failure: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: fn,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['corrections'] });
+      queryClient.invalidateQueries({ queryKey: ['attendance'] });
+      queryClient.invalidateQueries({ queryKey: ['my-attendance'] });
+      toast.success(success);
+    },
+    onError: (error) => toast.error(detailText(error, failure)),
+  });
+}
+
+export const useMyCorrections = () =>
+  useQuery({ queryKey: ['corrections', 'me'], queryFn: HRService.getMyCorrections, retry: false });
+
+export const useCorrections = (status?: string) =>
+  useQuery({ queryKey: ['corrections', 'all', status], queryFn: () => HRService.getCorrections(status) });
+
+export const useRequestCorrection = () =>
+  useCorrectionMutation(HRService.requestCorrection, 'Correction sent to HR', 'Failed to send the correction');
+
+export const useCancelCorrection = () =>
+  useCorrectionMutation(HRService.cancelCorrection, 'Request withdrawn', 'Failed to withdraw the request');
+
+export const useApproveCorrection = () =>
+  useCorrectionMutation(({ id, note }: { id: number; note?: string }) => HRService.approveCorrection(id, note),
+    'Correction approved and applied', 'Failed to approve the correction');
+
+export const useRejectCorrection = () =>
+  useCorrectionMutation(({ id, note }: { id: number; note: string }) => HRService.rejectCorrection(id, note),
+    'Correction rejected', 'Failed to reject the correction');
+
+// --- Month close ---
+
+export const useClosePreview = (year: number, month: number, enabled: boolean) =>
+  useQuery({ queryKey: ['attendance', 'close', { year, month }], queryFn: () => HRService.getClosePreview(year, month), enabled });
+
+// Closing or reopening freezes or frees the month and changes the next payroll.
+function useCloseMutation(fn: (arg: { year: number; month: number }) => Promise<unknown>, success: string, failure: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: fn,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['attendance'] });
+      queryClient.invalidateQueries({ queryKey: ['payroll'] });
+      toast.success(success);
+    },
+    onError: (error) => toast.error(detailText(error, failure)),
+  });
+}
+
+export const useCloseMonth = () => useCloseMutation(HRService.closeMonth, 'Month closed', 'Failed to close the month');
+export const useReopenMonth = () => useCloseMutation(HRService.reopenMonth, 'Month reopened', 'Failed to reopen the month');
+
 export function useUnlockAttendance() {
   const queryClient = useQueryClient();
 
@@ -108,6 +229,11 @@ export function useUnlockAttendance() {
       toast.error(typeof detail === 'string' ? detail : 'Failed to unlock the record');
     },
   });
+}
+
+// One's own payslips: approved payrolls only.
+export function useMyPayslips() {
+  return useQuery({ queryKey: ['payroll', 'me'], queryFn: HRService.getMyPayslips, retry: false });
 }
 
 export function usePayrollRun(month: number, year: number) {
@@ -163,9 +289,8 @@ export function useCreateEmployee() {
       queryClient.invalidateQueries({ queryKey: ['employees'] });
       toast.success('Employee record created successfully');
     },
-    onError: (error: any) => {
-      toast.error(error?.response?.data?.detail || 'Failed to add employee');
-    }
+    // No error toast: the Add Employee dialog shows the server's reason
+    // itself and stays open so the details can be corrected.
   });
 }
 
@@ -184,7 +309,7 @@ export function useLogAttendance() {
 export function useUpdateAttendance() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, ...data }: { id: number; clock_in?: string; clock_out?: string }) =>
+    mutationFn: ({ id, ...data }: { id: number; clock_in?: string; clock_out?: string | null }) =>
       HRService.updateAttendance(id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['attendance'] });

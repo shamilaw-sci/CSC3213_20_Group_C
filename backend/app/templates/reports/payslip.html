@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+
+{#
+  One employee's payslip: a payroll_ledger line from GET /hr/payroll/run's
+  shape (_stored_lines in app/api/hr.py). Lines from before the payroll
+  engine carry net pay only ("legacy").
+#}
+
+{% macro lkr(v) -%}LKR {{ "{:,.2f}".format(v or 0) }}{%- endmacro %}
+
+{% block styles %}
+    .draft { color: #b42318; font-weight: bold; font-size: 12pt; margin: 0 0 10px 0; }
+    .who td { padding: 2px 8px 2px 0; border: none; }
+    .who td.k { color: #666666; width: 110px; }
+    table.pay { width: 100%; border-collapse: collapse; margin-top: 14px; }
+    table.pay th { text-align: left; font-size: 9pt; padding: 4px 6px; }
+    table.pay th.num { text-align: right; }
+    table.pay td { padding: 4px 6px; border-bottom: 1px solid #e5e5e5; }
+    .num { text-align: right; }
+    tr.total td { font-weight: bold; border-top: 1px solid #2c5f2d; border-bottom: none; }
+    .note { font-size: 8pt; color: #666666; margin-top: 14px; }
+{% endblock %}
+
+{% block content %}
+{% if draft %}<p class="draft">DRAFT: not yet approved, figures may change.</p>{% endif %}
+
+<table class="who">
+    <tr><td class="k">Employee</td><td><strong>{{ line.employee_name }}</strong></td></tr>
+    <tr><td class="k">NIC</td><td>{{ line.nic or "-" }}</td></tr>
+    <tr><td class="k">EPF number</td><td>{{ line.epf_number or "-" }}</td></tr>
+    <tr><td class="k">Pay period</td><td>{{ period }}</td></tr>
+    {% if not legacy and line.paid_days != line.days_in_month %}
+    <tr><td class="k">Days employed</td><td>{{ line.paid_days }} of {{ line.days_in_month }}</td></tr>
+    {% endif %}
+</table>
+
+{% if legacy %}
+<table class="pay">
+    <tr><th>Item</th><th class="num">Amount</th></tr>
+    <tr class="total"><td>Net pay</td><td class="num">{{ lkr(line.net_payable) }}</td></tr>
+</table>
+<p class="note">This month was paid before itemised payslips existed: the base salary, with no EPF or ETF worked out.</p>
+{% else %}
+<table class="pay">
+    <tr><th>Earnings</th><th class="num">Amount</th></tr>
+    <tr><td>Basic salary{% if line.paid_days != line.days_in_month %} ({{ line.paid_days }} days at base / 30){% endif %}</td>
+        <td class="num">{{ lkr(line.basic) }}</td></tr>
+    {% if line.nopay_days %}
+    <tr><td>Less no-pay leave ({{ "%g" | format(line.nopay_days) }} day{{ "" if line.nopay_days == 1 else "s" }})</td>
+        <td class="num">-{{ lkr(line.nopay_deduction) }}</td></tr>
+    {% endif %}
+    {% if line.absent_days %}
+    <tr><td>Less absences ({{ "%g" | format(line.absent_days) }} day{{ "" if line.absent_days == 1 else "s" }}{% if run.absence_months %}, {{ run.absence_months }}{% endif %})</td>
+        <td class="num">-{{ lkr(line.absence_deduction) }}</td></tr>
+    {% endif %}
+    <tr class="total"><td>Gross pay</td><td class="num">{{ lkr(line.gross) }}</td></tr>
+</table>
+
+<table class="pay">
+    <tr><th>Deductions</th><th class="num">Amount</th></tr>
+    <tr><td>EPF, employee (8%)</td><td class="num">{{ lkr(line.epf_employee) }}</td></tr>
+    <tr class="total"><td>Net pay</td><td class="num">{{ lkr(line.net_payable) }}</td></tr>
+</table>
+
+<table class="pay">
+    <tr><th>Paid by the employer (not deducted)</th><th class="num">Amount</th></tr>
+    <tr><td>EPF, employer (12%)</td><td class="num">{{ lkr(line.epf_employer) }}</td></tr>
+    <tr><td>ETF (3%)</td><td class="num">{{ lkr(line.etf) }}</td></tr>
+</table>
+<p class="note">A day's pay is the base salary divided by 30. Absences are deducted the month after their month is closed. EPF and ETF are worked out on gross pay.</p>
+{% endif %}
+{% endblock %}

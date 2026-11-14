@@ -1,5 +1,5 @@
 import api from '@/lib/api-client';
-import { Employee, AttendanceRecord, AttendanceMonth, PayrollRun, PayrollRunView } from '@/types';
+import { CorrectionInput, CorrectionRequest, MonthClosePreview, Employee, EmployeeUpdate, LinkableLogin, MyPayslip, AttendanceRecord, AttendanceMonth, PayrollRun, PayrollRunView, TrackingImpact } from '@/types';
 
 export const HRService = {
   getEmployees: async () => {
@@ -12,8 +12,13 @@ export const HRService = {
     return response.data;
   },
 
-  updateEmployee: async (id: number, employee: Partial<Employee>) => {
-    const response = await api.put<Employee>(`/hr/employees/${id}`, employee);
+  updateEmployee: async (id: number, changes: EmployeeUpdate) => {
+    const response = await api.put<Employee>(`/hr/employees/${id}`, changes);
+    return response.data;
+  },
+
+  getLinkableLogins: async () => {
+    const response = await api.get<LinkableLogin[]>('/hr/linkable-logins');
     return response.data;
   },
 
@@ -61,12 +66,46 @@ export const HRService = {
     return response.data;
   },
 
+  // Attendance correction requests: staff ask, HR decides.
+  requestCorrection: async (body: CorrectionInput) =>
+    (await api.post<CorrectionRequest>('/hr/attendance/corrections', body)).data,
+  getMyCorrections: async () => (await api.get<CorrectionRequest[]>('/hr/attendance/corrections/me')).data,
+  cancelCorrection: async (id: number) =>
+    (await api.post<CorrectionRequest>(`/hr/attendance/corrections/${id}/cancel`)).data,
+  getCorrections: async (status?: string) =>
+    (await api.get<CorrectionRequest[]>('/hr/attendance/corrections', { params: status ? { status } : {} })).data,
+  approveCorrection: async (id: number, note?: string) =>
+    (await api.post<CorrectionRequest>(`/hr/attendance/corrections/${id}/approve`, { note: note || null })).data,
+  rejectCorrection: async (id: number, note: string) =>
+    (await api.post<CorrectionRequest>(`/hr/attendance/corrections/${id}/reject`, { note })).data,
+
+  // Month close: freeze a past month and record its absences for payroll.
+  getClosePreview: async (year: number, month: number) =>
+    (await api.get<MonthClosePreview>('/hr/attendance/close', { params: { year, month } })).data,
+  closeMonth: async ({ year, month }: { year: number; month: number }) =>
+    (await api.post<MonthClosePreview>('/hr/attendance/close', null, { params: { year, month } })).data,
+  reopenMonth: async ({ year, month }: { year: number; month: number }) =>
+    (await api.post<MonthClosePreview>('/hr/attendance/close/reopen', null, { params: { year, month } })).data,
+
   // The monthly grid: everyone (HR, Director) or just oneself.
   getAttendanceMonth: async (year: number, month: number) =>
     (await api.get<AttendanceMonth>('/hr/attendance/month', { params: { year, month } })).data,
 
   getMyAttendanceMonth: async (year: number, month: number) =>
     (await api.get<AttendanceMonth>('/hr/attendance/me/month', { params: { year, month } })).data,
+
+  // When attendance tracking starts: the organisation date, or one person's
+  // override (null start clears it). Impact first, so HR sees what changes.
+  getTrackingImpact: async (start: string | null, employeeId?: number) =>
+    (await api.get<TrackingImpact>('/hr/attendance-tracking/impact', {
+      params: { ...(start ? { start } : {}), ...(employeeId ? { employee_id: employeeId } : {}) },
+    })).data,
+
+  setTrackingStart: async (date: string) =>
+    (await api.put('/hr/attendance-tracking', { tracking_start_date: date })).data,
+
+  setEmployeeTracking: async (employeeId: number, date: string | null) =>
+    (await api.put(`/hr/employees/${employeeId}/attendance-tracking`, { tracked_from: date })).data,
 
   getPayrollRun: async (month: number, year: number) => {
     const response = await api.get<PayrollRunView>('/hr/payroll/run', { params: { month, year } });
@@ -86,7 +125,18 @@ export const HRService = {
     return response.data;
   },
 
-  updateAttendance: async (id: number, attendance: { clock_in?: string; clock_out?: string }) => {
+  // A payslip PDF, as a blob to save: anyone's for HR and approvers
+  // (a draft's is marked DRAFT), one's own approved ones for staff.
+  getPayslip: async (runId: number, employeeId: number) =>
+    (await api.get<Blob>(`/hr/payroll/runs/${runId}/payslips/${employeeId}`, { responseType: 'blob' })).data,
+
+  getMyPayslips: async () => (await api.get<MyPayslip[]>('/hr/payroll/me/payslips')).data,
+
+  getMyPayslip: async (runId: number) =>
+    (await api.get<Blob>(`/hr/payroll/me/payslips/${runId}`, { responseType: 'blob' })).data,
+
+  // clock_out: null clears a wrong clock-out.
+  updateAttendance: async (id: number, attendance: { clock_in?: string; clock_out?: string | null }) => {
   const response = await api.put<AttendanceRecord>(`/hr/attendance/${id}`, attendance);
   return response.data;
   },

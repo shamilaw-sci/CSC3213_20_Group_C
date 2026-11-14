@@ -55,6 +55,15 @@ BREVO_REPLY_TO: str = os.environ.get("BREVO_REPLY_TO", "vetsforfuturesl@gmail.co
 # wrong origin is worse than no email at all — it looks legitimate and 404s.
 PUBLIC_APP_URL: str = os.environ.get("PUBLIC_APP_URL", "http://localhost:3000").rstrip("/")
 
+# Origins the browser may call the API from. A wildcard can't be combined with
+# credentials (browsers reject "*" there), so these are named: the frontend
+# above, plus any extra in CORS_ORIGINS (comma-separated), e.g. a preview
+# deployment or http://127.0.0.1:3000.
+CORS_ORIGINS: list[str] = list(dict.fromkeys(
+    [PUBLIC_APP_URL]
+    + [o.strip().rstrip("/") for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()]
+))
+
 # PayHere: online donations (https://support.payhere.lk/api-&-mobile-sdk/checkout-api).
 #
 # Unvalidated at import, like ORS and Brevo above: without these the donate

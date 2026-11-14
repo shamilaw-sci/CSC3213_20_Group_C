@@ -161,6 +161,9 @@ PROTECTED_ROUTES = [
     ("GET", "/api/admin/audit-logs"),
     ("GET", "/api/rescue_cases/cases"),
     ("PATCH", f"/api/rescue_cases/cases/{CASE_ID}/status"),
+    ("GET", f"/api/rescue_cases/cases/{CASE_ID}/timeline"),
+    ("GET", "/api/rescue_cases/report?year=2026&month=11"),
+    ("POST", f"/api/rescue_cases/cases/{CASE_ID}/notes"),
     # Previously reachable anonymously; see the Known gaps section below.
     ("PUT", f"/api/auth/users/{OTHER_USER_ID}/role"),
     ("DELETE", f"/api/auth/users/{OTHER_USER_ID}"),
@@ -220,6 +223,8 @@ PERMISSION_ROUTES = [
     ("GET", "/api/hr/employees", "hr:manage"),
     ("POST", "/api/hr/schedules", "hr:manage"),
     ("POST", "/api/hr/holidays", "hr:manage"),
+    ("PUT", "/api/hr/attendance-tracking", "hr:manage"),
+    ("PUT", "/api/hr/employees/1/attendance-tracking", "hr:manage"),
     ("GET", "/api/leave/requests", "leave:approve"),
     ("GET", "/api/leave/me", "hr:attendance:self"),
     ("POST", "/api/hr/employees", "hr:manage"),
@@ -240,13 +245,18 @@ PERMISSION_ROUTES = [
     # refused their own report.
     ("GET", "/api/reports/finance/summary?start_date=2026-01-01&end_date=2026-01-31", "finance:read"),
     ("GET", "/api/reports/finance?start_date=2026-01-01&end_date=2026-01-31", "finance:read"),
+    ("GET", "/api/reports/monthly?year=2026&month=10", "reports:monthly"),
     ("GET", "/api/admin/audit-logs", "audit:read"),
     ("GET", "/api/admin/audit-logs/verify", "audit:read"),
     ("GET", "/api/admin/stats", "admin:users"),
     ("GET", "/api/rescue_cases/cases", "rescue:read"),
     ("GET", "/api/rescue_cases/assignees", "rescue:assign"),
+    ("GET", f"/api/rescue_cases/cases/{CASE_ID}/timeline", "rescue:read"),
+    ("GET", "/api/rescue_cases/report?year=2026&month=11", "rescue:read"),
+    ("POST", f"/api/rescue_cases/cases/{CASE_ID}/notes", "rescue:manage"),
+    ("POST", f"/api/rescue_cases/cases/{CASE_ID}/outcome", "rescue:manage"),
     ("GET", "/api/auth/users", "admin:users"),
-    ("PUT", f"/api/auth/users/{OTHER_USER_ID}/role", "admin:users"),
+    ("PUT", f"/api/auth/users/{OTHER_USER_ID}/role", "admin:roles"),
     ("DELETE", f"/api/auth/users/{OTHER_USER_ID}", "admin:users"),
     ("POST", "/api/inventory/items", "inventory:manage"),
     ("PATCH", "/api/inventory/items/1", "inventory:manage"),
@@ -553,6 +563,8 @@ def test_rescue_case_status_authorization(
     payload = {"new_status": new_status}
     if payload_assigned_to is not None:
         payload["assigned_to"] = payload_assigned_to
+    if new_status == "Resolved" and current_status != "Resolved":
+        payload["outcome"] = "Released"  # required to resolve (030_case_timeline_outcome.sql)
 
     with acting_as(role, tables=tables):
         response = client.patch(
@@ -630,3 +642,113 @@ def test_rescue_read_gate_blocks_finance_officer():
             f"/api/rescue_cases/cases/{CASE_ID}/status",
             json={"new_status": "Reported"},
         ).status_code == 403
+
+
+# --------------------------------------------------------------------------
+# Role changes: Admin only
+# --------------------------------------------------------------------------
+
+def test_only_admin_may_change_roles():
+    """System Administrator manages accounts but must not grant roles.
+
+    It holds admin:users, which used to be the only gate on PUT /role, so it
+    could promote itself (or anyone) to Admin. The matrix row above proves the
+    gate is admin:roles; this pins down who holds that.
+    """
+    holders = sorted(r for r, perms in ROLE_PERMISSIONS.items() if "admin:roles" in perms)
+    assert holders == ["Admin"]
+
+
+def test_system_administrator_cannot_promote_itself_to_admin():
+    tables = {"users": {"select": [{"id": USER_ID, "email": "rbac@vff.test", "role_id": 7}]}}
+    with acting_as("System Administrator", tables=tables):
+        response = _request("PUT", f"/api/auth/users/{USER_ID}/role", json={"role_id": 1})
+    assert response.status_code == 403
+
+
+# --------------------------------------------------------------------------
+# Deleting Admin accounts: Admin only
+# --------------------------------------------------------------------------
+
+def _user_row(role_name):
+    return {"id": OTHER_USER_ID, "email": "target@vff.test", "role_id": 1,
+            "created_at": "2026-01-01T00:00:00+00:00", "roles": {"role_name": role_name}}
+
+
+@pytest.mark.parametrize("role", ALL_ROLES)
+def test_only_admin_may_delete_an_admin_account(role):
+    """admin:users reaches the delete route, but an Admin target also needs admin:roles.
+
+    Otherwise a System Administrator could delete every Admin and leave nobody
+    able to change roles.
+    """
+    # A second Admin row, so the last-Admin guard does not fire for Admin.
+    rows = [_user_row("Admin"), {"id": USER_ID, "roles": {"role_name": "Admin"}}]
+    tables = {"users": {"select": rows, "delete": [_user_row("Admin")]}}
+    with acting_as(role, tables=tables):
+        response = _request("DELETE", f"/api/auth/users/{OTHER_USER_ID}")
+    if role == "Admin":
+        assert response.status_code == 200
+    else:
+        assert response.status_code == 403
+
+
+def test_system_administrator_may_still_delete_non_admin_accounts():
+    tables = {"users": {"select": [_user_row("General Staff")], "delete": [_user_row("General Staff")]}}
+    with acting_as("System Administrator", tables=tables):
+        response = _request("DELETE", f"/api/auth/users/{OTHER_USER_ID}")
+    assert response.status_code == 200
+
+
+# --------------------------------------------------------------------------
+# The last Admin account cannot be removed
+# --------------------------------------------------------------------------
+# The fake supabase returns the same "select" rows for the target lookup and
+# for the Admin count, so rows[0] is the target and len(Admin rows) the count.
+
+_OTHER_ADMIN = {"id": USER_ID, "role_id": 1, "roles": {"role_name": "Admin"}}
+
+
+def test_last_admin_cannot_be_deleted():
+    tables = {"users": {"select": [_user_row("Admin")], "delete": [_user_row("Admin")]}}
+    with acting_as("Admin", tables=tables):
+        response = _request("DELETE", f"/api/auth/users/{OTHER_USER_ID}")
+    assert response.status_code == 409
+
+
+def test_last_admin_cannot_delete_themselves():
+    me = {**_user_row("Admin"), "id": USER_ID}
+    tables = {"users": {"select": [me], "delete": [me]}}
+    with acting_as("Admin", tables=tables):
+        response = _request("DELETE", f"/api/auth/users/{USER_ID}")
+    assert response.status_code == 409
+
+
+def test_last_admin_cannot_be_demoted():
+    tables = {"users": {"select": [_user_row("Admin")], "update": [_user_row("General Staff")]}}
+    with acting_as("Admin", tables=tables):
+        response = _request("PUT", f"/api/auth/users/{OTHER_USER_ID}/role", json={"role_id": 6})
+    assert response.status_code == 409
+
+
+def test_last_admin_resaving_admin_role_is_allowed():
+    tables = {"users": {"select": [_user_row("Admin")], "update": [_user_row("Admin")]},
+              "roles": {"select": [{"id": 1}]}}
+    with acting_as("Admin", tables=tables):
+        response = _request("PUT", f"/api/auth/users/{OTHER_USER_ID}/role", json={"role_id": 1})
+    assert response.status_code == 200
+
+
+def test_admin_can_be_demoted_while_another_admin_remains():
+    tables = {"users": {"select": [_user_row("Admin"), _OTHER_ADMIN], "update": [_user_row("General Staff")]},
+              "roles": {"select": [{"id": 6}]}}
+    with acting_as("Admin", tables=tables):
+        response = _request("PUT", f"/api/auth/users/{OTHER_USER_ID}/role", json={"role_id": 6})
+    assert response.status_code == 200
+
+
+def test_admin_can_be_deleted_while_another_admin_remains():
+    tables = {"users": {"select": [_user_row("Admin"), _OTHER_ADMIN], "delete": [_user_row("Admin")]}}
+    with acting_as("Admin", tables=tables):
+        response = _request("DELETE", f"/api/auth/users/{OTHER_USER_ID}")
+    assert response.status_code == 200

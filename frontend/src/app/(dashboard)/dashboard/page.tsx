@@ -3,14 +3,19 @@
 import { useAuthStore } from '@/store/useAuthStore';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { useMyAttendance, useClockIn, useClockOut } from '@/hooks/useHR';
+import { useMyAttendance } from '@/hooks/useHR';
+import { TodayClockCard } from '@/components/hr/attendance/TodayClockCard';
+import { colomboDate } from '@/components/hr/attendance/dayStatus';
 import { useFinanceSummary, useFinanceAging, useTransactions } from '@/hooks/useFinance';
 import { useAuditLogs, useSystemStats } from '@/hooks/useAdmin';
 import { format } from 'date-fns';
-import { Clock, Lock, ArrowUpRight, ArrowDownRight, AlertTriangle, Users, Activity, ExternalLink, BookOpen, DollarSign, Package, Calendar, ArrowRight, Wallet, ArrowDownUp, FileText, CheckCircle2, TrendingUp } from 'lucide-react';
+import { Lock, ArrowUpRight, ArrowDownRight, AlertTriangle, Users, Activity, ExternalLink, BookOpen, DollarSign, Package, Calendar, ArrowRight, Wallet, ArrowDownUp, FileText, CheckCircle2, TrendingUp } from 'lucide-react';
 import { formatLKR, formatDate } from '@/lib/formatters';
 import { Skeleton } from '@/components/ui/skeleton';
 import Link from 'next/link';
+import { hasPermission } from '@/lib/permissions';
+import { RescueOutcomesCard } from '@/components/cases/RescueOutcomesCard';
+import { MonthlyReportCard } from '@/components/reports/MonthlyReportCard';
 
 export default function DashboardPage() {
   const { user } = useAuthStore();
@@ -31,6 +36,19 @@ export default function DashboardPage() {
     default:
       return <StaffDashboard />;
   }
+}
+
+// Rescue outcomes for whoever can see the case board: Admin, Director and the
+// staff dashboard's roles. Renders nothing for the rest.
+function RescueOutcomesForRole() {
+  const { user } = useAuthStore();
+  return hasPermission(user?.role || '', 'rescue:read') ? <RescueOutcomesCard /> : null;
+}
+
+// The monthly management report download: Admin and Director.
+function MonthlyReportForRole() {
+  const { user } = useAuthStore();
+  return hasPermission(user?.role || '', 'reports:monthly') ? <MonthlyReportCard /> : null;
 }
 
 function AdminDashboard() {
@@ -122,6 +140,8 @@ function AdminDashboard() {
           )}
         </CardContent>
       </Card>
+      <MonthlyReportForRole />
+      <RescueOutcomesForRole />
     </div>
   );
 }
@@ -230,6 +250,8 @@ function DirectorDashboard() {
           </CardContent>
         </Card>
       </div>
+      <MonthlyReportForRole />
+      <RescueOutcomesForRole />
     </div>
   );
 }
@@ -372,11 +394,13 @@ function FinanceOfficerDashboard() {
              <div className="p-4 bg-bg-subtle rounded-lg border border-border-brand flex items-center justify-between">
               <div>
                 <p className="font-medium text-text-primary">Monthly Payroll</p>
-                <p className="text-sm text-text-secondary">Ready for generation when HR finishes locking.</p>
+                <p className="text-sm text-text-secondary">
+                  HR generates and the Director approves; approved payroll arrives in the Ledger as a payable to mark paid.
+                </p>
               </div>
-              <Link href="/hr/payroll">
+              <Link href="/finance/ledger?status=Receivable&type=Expense&sort=oldest">
                 <Button variant="outline" size="sm" className="gap-2">
-                  Check <ExternalLink className="w-4 h-4" />
+                  Payables <ExternalLink className="w-4 h-4" />
                 </Button>
               </Link>
             </div>
@@ -388,94 +412,40 @@ function FinanceOfficerDashboard() {
 }
 
 function StaffDashboard() {
-  const currentMonth = new Date().getMonth() + 1;
-  const currentYear = new Date().getFullYear();
-  
-  const { data: attendanceLogs, isLoading } = useMyAttendance(currentMonth, currentYear);
-  const { mutate: clockIn, isPending: isClockingIn } = useClockIn();
-  const { mutate: clockOut, isPending: isClockingOut } = useClockOut();
-  
-  const todayStr = format(new Date(), 'yyyy-MM-dd');
-  const todayRecord = attendanceLogs?.find(log => log.target_date === todayStr);
+  // System Administrator also lands here but holds neither permission, so it
+  // gets no clock-in card and no Programs link that would only lead to 403s.
+  const { user } = useAuthStore();
+  const canClockIn = hasPermission(user?.role || '', 'hr:attendance:self');
+  const canSeePrograms = hasPermission(user?.role || '', 'programs:read');
 
   return (
     <div className="space-y-6">
       <h1 className="text-3xl font-bold font-heading text-text-primary">My Day</h1>
-      
+
       <div className="grid md:grid-cols-3 gap-6">
-        <Card className="md:col-span-1 border-border-brand bg-surface">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Clock className="w-5 h-5 text-accent" />
-              Today's Attendance
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="flex flex-col items-center justify-center py-6 space-y-6">
-            {isLoading ? (
-              <Skeleton className="w-full h-32 rounded-lg" />
-            ) : !todayRecord ? (
-              <>
-                <div className="text-center">
-                  <p className="text-text-secondary">You haven't clocked in yet.</p>
-                </div>
-                <Button 
-                  onClick={() => clockIn()} 
-                  disabled={isClockingIn}
-                  className="w-full bg-accent text-bg-brand hover:bg-accent/90"
-                  size="lg"
-                >
-                  {isClockingIn ? 'Clocking In...' : 'Clock In Now'}
-                </Button>
-              </>
-            ) : todayRecord.is_locked ? (
-              <>
-                <div className="text-center space-y-2">
-                  <Lock className="w-12 h-12 text-emerald-500 mx-auto" />
-                  <p className="font-medium text-emerald-500">Attendance Completed</p>
-                  <p className="text-sm text-text-secondary">
-                    In: {format(new Date(todayRecord.clock_in!), 'HH:mm')} | Out: {todayRecord.clock_out ? format(new Date(todayRecord.clock_out), 'HH:mm') : '-'}
-                  </p>
-                  <p className="text-xs text-text-secondary">{todayRecord.worked_hours ?? 0} hours worked</p>
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="text-center space-y-2">
-                  <div className="animate-pulse bg-emerald-500/20 text-emerald-500 px-3 py-1 rounded-full text-sm font-medium inline-block mb-2">
-                    Active Session
-                  </div>
-                  <p className="text-sm text-text-secondary">
-                    Clocked in at {format(new Date(todayRecord.clock_in!), 'HH:mm')}
-                  </p>
-                </div>
-                <Button 
-                  onClick={() => clockOut()} 
-                  disabled={isClockingOut}
-                  className="w-full bg-rose-500 text-white hover:bg-rose-600"
-                  size="lg"
-                >
-                  {isClockingOut ? 'Clocking Out...' : 'Clock Out'}
-                </Button>
-              </>
-            )}
-          </CardContent>
-        </Card>
-        
-        <Card className="md:col-span-2 border-border-brand bg-surface">
+        {canClockIn && (
+          <div className="md:col-span-1">
+            <TodayClockCard title="Today's Attendance" />
+          </div>
+        )}
+
+        <Card className={`${canClockIn ? 'md:col-span-2' : 'md:col-span-3'} border-border-brand bg-surface`}>
           <CardHeader>
             <CardTitle>My Assignments & Tools</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
              <div className="grid grid-cols-2 gap-4">
-                <Link href="/programs">
-                  <div className="p-4 rounded-lg border border-border-brand hover:border-accent transition-colors bg-bg-subtle cursor-pointer flex items-center gap-3">
-                    <BookOpen className="w-8 h-8 text-accent" />
-                    <div>
-                      <p className="font-medium text-text-primary">Programs</p>
-                      <p className="text-sm text-text-secondary">View my assigned tasks.</p>
+                {canSeePrograms && (
+                  <Link href="/programs">
+                    <div className="p-4 rounded-lg border border-border-brand hover:border-accent transition-colors bg-bg-subtle cursor-pointer flex items-center gap-3">
+                      <BookOpen className="w-8 h-8 text-accent" />
+                      <div>
+                        <p className="font-medium text-text-primary">Programs</p>
+                        <p className="text-sm text-text-secondary">View my assigned tasks.</p>
+                      </div>
                     </div>
-                  </div>
-                </Link>
+                  </Link>
+                )}
                 <div className="p-4 rounded-lg border border-border-brand hover:border-accent transition-colors bg-bg-subtle cursor-pointer flex items-center gap-3 opacity-50">
                    <Activity className="w-8 h-8 text-amber-500" />
                     <div>
@@ -484,14 +454,26 @@ function StaffDashboard() {
                     </div>
                 </div>
              </div>
-             
-             <div className="mt-8 p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-lg">
-                <p className="text-emerald-500 font-medium">Monthly Summary</p>
-                <p className="text-sm text-emerald-500/80 mt-1">You have logged {(attendanceLogs?.reduce((acc, log) => acc + (log.worked_hours || 0), 0) || 0).toFixed(1)} hours this month.</p>
-             </div>
+
+             {canClockIn && <MonthlySummary />}
           </CardContent>
         </Card>
       </div>
+      <RescueOutcomesForRole />
+    </div>
+  );
+}
+
+// Its own component so the attendance request only fires for roles that
+// have attendance; clocking in is TodayClockCard's.
+function MonthlySummary() {
+  const [year, month] = colomboDate().split('-').map(Number);
+  const { data: attendanceLogs } = useMyAttendance(month, year);
+
+  return (
+    <div className="mt-8 p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-lg">
+      <p className="text-emerald-500 font-medium">Monthly Summary</p>
+      <p className="text-sm text-emerald-500/80 mt-1">You have logged {(attendanceLogs?.reduce((acc, log) => acc + (log.worked_hours || 0), 0) || 0).toFixed(1)} hours this month.</p>
     </div>
   );
 }

@@ -6,10 +6,12 @@ import { Button } from '@/components/ui/button';
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
-import { useLogAttendance, useUnlockAttendance, useUpdateAttendance } from '@/hooks/useHR';
+import {
+  useCancelCorrection, useLogAttendance, useRequestCorrection, useUnlockAttendance, useUpdateAttendance,
+} from '@/hooks/useHR';
 import { DayCell } from '@/types';
 import { cn } from '@/lib/utils';
-import { TONE_CLASS, hhmm, hours, localDate, lookOf } from './dayStatus';
+import { TONE_CLASS, addDays, colomboDate, hhmm, hours, localDate, lookOf } from './dayStatus';
 
 const LONG = new Intl.DateTimeFormat('en-LK', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 const field =
@@ -23,27 +25,70 @@ const toInput = (iso: string | null) => (iso ? hhmm(iso) : '');
 const toIso = (date: string, time: string) => `${date}T${time}:00+05:30`;
 
 export function DayDetailDialog({
-  cell, employeeId, employeeName, canEdit, onClose,
+  cell, employeeId, employeeName, canEdit, isOwn = false, payrollApproved = false,
+  canRequest = false, pendingCorrectionId = null, onClose,
 }: {
-  cell: DayCell; employeeId: number; employeeName: string; canEdit: boolean; onClose: () => void;
+  cell: DayCell; employeeId: number; employeeName: string; canEdit: boolean;
+  // The viewer's own row: HR can't correct its own attendance.
+  isOwn?: boolean;
+  // This day is on or before its month's payroll approval: frozen.
+  payrollApproved?: boolean;
+  // One's own month (My Attendance): a past day can be sent to HR to correct.
+  canRequest?: boolean;
+  // A correction already waiting for HR on this day.
+  pendingCorrectionId?: number | null;
+  onClose: () => void;
 }) {
   const look = lookOf(cell);
+  // cell.clock_out is in Sri Lanka time, so its date part is the local date.
+  const storedNextDay = !!cell.clock_out && cell.clock_out.slice(0, 10) > cell.date;
   const [clockIn, setClockIn] = useState(toInput(cell.clock_in));
   const [clockOut, setClockOut] = useState(toInput(cell.clock_out));
+  const [nextDay, setNextDay] = useState(storedNextDay);
   const { mutate: update, isPending: isUpdating } = useUpdateAttendance();
   const { mutate: create, isPending: isCreating } = useLogAttendance();
   const { mutate: unlock, isPending: isUnlocking } = useUnlockAttendance();
 
-  const editable = canEdit && !cell.locked && cell.status !== 'not_employed' && cell.status !== 'upcoming';
-  const changed = clockIn !== toInput(cell.clock_in) || clockOut !== toInput(cell.clock_out);
+  const [reason, setReason] = useState('');
+  const { mutate: requestCorrection, isPending: isRequesting } = useRequestCorrection();
+  const { mutate: withdraw, isPending: isWithdrawing } = useCancelCorrection();
+
+  const blocked = isOwn || payrollApproved;
+  // Past days from tracking on, not frozen, with nothing already waiting.
+  const requestable = canRequest && !canEdit && !payrollApproved && !pendingCorrectionId
+    && cell.date < colomboDate() && !['not_employed', 'not_tracked', 'upcoming', 'in_progress'].includes(cell.status);
+  const editable = canEdit && !blocked && !cell.locked && !['not_employed', 'not_tracked', 'upcoming'].includes(cell.status);
+  const changed = clockIn !== toInput(cell.clock_in) || clockOut !== toInput(cell.clock_out) || (!!clockOut && nextDay !== storedNextDay);
+
+  // A clock-out at or before the clock-in is only right for an overnight
+  // shift, and then only when marked as the next day. Unmarked it used to be
+  // saved as-is and wrapped by 24 h, so a typo booked a 21-hour day.
+  const outBeforeIn = !!clockIn && !!clockOut && !nextDay && clockOut <= clockIn;
+  const outIso = clockOut ? toIso(nextDay ? addDays(cell.date, 1) : cell.date, clockOut) : null;
+
+  // Only the ends that change are sent; the other stays as recorded.
+  const sendRequest = () => {
+    if (outBeforeIn) return;
+    requestCorrection(
+      {
+        target_date: cell.date,
+        ...(clockIn && clockIn !== toInput(cell.clock_in) ? { clock_in: toIso(cell.date, clockIn) } : {}),
+        ...(outIso && (clockOut !== toInput(cell.clock_out) || nextDay !== storedNextDay) ? { clock_out: outIso } : {}),
+        reason: reason.trim(),
+      },
+      { onSuccess: onClose },
+    );
+  };
 
   const save = () => {
+    if (outBeforeIn) return;
     if (cell.record_id) {
       update(
         {
           id: cell.record_id,
           ...(clockIn ? { clock_in: toIso(cell.date, clockIn) } : {}),
-          ...(clockOut ? { clock_out: toIso(cell.date, clockOut) } : {}),
+          // Emptying the field clears a wrong clock-out.
+          ...(outIso ? { clock_out: outIso } : cell.clock_out ? { clock_out: null } : {}),
         },
         { onSuccess: onClose },
       );
@@ -53,7 +98,7 @@ export function DayDetailDialog({
           employee_id: employeeId,
           target_date: cell.date,
           clock_in: toIso(cell.date, clockIn),
-          clock_out: clockOut ? toIso(cell.date, clockOut) : null,
+          clock_out: outIso,
           worked_hours: null,
           is_locked: false,
         },
@@ -89,7 +134,9 @@ export function DayDetailDialog({
               </>
             )}
             <dt className="text-text-muted">Clocked</dt>
-            <dd className="font-mono text-text-primary">{hhmm(cell.clock_in)}–{hhmm(cell.clock_out)}</dd>
+            <dd className="font-mono text-text-primary">
+              {hhmm(cell.clock_in)}–{hhmm(cell.clock_out)}{storedNextDay ? ' (next day)' : ''}
+            </dd>
             {cell.worked_minutes > 0 && (
               <>
                 <dt className="text-text-muted">Worked</dt>
@@ -119,30 +166,76 @@ export function DayDetailDialog({
             )}
           </dl>
 
-          {editable && (
+          {canEdit && isOwn && (
+            <p className="text-xs text-text-muted">This is your own attendance. Another HR officer has to correct it.</p>
+          )}
+          {canEdit && !isOwn && payrollApproved && (
+            <p className="text-xs text-text-muted">This day is frozen (its payroll is approved or its month is closed), so its attendance can no longer be changed.</p>
+          )}
+          {canRequest && pendingCorrectionId && (
+            <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-text-primary">
+              You asked HR to correct this day. It&apos;s waiting for a decision.
+            </p>
+          )}
+          {canRequest && payrollApproved && (
+            <p className="text-xs text-text-muted">This day is frozen (its payroll is approved or its month is closed), so it can no longer be corrected.</p>
+          )}
+
+          {(editable || requestable) && (
             <div className="space-y-2">
               <p className="text-[11px] font-semibold uppercase tracking-wider text-text-secondary">
-                {cell.record_id ? 'Correct the times' : 'Record times'} <span className="font-normal normal-case text-text-muted">(Sri Lanka time)</span>
+                {requestable ? 'Ask HR to correct' : cell.record_id ? 'Correct the times' : 'Record times'}{' '}
+                <span className="font-normal normal-case text-text-muted">(Sri Lanka time)</span>
               </p>
               <div className="flex flex-wrap items-center gap-2">
                 <input type="time" value={clockIn} onChange={(e) => setClockIn(e.target.value)} aria-label="Clock in" className={cn(field, 'font-mono')} />
                 <span className="text-text-muted">to</span>
                 <input type="time" value={clockOut} onChange={(e) => setClockOut(e.target.value)} aria-label="Clock out" className={cn(field, 'font-mono')} />
               </div>
+              {clockOut && (
+                <label className="flex items-center gap-2 text-xs text-text-secondary">
+                  <input type="checkbox" checked={nextDay} onChange={(e) => setNextDay(e.target.checked)} className="accent-[var(--color-accent)]" />
+                  Clock-out is the next day (overnight shift)
+                </label>
+              )}
+              {outBeforeIn && (
+                <p className="text-xs text-negative">
+                  The clock-out is before the clock-in. Fix the time, or tick &quot;next day&quot; if this was an overnight shift.
+                </p>
+              )}
+              {editable && cell.record_id && cell.clock_out && (
+                <p className="text-[11px] text-text-muted">Empty the clock-out to remove a wrong one.</p>
+              )}
+              {requestable && (
+                <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} maxLength={500}
+                  aria-label="Reason" placeholder="What happened? (required)" className={cn(field, 'h-auto w-full py-2')} />
+              )}
             </div>
           )}
         </div>
 
         <DialogFooter>
-          {canEdit && cell.locked && cell.record_id && (
+          {canEdit && !blocked && cell.locked && cell.record_id && (
             <Button variant="outline" disabled={isUnlocking} onClick={() => unlock(cell.record_id!, { onSuccess: onClose })}
               className="mr-auto gap-1.5 border-border-brand">
               <LockOpen className="h-4 w-4" /> Unlock to correct
             </Button>
           )}
+          {canRequest && pendingCorrectionId && (
+            <Button variant="outline" disabled={isWithdrawing} onClick={() => withdraw(pendingCorrectionId, { onSuccess: onClose })}
+              className="mr-auto border-border-brand">
+              Withdraw request
+            </Button>
+          )}
           <Button variant="outline" onClick={onClose}>Close</Button>
+          {requestable && (
+            <Button onClick={sendRequest} disabled={!changed || outBeforeIn || !reason.trim() || isRequesting}
+              className="bg-accent text-white hover:bg-accent/90">
+              {isRequesting ? 'Sending…' : 'Send to HR'}
+            </Button>
+          )}
           {editable && (
-            <Button onClick={save} disabled={!changed || !clockIn || isUpdating || isCreating} className="bg-accent text-white hover:bg-accent/90">
+            <Button onClick={save} disabled={!changed || !clockIn || outBeforeIn || isUpdating || isCreating} className="bg-accent text-white hover:bg-accent/90">
               {isUpdating || isCreating ? 'Saving…' : 'Save'}
             </Button>
           )}

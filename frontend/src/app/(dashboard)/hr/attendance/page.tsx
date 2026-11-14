@@ -5,15 +5,16 @@ import { useAttendance, useLockAttendance, useExportAttendance, useUnlockAttenda
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { format } from 'date-fns';
 import { Lock, LockOpen, AlertCircle, Clock, Search, Download } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import {Dialog,DialogContent,DialogDescription,DialogHeader,DialogTitle,DialogTrigger,DialogFooter,DialogClose,} from "@/components/ui/dialog";
 import ProtectedRoute from '@/components/layout/protected-route';
 import { MonthGrid } from '@/components/hr/attendance/MonthGrid';
+import { CorrectionsTab } from '@/components/hr/attendance/Corrections';
 import { useAuthStore } from '@/store/useAuthStore';
 import { hasPermission } from '@/lib/permissions';
 import { cn } from '@/lib/utils';
+import { colomboDate, hhmm } from '@/components/hr/attendance/dayStatus';
 
 export default function HRAttendancePage() {
   return (
@@ -27,7 +28,9 @@ export default function HRAttendancePage() {
 function Attendance() {
   const { user } = useAuthStore();
   const canManage = hasPermission(user?.role as string, 'hr:attendance:manage');
-  const [tab, setTab] = useState<'month' | 'day'>('month');
+  // HR Officer and Admin set when tracking starts; the Director sees it.
+  const canChangeTracking = hasPermission(user?.role as string, 'hr:manage');
+  const [tab, setTab] = useState<'month' | 'day' | 'corrections'>('month');
 
   return (
     <div className="space-y-6 pb-12">
@@ -40,7 +43,7 @@ function Attendance() {
       </div>
       {canManage && (
         <div className="flex w-fit gap-1 rounded-lg border border-border-brand bg-bg-subtle p-1" role="tablist">
-          {([['month', 'Month'], ['day', 'Day']] as const).map(([value, label]) => (
+          {([['month', 'Month'], ['day', 'Day'], ['corrections', 'Corrections']] as const).map(([value, label]) => (
             <button key={value} role="tab" aria-selected={tab === value} onClick={() => setTab(value)}
               className={cn('rounded-md px-3 py-1.5 text-xs font-semibold transition-colors',
                 tab === value ? 'bg-surface text-accent shadow-xs' : 'text-text-secondary hover:text-text-primary')}>
@@ -49,14 +52,19 @@ function Attendance() {
           ))}
         </div>
       )}
-      {tab === 'month' || !canManage ? <MonthGrid canEdit={canManage} /> : <DayView />}
+      {tab === 'month' || !canManage
+        ? <MonthGrid canEdit={canManage} canChangeTracking={canChangeTracking} />
+        : tab === 'day' ? <DayView /> : <CorrectionsTab />}
     </div>
   );
 }
 
 // One day at a time: lock the day, unlock a record, export. HR only.
 function DayView() {
-  const [targetDate, setTargetDate] = useState(format(new Date(), 'yyyy-MM-dd'));
+  const { user } = useAuthStore();
+  // Sri Lanka's date and times, whatever the browser's time zone.
+  const today = colomboDate();
+  const [targetDate, setTargetDate] = useState(today);
   const [filterIncomplete, setFilterIncomplete] = useState(false);
 
   const { data: attendanceLogs, isLoading } = useAttendance(targetDate);
@@ -105,7 +113,7 @@ function DayView() {
             value={targetDate}
             onChange={(e) => setTargetDate(e.target.value)}
             className="w-40 bg-surface border-border-brand"
-            max={format(new Date(), 'yyyy-MM-dd')}
+            max={today}
           />
           <Button
             variant="outline"
@@ -138,7 +146,7 @@ function DayView() {
               <DialogHeader>
                 <DialogTitle>Lock Attendance for {targetDate}</DialogTitle>
                 <DialogDescription className="text-text-secondary">
-                  Locks the {readyToLock} complete record{readyToLock === 1 ? '' : 's'} so they can&apos;t be edited.
+                  {`Locks the ${readyToLock} complete record${readyToLock === 1 ? '' : 's'} so they can't be edited.`}
                   {totalIncomplete > 0 && ` ${totalIncomplete} without a clock-out will stay open until completed.`}
                   {' '}A locked record can be unlocked for correction until that month&apos;s payroll is approved.
                 </DialogDescription>
@@ -216,10 +224,10 @@ function DayView() {
                         {log.employee_profile?.first_name} {log.employee_profile?.last_name}
                       </td>
                       <td className="px-6 py-4 text-text-secondary">
-                        {log.clock_in ? format(new Date(log.clock_in), 'HH:mm') : '-'}
+                        {log.clock_in ? hhmm(log.clock_in) : '-'}
                       </td>
                       <td className="px-6 py-4 text-text-secondary">
-                        {log.clock_out ? format(new Date(log.clock_out), 'HH:mm') : '-'}
+                        {log.clock_out ? hhmm(log.clock_out) : '-'}
                       </td>
                       <td className="px-6 py-4 text-text-secondary">
                         {log.worked_hours ? `${log.worked_hours}h` : '-'}
@@ -240,7 +248,8 @@ function DayView() {
                         )}
                       </td>
                       <td className="px-6 py-4 text-right">
-                        {log.is_locked && (
+                        {/* HR doesn't reopen its own record; the server refuses it. */}
+                        {log.is_locked && log.employee_profile?.user_id !== user?.id && (
                           <Button
                             variant="ghost"
                             size="sm"
