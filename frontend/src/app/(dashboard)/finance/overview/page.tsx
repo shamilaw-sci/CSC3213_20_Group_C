@@ -44,6 +44,7 @@ import {
 } from 'recharts';
 import { KPICard } from '@/components/shared/kpi-card';
 import { useAuthStore } from '@/store/useAuthStore';
+import ProtectedRoute from '@/components/layout/protected-route';
 import { hasPermission } from '@/lib/permissions';
 
 const formatLKR = (amount: number) => {
@@ -58,7 +59,17 @@ const formatLKR = (amount: number) => {
 // only shows the latest entries and links there for the rest.
 const RECENT_LIMIT = 10;
 
+// The sidebar hides this page from roles without finance:read, but a URL typed by
+// hand bypasses the sidebar, so the page checks for itself.
 export default function FinancePage() {
+  return (
+    <ProtectedRoute requiredPermission="finance:read">
+      <FinanceContent />
+    </ProtectedRoute>
+  );
+}
+
+function FinanceContent() {
   const { user } = useAuthStore();
   // Same permission as the Ledger's nav entry and page guard.
   const canOpenLedger = hasPermission(user?.role as string, 'finance:read');

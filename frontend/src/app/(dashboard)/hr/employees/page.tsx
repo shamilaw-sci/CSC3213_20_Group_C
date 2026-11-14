@@ -27,7 +27,17 @@ const FILTER_TITLES: Record<StatusFilter, string> = {
   Inactive: 'Inactive Employees',
 };
 
+// The gate wraps the content rather than sitting inside it, so the content's
+// requests never fire for a role that would only get 403s back.
 export default function HRPage() {
+  return (
+    <ProtectedRoute requiredPermission="hr:manage">
+      <HRContent />
+    </ProtectedRoute>
+  );
+}
+
+function HRContent() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [editing, setEditing] = useState<Employee | null>(null);
 
@@ -135,7 +145,7 @@ export default function HRPage() {
   };
 
   return (
-    <ProtectedRoute requiredPermission="hr:manage">
+    <>
       <div className="space-y-8">
         {/* Header */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -255,6 +265,6 @@ export default function HRPage() {
           <EditEmployeeDialog key={editing.id} employee={editing} onClose={() => setEditing(null)} />
         )}
       </div>
-    </ProtectedRoute>
+    </>
   );
 }
