@@ -85,7 +85,8 @@ function DialogShell({
     <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
       <DialogContent
         className={cn(
-          'border border-border-brand bg-surface text-text-primary',
+          // Never taller than the screen: the form scrolls inside the dialog.
+          'max-h-[calc(100dvh-2rem)] overflow-y-auto border border-border-brand bg-surface text-text-primary',
           wide ? 'sm:max-w-xl' : 'sm:max-w-md'
         )}
       >
@@ -696,7 +697,13 @@ export function MovementDialog({
 }) {
   const text = MOVEMENT_TEXT[kind ?? 'in'];
   return (
-    <DialogShell open={kind !== null} onClose={onClose} title={text.title} description={text.description}>
+    <DialogShell
+      open={kind !== null}
+      onClose={onClose}
+      title={text.title}
+      description={text.description}
+      wide={kind === 'in'}
+    >
       {kind && (
         <MovementForm
           key={kind}
@@ -987,38 +994,37 @@ function MovementForm({
       )}
 
       {kind === 'in' && (
-        <div>
-          <label htmlFor="inv-mv-batch" className={LABEL_CLASS}>
-            Batch number (optional)
-          </label>
-          <input
-            id="inv-mv-batch"
-            value={batchNumber}
-            onChange={(e) => setBatchNumber(e.target.value)}
-            maxLength={100}
-            placeholder="e.g. LOT-2026-114"
-            className={cn(FIELD_CLASS, 'font-mono')}
-          />
-          <p className={HELP_CLASS}>Left empty, one is made from the date, like 20261110-57.</p>
-        </div>
-      )}
-
-      {kind === 'in' && (
-        <div>
-          <label htmlFor="inv-mv-expiry" className={LABEL_CLASS}>
-            Batch expiry date (optional)
-          </label>
-          <input
-            id="inv-mv-expiry"
-            type="date"
-            min={date || undefined}
-            value={expiry}
-            onChange={(e) => setExpiry(e.target.value)}
-            className={cn(FIELD_CLASS, 'font-mono')}
-          />
-          <p className={HELP_CLASS}>
-            Stock Out uses the batch that expires first. The item shows the soonest expiry among the stock on hand.
-          </p>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div>
+            <label htmlFor="inv-mv-batch" className={LABEL_CLASS}>
+              Batch number (optional)
+            </label>
+            <input
+              id="inv-mv-batch"
+              value={batchNumber}
+              onChange={(e) => setBatchNumber(e.target.value)}
+              maxLength={100}
+              placeholder="e.g. LOT-2026-114"
+              className={cn(FIELD_CLASS, 'font-mono')}
+            />
+            <p className={HELP_CLASS}>Left empty, one is made from the date, like 20261110-57.</p>
+          </div>
+          <div>
+            <label htmlFor="inv-mv-expiry" className={LABEL_CLASS}>
+              Batch expiry date (optional)
+            </label>
+            <input
+              id="inv-mv-expiry"
+              type="date"
+              min={date || undefined}
+              value={expiry}
+              onChange={(e) => setExpiry(e.target.value)}
+              className={cn(FIELD_CLASS, 'font-mono')}
+            />
+            <p className={HELP_CLASS}>
+              Stock Out uses the batch that expires first. The item shows the soonest expiry among the stock on hand.
+            </p>
+          </div>
         </div>
       )}
 
@@ -1031,7 +1037,7 @@ function MovementForm({
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
           maxLength={500}
-          rows={3}
+          rows={kind === 'in' ? 2 : 3}
           placeholder={isAdjustment ? 'e.g. 2 vials broken in transit' : 'Any additional detail...'}
           className={cn(FIELD_CLASS, 'h-auto py-2')}
         />
