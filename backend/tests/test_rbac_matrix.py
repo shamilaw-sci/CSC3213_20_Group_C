@@ -732,14 +732,16 @@ def test_last_admin_cannot_be_demoted():
 
 
 def test_last_admin_resaving_admin_role_is_allowed():
-    tables = {"users": {"select": [_user_row("Admin")], "update": [_user_row("Admin")]}}
+    tables = {"users": {"select": [_user_row("Admin")], "update": [_user_row("Admin")]},
+              "roles": {"select": [{"id": 1}]}}
     with acting_as("Admin", tables=tables):
         response = _request("PUT", f"/api/auth/users/{OTHER_USER_ID}/role", json={"role_id": 1})
     assert response.status_code == 200
 
 
 def test_admin_can_be_demoted_while_another_admin_remains():
-    tables = {"users": {"select": [_user_row("Admin"), _OTHER_ADMIN], "update": [_user_row("General Staff")]}}
+    tables = {"users": {"select": [_user_row("Admin"), _OTHER_ADMIN], "update": [_user_row("General Staff")]},
+              "roles": {"select": [{"id": 6}]}}
     with acting_as("Admin", tables=tables):
         response = _request("PUT", f"/api/auth/users/{OTHER_USER_ID}/role", json={"role_id": 6})
     assert response.status_code == 200
