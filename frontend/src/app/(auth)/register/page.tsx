@@ -32,13 +32,17 @@ export default function RegisterPage() {
     try {
       // Basic register payload
       const mockName = email.split('@')[0];
-      const data = await AuthService.register({
+      await AuthService.register({
         email,
         password,
         name: mockName.charAt(0).toUpperCase() + mockName.slice(1),
         role: 'General Staff',
       });
 
+      // Registering returns only the new user's id, not a session, so sign in
+      // with the same details to get one. Passing the register response to
+      // setAuth stored no user and no token and left the app half signed in.
+      const data = await AuthService.login({ email, password });
       setAuth(data.user, data.access_token);
       toast.success('Registration successful. Welcome to VFF.');
       router.push('/dashboard');
