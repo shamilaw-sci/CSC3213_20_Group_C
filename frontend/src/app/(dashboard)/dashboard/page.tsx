@@ -412,34 +412,40 @@ function FinanceOfficerDashboard() {
 }
 
 function StaffDashboard() {
-  // For the monthly summary; clocking in is TodayClockCard's.
-  const [year, month] = colomboDate().split('-').map(Number);
-  const { data: attendanceLogs } = useMyAttendance(month, year);
+  // System Administrator also lands here but holds neither permission, so it
+  // gets no clock-in card and no Programs link that would only lead to 403s.
+  const { user } = useAuthStore();
+  const canClockIn = hasPermission(user?.role || '', 'hr:attendance:self');
+  const canSeePrograms = hasPermission(user?.role || '', 'programs:read');
 
   return (
     <div className="space-y-6">
       <h1 className="text-3xl font-bold font-heading text-text-primary">My Day</h1>
-      
+
       <div className="grid md:grid-cols-3 gap-6">
-        <div className="md:col-span-1">
-          <TodayClockCard title="Today's Attendance" />
-        </div>
-        
-        <Card className="md:col-span-2 border-border-brand bg-surface">
+        {canClockIn && (
+          <div className="md:col-span-1">
+            <TodayClockCard title="Today's Attendance" />
+          </div>
+        )}
+
+        <Card className={`${canClockIn ? 'md:col-span-2' : 'md:col-span-3'} border-border-brand bg-surface`}>
           <CardHeader>
             <CardTitle>My Assignments & Tools</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
              <div className="grid grid-cols-2 gap-4">
-                <Link href="/programs">
-                  <div className="p-4 rounded-lg border border-border-brand hover:border-accent transition-colors bg-bg-subtle cursor-pointer flex items-center gap-3">
-                    <BookOpen className="w-8 h-8 text-accent" />
-                    <div>
-                      <p className="font-medium text-text-primary">Programs</p>
-                      <p className="text-sm text-text-secondary">View my assigned tasks.</p>
+                {canSeePrograms && (
+                  <Link href="/programs">
+                    <div className="p-4 rounded-lg border border-border-brand hover:border-accent transition-colors bg-bg-subtle cursor-pointer flex items-center gap-3">
+                      <BookOpen className="w-8 h-8 text-accent" />
+                      <div>
+                        <p className="font-medium text-text-primary">Programs</p>
+                        <p className="text-sm text-text-secondary">View my assigned tasks.</p>
+                      </div>
                     </div>
-                  </div>
-                </Link>
+                  </Link>
+                )}
                 <div className="p-4 rounded-lg border border-border-brand hover:border-accent transition-colors bg-bg-subtle cursor-pointer flex items-center gap-3 opacity-50">
                    <Activity className="w-8 h-8 text-amber-500" />
                     <div>
@@ -448,15 +454,26 @@ function StaffDashboard() {
                     </div>
                 </div>
              </div>
-             
-             <div className="mt-8 p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-lg">
-                <p className="text-emerald-500 font-medium">Monthly Summary</p>
-                <p className="text-sm text-emerald-500/80 mt-1">You have logged {(attendanceLogs?.reduce((acc, log) => acc + (log.worked_hours || 0), 0) || 0).toFixed(1)} hours this month.</p>
-             </div>
+
+             {canClockIn && <MonthlySummary />}
           </CardContent>
         </Card>
       </div>
       <RescueOutcomesForRole />
+    </div>
+  );
+}
+
+// Its own component so the attendance request only fires for roles that
+// have attendance; clocking in is TodayClockCard's.
+function MonthlySummary() {
+  const [year, month] = colomboDate().split('-').map(Number);
+  const { data: attendanceLogs } = useMyAttendance(month, year);
+
+  return (
+    <div className="mt-8 p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-lg">
+      <p className="text-emerald-500 font-medium">Monthly Summary</p>
+      <p className="text-sm text-emerald-500/80 mt-1">You have logged {(attendanceLogs?.reduce((acc, log) => acc + (log.worked_hours || 0), 0) || 0).toFixed(1)} hours this month.</p>
     </div>
   );
 }

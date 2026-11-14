@@ -9,8 +9,17 @@ import { MyMonth } from '@/components/hr/attendance/MyMonth';
 import { MyCorrections } from '@/components/hr/attendance/Corrections';
 import { TodayClockCard } from '@/components/hr/attendance/TodayClockCard';
 import { colomboDate, hhmm } from '@/components/hr/attendance/dayStatus';
+import ProtectedRoute from '@/components/layout/protected-route';
 
 export default function MyAttendancePage() {
+  return (
+    <ProtectedRoute requiredPermission="hr:attendance:self">
+      <MyAttendance />
+    </ProtectedRoute>
+  );
+}
+
+function MyAttendance() {
   // Sri Lanka's date and times throughout, whatever the browser's zone.
   const todayStr = colomboDate();
   const [currentYear, currentMonth] = todayStr.split('-').map(Number);

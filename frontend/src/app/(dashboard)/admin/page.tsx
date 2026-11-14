@@ -23,7 +23,17 @@ import { useThemeStore } from '@/store/useThemeStore';
 import { useAuthStore } from '@/store/useAuthStore';
 import { hasPermission } from '@/lib/permissions';
 
+// The gate wraps the content rather than sitting inside it, so the content's
+// requests never fire for a role that would only get 403s back.
 export default function AdminPage() {
+  return (
+    <ProtectedRoute requiredPermission="admin:users">
+      <AdminContent />
+    </ProtectedRoute>
+  );
+}
+
+function AdminContent() {
   const [users, setUsers] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [editingUser, setEditingUser] = useState<any | null>(null);
@@ -112,7 +122,7 @@ export default function AdminPage() {
   }, [users, searchTerm, roleFilter]);
 
   return (
-    <ProtectedRoute requiredPermission="admin:users">
+    <>
       <div className="space-y-8">
         {/* Header */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -285,6 +295,6 @@ export default function AdminPage() {
           </CardContent>
         </Card>
       </div>
-    </ProtectedRoute>
+    </>
   );
 }

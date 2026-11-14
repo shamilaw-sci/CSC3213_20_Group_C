@@ -10,6 +10,7 @@ import {
 import { RescueCasesService } from '@/services/rescue-cases.service';
 import { useRescueBoardLive } from '@/hooks/useRescueBoardLive';
 import { useAuthStore } from '@/store/useAuthStore';
+import ProtectedRoute from '@/components/layout/protected-route';
 import { hasPermission } from '@/lib/permissions';
 import { cardControls } from '@/lib/case-card-controls';
 import { toast } from 'sonner';
@@ -443,7 +444,17 @@ function BoardSkeleton() {
   );
 }
 
+// The sidebar hides this page from roles without rescue:read, but a URL typed by
+// hand bypasses the sidebar, so the page checks for itself.
 export default function CaseTriagePage() {
+  return (
+    <ProtectedRoute requiredPermission="rescue:read">
+      <CaseTriageContent />
+    </ProtectedRoute>
+  );
+}
+
+function CaseTriageContent() {
   const { user } = useAuthStore();
   const canManage = hasPermission(user?.role || '', 'rescue:manage');
   const canAssign = hasPermission(user?.role || '', 'rescue:assign');
