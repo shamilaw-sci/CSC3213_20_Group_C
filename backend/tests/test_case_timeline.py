@@ -246,14 +246,27 @@ def test_the_timeline_starts_with_the_report_and_names_people():
     assert note["body"] == "Found him" and note["author"]["email"] == "nimal@vff.test"
 
 
-def test_a_deleted_author_shows_as_nobody_rather_than_failing():
+GONE = "99999999-9999-9999-9999-999999999999"
+
+
+def test_a_deleted_author_shows_as_a_deleted_user_rather_than_failing():
     db = _db(events=[{"id": 1, "case_id": CASE_ID, "event_type": "note", "body": "x",
-                      "author_id": "99999999-9999-9999-9999-999999999999",
-                      "created_at": "2026-01-01T02:00:00+00:00"}])
+                      "author_id": GONE, "created_at": "2026-01-01T02:00:00+00:00"}])
     response = _send(db, "GET", TIMELINE, role="Admin")
 
     assert response.status_code == 200, response.text
-    assert response.json()[1]["author"] is None
+    assert response.json()[1]["author"]["display_name"] == "Deleted user"
+
+
+def test_an_assignment_to_a_deleted_user_does_not_read_as_unassigned():
+    # No assignee means "released, now unassigned" to the timeline, so a
+    # deleted assignee must not come back as None (migration 034).
+    db = _db(events=[{"id": 1, "case_id": CASE_ID, "event_type": "assign",
+                      "assignee_id": GONE, "author_id": USER_ID,
+                      "created_at": "2026-01-01T01:00:00+00:00"}])
+    response = _send(db, "GET", TIMELINE, role="Admin")
+
+    assert response.json()[1]["assignee"]["display_name"] == "Deleted user"
 
 
 def test_the_timeline_of_a_missing_case_is_404():
