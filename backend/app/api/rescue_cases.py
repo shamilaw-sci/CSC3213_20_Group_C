@@ -144,6 +144,17 @@ async def list_cases(
 DELETED_USER = {"email": "", "display_name": "Deleted user"}
 
 
+def _timeline_person(people: dict, user_id) -> Optional[dict]:
+    """Who a timeline line names. A stored id whose account is gone (migration
+    034 keeps it) is shown as a deleted user. Falling back to None would say
+    something false: no author on the first line reads "Reported by the
+    public", and no assignee on an assign line reads "Released, now
+    unassigned"."""
+    if not user_id:
+        return None
+    return people.get(str(user_id)) or DELETED_USER
+
+
 def _people(supabase: Client, user_ids) -> dict[str, dict]:
     """{user_id: CaseAssignee-shaped dict} for the given users. A deleted user
     is simply missing, so callers fall back to None."""
@@ -464,27 +475,18 @@ async def get_case_timeline(
         + [m.get("recorded_by") for m in supplies],
     )
 
-    # A stored id whose account is gone (migration 034 keeps it) is shown as a
-    # deleted user. Falling back to None would say something false: no author
-    # on the first line reads "Reported by the public", and no assignee on an
-    # assign line reads "Released, now unassigned".
-    def person(user_id):
-        if not user_id:
-            return None
-        return people.get(str(user_id)) or DELETED_USER
-
     reported = {
         "id": 0,
         "event_type": "reported",
         "body": case.get("description"),
-        "author": person(case.get("reported_by")),
+        "author": _timeline_person(people, case.get("reported_by")),
         "created_at": case["reported_at"],
     }
     lines = [
         {
             **e,
-            "author": person(e.get("author_id")),
-            "assignee": person(e.get("assignee_id")),
+            "author": _timeline_person(people, e.get("author_id")),
+            "assignee": _timeline_person(people, e.get("assignee_id")),
         }
         for e in events
     ] + [_supplies_line(m, people) for m in supplies]
@@ -532,7 +534,7 @@ def _supplies_line(m: dict, people: dict) -> dict:
         "item_name": (m.get("inventory_items") or {}).get("item_name"),
         "quantity": m.get("quantity"),
         "cost": round(float(m.get("total_cost") or 0), 2),
-        "author": people.get(m.get("recorded_by")),
+        "author": _timeline_person(people, m.get("recorded_by")),
         "created_at": when,
     }
 
