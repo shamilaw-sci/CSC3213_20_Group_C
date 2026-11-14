@@ -8,10 +8,13 @@ import 'leaflet/dist/leaflet.css';
 interface Props {
   initialLat: number;
   initialLng: number;
+  // 15 is street level, for a position the browser found. The report page
+  // opens zoomed out on the whole island when it has no position to offer.
+  initialZoom?: number;
   onChange: (lat: number, lng: number) => void;
 }
 
-export default function LocationPicker({ initialLat, initialLng, onChange }: Props) {
+export default function LocationPicker({ initialLat, initialLng, initialZoom = 15, onChange }: Props) {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstance = useRef<L.Map | null>(null);
   const markerRef = useRef<L.Marker | null>(null);
@@ -19,7 +22,7 @@ export default function LocationPicker({ initialLat, initialLng, onChange }: Pro
   useEffect(() => {
     if (!mapRef.current || mapInstance.current) return;
 
-    const map = L.map(mapRef.current).setView([initialLat, initialLng], 15);
+    const map = L.map(mapRef.current).setView([initialLat, initialLng], initialZoom);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '© OpenStreetMap contributors',
     }).addTo(map);
