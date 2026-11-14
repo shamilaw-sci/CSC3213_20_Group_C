@@ -69,7 +69,7 @@ export function PublicListingCard({
             {live
               ? 'Shown on the public Clinics page so people nearby can bring their animals.'
               : listable
-                ? 'Not on the public site. Publish it so people in the area know it is coming.'
+                ? `Not on the public site. Publish it so people in the area know it is ${stage === 'Active' ? 'on' : 'coming'}.`
                 : `Not shown: the program is ${stage.toLowerCase()}.`}
           </p>
         </div>

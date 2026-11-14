@@ -139,7 +139,7 @@ export default function PublicClinicsPage() {
             <>
               <p className="text-sm text-text-secondary">
                 {shown.length} {shown.length === 1 ? 'clinic' : 'clinics'}
-                {filtering ? ' match' : ' listed'}
+                {filtering ? (shown.length === 1 ? ' matches' : ' match') : ' listed'}
               </p>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
                 {shown.map((p) => <ClinicCard key={p.id} program={p} />)}
