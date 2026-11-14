@@ -144,7 +144,7 @@ export default function HomeHeader() {
                         className="flex items-center gap-2.5 w-full px-3 py-2 text-left text-xs text-text-secondary hover:bg-bg-subtle hover:text-text-primary rounded-lg transition-colors font-medium"
                       >
                         <User className="w-3.5 h-3.5" />
-                        <span>Edit profile</span>
+                        <span>My profile</span>
                       </button>
                       <button
                         onClick={() => { router.push('/settings'); setShowProfile(false); }}

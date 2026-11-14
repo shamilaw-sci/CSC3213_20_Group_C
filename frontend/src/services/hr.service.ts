@@ -17,6 +17,9 @@ export const HRService = {
     return response.data;
   },
 
+  // The caller's own employee record; 404 when their login isn't linked to one.
+  getMyEmployee: async () => (await api.get<Employee>('/hr/me')).data,
+
   getLinkableLogins: async () => {
     const response = await api.get<LinkableLogin[]>('/hr/linkable-logins');
     return response.data;

@@ -137,7 +137,7 @@ export const NAVIGATION_CONFIG: NavSection[] = [
     title: 'PERSONAL',
     items: [
       { label: 'Go to Website Home', href: '/', icon: LayoutDashboard },
-      { label: 'Edit Profile', href: '/profile', icon: Users },
+      { label: 'My Profile', href: '/profile', icon: Users },
       { label: 'Account Settings', href: '/settings', icon: Wallet },
       { label: 'Support', href: '/support', icon: FileText },
     ]
