@@ -9,6 +9,7 @@ from pydantic import BaseModel
 import logging
 from time import monotonic
 import uuid
+from app.core.ids import UuidPath
 from app.core.security import require_permission
 from app.core.security import has_permission
 from app.core.supabase import get_supabase, get_public_supabase
@@ -250,7 +251,7 @@ async def get_my_route(
 
 @router.patch("/cases/{case_id}/status", response_model=CaseOut)
 async def update_case_status(
-    case_id: str,
+    case_id: UuidPath,
     payload: CaseStatusUpdate,
     supabase: Client = Depends(get_supabase),
     current_user: dict = Depends(require_permission("rescue:read")),
@@ -430,7 +431,7 @@ def _get_case(supabase: Client, case_id: str) -> dict:
 
 @router.get("/cases/{case_id}/timeline", response_model=list[CaseEventOut])
 async def get_case_timeline(
-    case_id: str,
+    case_id: UuidPath,
     supabase: Client = Depends(get_supabase),
     current_user: dict = Depends(require_permission("rescue:read")),
 ):
@@ -604,7 +605,7 @@ def case_report(supabase: Client, year: int, month: int) -> dict:
 
 @router.post("/cases/{case_id}/outcome", response_model=CaseOut)
 async def record_older_outcome(
-    case_id: str,
+    case_id: UuidPath,
     payload: OutcomeRecord,
     supabase: Client = Depends(get_supabase),
     current_user: dict = Depends(require_permission("rescue:manage")),
@@ -656,7 +657,7 @@ async def record_older_outcome(
 
 @router.post("/cases/{case_id}/notes", response_model=CaseEventOut)
 async def add_case_note(
-    case_id: str,
+    case_id: UuidPath,
     payload: CaseNoteCreate,
     supabase: Client = Depends(get_supabase),
     current_user: dict = Depends(require_permission("rescue:manage")),
@@ -832,7 +833,7 @@ async def declare_outbreak_zone(
 
 @router.patch("/outbreak-zones/{zone_id}/resolve", response_model=OutbreakZoneOut)
 async def resolve_outbreak_zone(
-    zone_id: str,
+    zone_id: UuidPath,
     supabase: Client = Depends(get_supabase),
     current_user: dict = Depends(require_permission("rescue:assign")),
 ):

@@ -4,6 +4,7 @@ from app.core.supabase import get_supabase
 from supabase import Client
 from app.infrastructure.repositories import SupabaseUserRepository
 from app.application.use_cases import RegisterUseCase, LoginUseCase
+from app.core.ids import UuidPath
 from app.core.security import require_permission
 from app.core.audit import log_audit_action
 from app.core.permissions import Permission, UserRole, has_permission
@@ -92,7 +93,7 @@ class UpdateRoleRequest(BaseModel):
 
 @router.put("/users/{user_id}/role")
 async def update_user_role(
-    user_id: str,
+    user_id: UuidPath,
     data: UpdateRoleRequest,
     # admin:roles, not admin:users: System Administrator holds admin:users and
     # would otherwise be able to grant itself Admin.
@@ -106,6 +107,11 @@ async def update_user_role(
         if not existing.data:
             raise HTTPException(status_code=404, detail="User not found")
         old_row = existing.data[0]
+
+        # Checked first so an unknown id is a plain 422, not the database's
+        # foreign-key error passed through verbatim.
+        if not supabase.table("roles").select("id").eq("id", data.role_id).execute().data:
+            raise HTTPException(status_code=422, detail="Unknown role")
 
         response = supabase.table("users").update({"role_id": data.role_id}).eq("id", user_id).execute()
 
@@ -137,7 +143,7 @@ async def get_users(
 
 @router.delete("/users/{user_id}")
 async def delete_user(
-    user_id: str,
+    user_id: UuidPath,
     current_user: dict = Depends(require_permission('admin:users')),
     supabase: Client = Depends(get_supabase),
 ):
