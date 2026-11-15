@@ -19,3 +19,6 @@ design.md
 DESIGN.md
 
 .claude/
+
+# Example env files are committed so new setups know which keys to fill in.
+!.env.example
