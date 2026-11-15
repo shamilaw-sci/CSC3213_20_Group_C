@@ -137,7 +137,7 @@ Skip this if you're using the team's project.
 
 1. Create a project at [supabase.com](https://supabase.com) and copy its URL, anon key and service_role key from **Project Settings > API**.
 2. In the **SQL Editor**, run `backend/db/init.sql`, then every file in `backend/db/migrations/` **in number order** (`001_…` through the highest number).
-3. Create the demo logins with `python scripts/seed_demo_users.py`, run from `backend/` with the venv active.
+3. Create the roles and the seven demo logins with `python scripts/seed_demo_users.py`, run from `backend/` with the venv active. It's safe to run again, and `--check` shows what it would change without writing anything.
 4. For six months of sample data on every page, also run `python scripts/seed_presentation.py`. It's safe to run again: it tops up anything missing and never duplicates.
 5. Load public holidays from **HR > Schedules & Holidays > Import** (the CSVs are in `backend/db/holidays/`).
 
