@@ -34,15 +34,20 @@ MAX_REASON_LEN = 300
 #
 # Measured on gemini-3.5-flash (2026-10-26, free tier): successes took 5-60 s
 # with default thinking; with reasoning_effort="none" the few that succeeded
-# took 2-13 s. Most classifications will hit this cap and default. That is
-# accepted: a default is labelled on the board and flagged by the chatbot.
+# took 2-13 s, so most classifications hit this cap and defaulted. On
+# gemini-3.5-flash-lite (2026-11-16) every one finished in 2 s or less. A
+# default that still happens is labelled on the board and flagged by the
+# chatbot.
 CLASSIFY_BUDGET_S = 6.0
 CLASSIFY_TIMEOUT = httpx.Timeout(5.0, connect=2.0)
 
-# Faster on every call that succeeded in measurement, and a one-line triage
-# label needs no deliberation. If LLM_MODEL is changed to one that rejects
-# "none" (400), every case will default — the log names the status.
-CLASSIFY_REASONING_EFFORT = "none"
+# gemini-3.5-flash-lite (the default since 2026-11-16) rejects "none" with a
+# 400, which defaulted every case. On it, "low" classified 8 test reports
+# across all four levels correctly, each in 1.3-2.0 s; "minimal" was also 8/8
+# but took up to 5 s, close to the budget above. If LLM_MODEL is changed,
+# check this value is accepted: a rejected one defaults every case, and the
+# log names the status.
+CLASSIFY_REASONING_EFFORT = "low"
 
 CLASSIFY_PROMPT = """You triage animal rescue reports for a Sri Lankan animal \
 welfare nonprofit. Given an animal type and description, classify urgency.

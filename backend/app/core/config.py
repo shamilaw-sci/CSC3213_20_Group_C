@@ -11,8 +11,13 @@ LLM_BASE_URL: str = os.environ.get(
 )
 # gemini-2.5-flash was the default until Google withdrew it from new API keys
 # (it now 404s), so a deploy without LLM_MODEL set silently defaulted every
-# classification. Matches the model .env actually runs on.
-LLM_MODEL: str = os.environ.get("LLM_MODEL", "gemini-3.5-flash")
+# classification. gemini-3.5-flash replaced it, but on the free tier its
+# answers took anywhere from 2 to 41 s for the same request (2026-11-16), so
+# most chat questions ran past the 20 s chat budget and the widget said the
+# assistant was unavailable. flash-lite answered every call in under 3 s and
+# the whole chat request in 1-6 s. It rejects reasoning_effort="none"; see
+# CLASSIFY_REASONING_EFFORT in app/services/case_classifier.py.
+LLM_MODEL: str = os.environ.get("LLM_MODEL", "gemini-3.5-flash-lite")
 
 if not LLM_API_KEY:
     raise ValueError("LLM_API_KEY not found in environment variables")

@@ -164,6 +164,7 @@ npx tsc --noEmit
 ## Troubleshooting
 
 - **`ValueError: LLM_API_KEY not found`** when starting the backend: add `LLM_API_KEY` to `backend/.env`.
+- **The assistant says it's "temporarily unavailable", or every new case is labelled "Medium (default)"**: check `LLM_MODEL` in `backend/.env`. Remove it to use the default (`gemini-3.5-flash-lite`). `gemini-3.5-flash` is too slow on the free tier, and the backend log names the error (a 429 means the per-minute limit; wait a minute).
 - **`ModuleNotFoundError: No module named 'app'`**: run uvicorn from inside `backend/`.
 - **A package is missing even though you installed it**: you're using a different Python. `python -c "import sys; print(sys.executable)"` should point inside `backend/venv`.
 - **Every page shows "Network Error" or fails to load data**: the backend isn't running on port 8000, or `NEXT_PUBLIC_API_URL` points somewhere else.
