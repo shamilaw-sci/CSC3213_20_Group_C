@@ -1,6 +1,7 @@
 "use client";
 
 import ImpactNumbers from "@/components/home/ImpactNumbers";
+import HomeHeader from "@/components/home/HomeHeader";
 import { Suspense, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
@@ -145,7 +146,8 @@ function DonateForm() {
   };
 
   return (
-    <div className="min-h-screen bg-bg-subtle text-text-primary">
+    <div className="min-h-screen bg-bg-subtle text-text-primary pt-16">
+      <HomeHeader />
       {/* Hero — donate-hero.jpg was supplied directly, not sourced by me.
           Gradient sits at the bottom only, same as the homepage hero, so the
           photo itself stays visible. */}
