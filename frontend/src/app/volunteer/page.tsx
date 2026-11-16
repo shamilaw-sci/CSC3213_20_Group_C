@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
 import { Loader2, CheckCircle2, HeartHandshake } from 'lucide-react';
 import { cn, getErrorMessage } from '@/lib/utils';
+import HomeHeader from '@/components/home/HomeHeader';
 
 type Step = 'form' | 'submitting' | 'done';
 
@@ -62,7 +63,8 @@ export default function VolunteerApplyPage() {
   }
 
   return (
-    <div className="min-h-screen bg-bg-subtle text-text-primary">
+    <div className="min-h-screen bg-bg-subtle text-text-primary pt-16">
+      <HomeHeader />
       {/* Hero in the donate page's shape: fixed height, bg-cover photo,
           gradient at the bottom only, heading sitting on the bottom edge.
           volunteer.jpg is a single photo rather than a collage, so unlike

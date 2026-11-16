@@ -11,6 +11,7 @@ import { toast } from 'sonner';
 import { ImagePlus, X, Loader2, MapPin, CheckCircle2, PawPrint } from 'lucide-react';
 import { cn, getErrorMessage } from '@/lib/utils';
 import Image from 'next/image';
+import HomeHeader from '@/components/home/HomeHeader';
 
 const LocationPicker = dynamic(() => import('@/components/heatmap/LocationPicker'), { ssr: false });
 
@@ -148,7 +149,8 @@ export default function ReportCasePage() {
   const currentStepIndex = step === 'form' || step === 'locating' ? 0 : 1;
 
   return (
-    <div className="min-h-screen bg-bg-subtle text-text-primary">
+    <div className="min-h-screen bg-bg-subtle text-text-primary pt-16">
+      <HomeHeader />
       {/* Full-bleed hero in the same shape as the donate page: photo, dark
           gradient, centred heading, and the form card floated up over the
           bottom edge. rescue-report.png stays at its natural 2.45:1 aspect
