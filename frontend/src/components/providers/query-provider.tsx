@@ -35,7 +35,9 @@ export default function QueryProvider({ children }: { children: React.ReactNode 
   return (
     <QueryClientProvider client={queryClient}>
       {children}
-      <ReactQueryDevtools initialIsOpen={false} />
+      {/* Off unless asked for: its floating button sat on top of the assistant
+          button. It is left out of production builds either way. */}
+      {process.env.NEXT_PUBLIC_QUERY_DEVTOOLS === 'true' && <ReactQueryDevtools initialIsOpen={false} />}
     </QueryClientProvider>
   );
 }
