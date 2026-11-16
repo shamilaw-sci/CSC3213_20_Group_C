@@ -158,7 +158,7 @@ def test_reasoning_effort_sent_only_when_given(scripted):
 
 # ---------- classifier ----------
 
-def test_classifier_uses_budget_retry_and_reasoning_off(monkeypatch):
+def test_classifier_uses_budget_retry_and_low_reasoning(monkeypatch):
     seen = {}
 
     async def fake_complete(messages, **kwargs):
@@ -171,7 +171,7 @@ def test_classifier_uses_budget_retry_and_reasoning_off(monkeypatch):
 
     assert result["source"] == "ai"
     assert seen["retry"] is True
-    assert seen["reasoning_effort"] == "none"
+    assert seen["reasoning_effort"] == "low"
     assert seen["timeout"] is case_classifier.CLASSIFY_TIMEOUT
     assert before < seen["deadline"] <= time.monotonic() + case_classifier.CLASSIFY_BUDGET_S
 
@@ -214,7 +214,7 @@ def test_default_model_is_not_the_withdrawn_one(monkeypatch):
     monkeypatch.delenv("LLM_MODEL", raising=False)
     monkeypatch.setattr(dotenv, "load_dotenv", lambda *a, **k: False)
     try:
-        assert importlib.reload(config).LLM_MODEL == "gemini-3.5-flash"
+        assert importlib.reload(config).LLM_MODEL == "gemini-3.5-flash-lite"
     finally:
         monkeypatch.undo()
         importlib.reload(config)
