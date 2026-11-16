@@ -15,10 +15,16 @@ gemini.md
 GEMINI.md
 claude.md
 CLAUDE.md
+agents.md
+AGENTS.md
 design.md
 DESIGN.md
 
 .claude/
+
+# OS files
+.DS_Store
+Thumbs.db
 
 # Example env files are committed so new setups know which keys to fill in.
 !.env.example
